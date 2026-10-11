@@ -622,6 +622,10 @@ class AsyncLLMEngine(EngineClient):
     @classmethod
     def _get_executor_cls(
             cls, engine_config: VllmConfig) -> Type[ExecutorAsyncBase]:
+        if envs.VLLM_USE_SIMULATOR:
+            # COMP 536: replay traces instead of running a model.
+            from vllm.simulator import SimulatorExecutor
+            return SimulatorExecutor
         distributed_executor_backend = (
             engine_config.parallel_config.distributed_executor_backend)
         if isinstance(distributed_executor_backend, type):

@@ -1,3 +1,5 @@
+import vllm.envs as envs
+
 from .interface import _Backend  # noqa: F401
 from .interface import CpuArchEnum, Platform, PlatformEnum, UnspecifiedPlatform
 
@@ -91,7 +93,12 @@ try:
 except Exception:
     pass
 
-if is_tpu:
+if envs.VLLM_USE_SIMULATOR:
+    # COMP 536 simulator: no accelerator is ever touched, so pin the CPU
+    # platform and get the same engine configuration on every machine.
+    from .cpu import CpuPlatform
+    current_platform = CpuPlatform()
+elif is_tpu:
     # people might install pytorch built with cuda but run on tpu
     # so we need to check tpu first
     from .tpu import TpuPlatform

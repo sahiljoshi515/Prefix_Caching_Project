@@ -72,6 +72,8 @@ if TYPE_CHECKING:
     VLLM_ENABLE_V1_MULTIPROCESSING: bool = True
     VLLM_LOG_BATCHSIZE_INTERVAL: float = -1
     VLLM_DISABLE_COMPILE_CACHE: bool = False
+    VLLM_USE_SIMULATOR: bool = False
+    VLLM_SIMULATOR_TRACE: Optional[str] = None
 
 
 def get_default_cache_root():
@@ -466,6 +468,17 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     lambda: float(os.getenv("VLLM_LOG_BATCHSIZE_INTERVAL", "-1")),
     "VLLM_DISABLE_COMPILE_CACHE":
     lambda: bool(int(os.getenv("VLLM_DISABLE_COMPILE_CACHE", "0"))),
+
+    # COMP 536 prefix-sharing simulator (vllm/simulator.py). If set, model
+    # execution is replaced by trace replay and the CPU platform is forced
+    # so the engine behaves the same on every machine.
+    "VLLM_USE_SIMULATOR":
+    lambda: bool(int(os.getenv("VLLM_USE_SIMULATOR", "0"))),
+
+    # JSONL trace replayed by the simulator: one object per line with
+    # "request_id" and either "response" (text) or "response_token_ids".
+    "VLLM_SIMULATOR_TRACE":
+    lambda: os.getenv("VLLM_SIMULATOR_TRACE", None),
 }
 
 # end-env-vars-definition
