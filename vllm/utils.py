@@ -494,6 +494,11 @@ def get_open_port() -> int:
 
 
 def find_process_using_port(port: int) -> Optional[psutil.Process]:
+    # psutil.net_connections() needs root on macOS and raises AccessDenied,
+    # which turned every Ctrl-C of `vllm serve` into a traceback. The lookup
+    # is only used for a debug message, so skip it there.
+    if sys.platform.startswith("darwin"):
+        return None
     for conn in psutil.net_connections():
         if conn.laddr.port == port:
             try:
