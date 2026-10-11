@@ -1,0 +1,29 @@
+# Dependency pins contemporary with vLLM commit 94d545a1 (2024-12-23).
+# Versions come from requirements-test.txt at that commit, plus upper bounds
+# for packages it does not pin. Newer majors (transformers 5, openai 2+,
+# huggingface_hub 1+, mistral_common 1.6+) break this vLLM version at import.
+torch==2.5.1
+torchvision==0.20.1
+numpy==1.26.4
+transformers==4.47.0
+tokenizers==0.21.0
+huggingface-hub==0.26.2
+safetensors==0.4.5
+mistral-common==1.5.1
+pydantic==2.9.2
+pydantic-core==2.23.4
+fastapi<0.116
+starlette<0.46
+uvicorn<0.35
+openai<1.60
+httpx==0.27.2
+anyio==4.6.2.post1
+aiohttp==3.10.10
+pillow==10.4.0
+tiktoken==0.7.0
+sentencepiece==0.2.0
+protobuf==5.28.3
+opencv-python-headless==4.10.0.84
+ray==2.40.0
+setuptools<76
+xgrammar<0.2
