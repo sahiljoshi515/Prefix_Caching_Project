@@ -203,3 +203,7 @@ benchmarks/*.json
 # Linting
 actionlint
 shellcheck*/
+
+# Downloaded datasets and processed traces
+/data/raw/
+/data/processed/

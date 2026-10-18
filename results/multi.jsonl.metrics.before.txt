@@ -1,0 +1,59 @@
+# HELP vllm:lora_requests_info Running stats on lora requests.
+# TYPE vllm:lora_requests_info gauge
+vllm:lora_requests_info{max_lora="0",running_lora_adapters="",waiting_lora_adapters=""} 1.792355576526892e+09
+# HELP vllm:cache_config_info Information of the LLMEngine CacheConfig
+# TYPE vllm:cache_config_info gauge
+vllm:cache_config_info{block_size="16",cache_dtype="auto",cpu_kvcache_space_bytes="4294967296",cpu_offload_gb="0",enable_prefix_caching="True",gpu_memory_utilization="0.9",is_attention_free="False",num_cpu_blocks="21845",num_gpu_blocks="21845",num_gpu_blocks_override="None",sliding_window="None",swap_space_bytes="4294967296"} 1.0
+# HELP vllm:num_preemptions_total Cumulative number of preemption from the engine.
+# TYPE vllm:num_preemptions_total counter
+vllm:num_preemptions_total{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:prompt_tokens_total Number of prefill tokens processed.
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:generation_tokens_total Number of generation tokens processed.
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:num_requests_running Number of requests currently running on GPU.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:num_requests_swapped Number of requests swapped to CPU.
+# TYPE vllm:num_requests_swapped gauge
+vllm:num_requests_swapped{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:num_requests_waiting Number of requests waiting to be processed.
+# TYPE vllm:num_requests_waiting gauge
+vllm:num_requests_waiting{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:gpu_cache_usage_perc GPU KV-cache usage. 1 means 100 percent usage.
+# TYPE vllm:gpu_cache_usage_perc gauge
+vllm:gpu_cache_usage_perc{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:cpu_cache_usage_perc CPU KV-cache usage. 1 means 100 percent usage.
+# TYPE vllm:cpu_cache_usage_perc gauge
+vllm:cpu_cache_usage_perc{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:cpu_prefix_cache_hit_rate CPU prefix cache block hit rate.
+# TYPE vllm:cpu_prefix_cache_hit_rate gauge
+vllm:cpu_prefix_cache_hit_rate{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:gpu_prefix_cache_hit_rate GPU prefix cache block hit rate.
+# TYPE vllm:gpu_prefix_cache_hit_rate gauge
+vllm:gpu_prefix_cache_hit_rate{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:avg_prompt_throughput_toks_per_s Average prefill throughput in tokens/s.
+# TYPE vllm:avg_prompt_throughput_toks_per_s gauge
+vllm:avg_prompt_throughput_toks_per_s{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:avg_generation_throughput_toks_per_s Average generation throughput in tokens/s.
+# TYPE vllm:avg_generation_throughput_toks_per_s gauge
+vllm:avg_generation_throughput_toks_per_s{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+# HELP vllm:iteration_tokens_total Histogram of number of tokens per engine_step.
+# TYPE vllm:iteration_tokens_total histogram
+vllm:iteration_tokens_total_sum{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 0.0
+vllm:iteration_tokens_total_bucket{le="1.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="8.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="16.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="32.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="64.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="128.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="256.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="512.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="1024.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="2048.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="4096.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="8096.0",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_bucket{le="+Inf",model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
+vllm:iteration_tokens_total_count{model_name="Qwen/Qwen2.5-0.5B-Instruct"} 2.0
