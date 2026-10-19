@@ -42,6 +42,10 @@ VLLM_USE_PRECOMPILED=1 uv pip install --editable . -c constraints-simulator.txt
 uv pip install pytest==8.3.3 pytest-asyncio==0.24.0   # only needed for the tests
 ```
 
+Shortcut: `make setup` runs these steps on macOS or Linux (on Linux it takes
+CPU-only PyTorch), then `make test` runs the project's tests. `make help`
+lists every command.
+
 Check the install:
 
 ```bash

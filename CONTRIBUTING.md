@@ -45,7 +45,8 @@ contribution shall respect them.
 ## 3. Development Environment
 
 The environment shall be set up as described in the *Setup* section of
-[`README.md`](README.md). In particular:
+[`README.md`](README.md); `make setup` does the same in one command on macOS
+and Linux, and `make help` lists the other shortcuts. In particular:
 
 - Dependencies shall be installed with the constraints file
   `constraints-simulator.txt`. The pinned versions are required for this
@@ -139,13 +140,16 @@ that Milestone 2, Task 3 can compare it against LRU and FIFO.
 All commands run from the repository root with the virtual environment
 active.
 
-1. Every PR shall pass the project's tests, which the script runs with the
-   required environment variables, for all milestones or for one:
+1. Every PR shall pass the project's tests, which these commands run with
+   the required environment variables, for all milestones or for one:
 
    ```bash
-   tools/run_project_tests.sh         # all milestones
-   tools/run_project_tests.sh m2      # one milestone: m1, m2 or m3
+   make test                          # all milestones
+   make test-m2                       # one milestone: test-m1, -m2, -m3
+   make ci                            # everything CI runs
    ```
+
+   `make` calls `tools/run_project_tests.sh`, which can also be run directly.
 
    Each test module shall declare its milestone with
    `pytestmark = pytest.mark.m1` (or `m2`, `m3`); CI fails a project test

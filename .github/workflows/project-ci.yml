@@ -1,7 +1,7 @@
 # Project tests for the COMP 536 prefix-sharing study (specs/001-ci-cd).
-# Installs the project as the README does for a CPU-only Linux machine, runs
-# the project's tests one milestone at a time, then vLLM's tests/core subset
-# (CONTRIBUTING.md section 6).
+# Installs the project with `make setup` (CPU-only), runs the project's tests
+# one milestone at a time, then vLLM's tests/core subset (CONTRIBUTING.md
+# section 6). Every step is a Makefile target that members also run locally.
 name: project-ci
 
 on:
@@ -34,20 +34,12 @@ jobs:
           python-version: "3.12"
       - name: Install uv
         run: python -m pip install uv==0.12.24
-      - name: Install the project (CPU-only PyTorch, pinned dependencies)
-        env:
-          # Pure-Python build: the simulator never runs a kernel.
-          VLLM_TARGET_DEVICE: empty
-          # torch==2.5.1 resolves to 2.5.1+cpu here, also inside the
-          # isolated build environment, instead of the CUDA wheels.
-          UV_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
-          UV_INDEX_STRATEGY: unsafe-best-match
+      # The same commands everyone runs locally (Makefile), so CI also checks
+      # that they work on Linux. On Linux `make setup` installs the pure-Python
+      # build with CPU-only PyTorch (torch==2.5.1 resolves to 2.5.1+cpu).
+      - name: Install the project (make setup)
         run: |
-          uv venv --python "$(command -v python)" .venv
-          uv pip install --python .venv/bin/python --editable . \
-            -c constraints-simulator.txt
-          uv pip install --python .venv/bin/python \
-            pytest==8.3.3 pytest-asyncio==0.24.0
+          make setup
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Check the install
         run: |
@@ -60,17 +52,14 @@ jobs:
           EOF
       # Our own tests, one step per milestone (tools/run_project_tests.sh).
       - name: Every project test is marked with its milestone
-        run: tools/run_project_tests.sh check-markers
+        run: make check-markers
       - name: Milestone 1 tests (simulator)
-        run: tools/run_project_tests.sh m1 -v
+        run: make test-m1 ARGS=-v
       - name: Milestone 2 tests (client simulator, metrics, cache tuning)
-        run: tools/run_project_tests.sh m2 -v
+        run: make test-m2 ARGS=-v
       - name: Milestone 3 tests (workloads, eviction policies)
-        run: tools/run_project_tests.sh m3 -v
+        run: make test-m3 ARGS=-v
       # vLLM's own tests for the scheduler and block manager, which Milestone
       # 2 Task 3 and Milestone 3 modify (CONTRIBUTING.md section 6.2).
       - name: vLLM core tests (scheduler, block manager, evictors)
-        run: |
-          python -m pytest tests/core -q \
-            --ignore=tests/core/block/e2e \
-            --ignore=tests/core/test_num_computed_tokens_update.py
+        run: make test-core

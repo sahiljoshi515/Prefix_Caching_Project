@@ -30,6 +30,13 @@
 - [x] T026 [US1] One CI step per milestone plus the marker check
   (`.github/workflows/project-ci.yml`)
 
+- [x] T027 [US1] `Makefile` with the same commands for members and CI;
+  `make setup` into a fresh venv on macOS, then `make test-m1`: 67 passed;
+  `make ci`, `make lint` (fails on a badly formatted file) and
+  `make check-pr` work locally
+- [x] T028 [US1] `project-ci` calls the `make` targets, so every PR checks
+  the Makefile on Linux
+
 ## Phase 3: User Story 2 — only meaningful checks (P1)
 
 - [x] T006 [P] [US2] Install `setuptools<76` in the mypy job

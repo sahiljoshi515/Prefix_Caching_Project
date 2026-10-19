@@ -44,6 +44,7 @@ PyTorch 2.5.1 CPU wheels from `https://download.pytorch.org/whl/cpu`
 | `.github/workflows/project-ci.yml` | Install the project, run `tests/simulator`, `tests/client_simulator` and `tests/analysis` when present, then the `tests/core` subset |
 | `.github/workflows/pr-requirements.yml` | Run the PR checker's tests, then the checker on the PR (US7) |
 | `tools/run_project_tests.sh` | Run only the project's tests, all or one milestone (`m1`/`m2`/`m3`), plus `check-markers`; used by CI and on laptops |
+| `Makefile` | One set of commands for everyone and for CI: `setup` (macOS or Linux, CPU only), `test`, `test-m1/2/3`, `test-core`, `check-markers`, `ci`, `lint`, `check-pr`, `help`. GNU Make 3.81 compatible (macOS default) |
 | `tools/pr_check/check_pr.py` | Standard-library checker: rules as pure functions, plus git and event-file collection and GitHub annotations |
 | `tools/pr_check/test_check_pr.py` | 39 tests, one or more per rule, plus one against a real temporary git repository |
 

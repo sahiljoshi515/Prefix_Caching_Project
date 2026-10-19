@@ -62,14 +62,22 @@ Shared building blocks, so later specs do not re-implement them:
 
 ## Running the tests
 
-Only the project's own tests, never vLLM's full upstream suite:
+Only the project's own tests, never vLLM's full upstream suite. No need to
+activate the virtualenv; `make` uses `.venv` directly:
 
 ```bash
-source .venv/bin/activate
-tools/run_project_tests.sh            # every milestone
-tools/run_project_tests.sh m2         # one milestone: m1, m2 or m3
-tools/run_project_tests.sh m1 -k prefix   # extra pytest arguments
+make setup                     # once: create .venv and install (macOS/Linux)
+make test                      # every milestone
+make test-m2                   # one milestone: test-m1, test-m2, test-m3
+make test-m1 ARGS="-k prefix"  # extra pytest arguments
+make ci                        # everything CI runs, in the same order
+make lint                      # the repo's linters on files you changed
+make check-pr BODY=pr.md       # the PR-requirements check, before opening a PR
+make help                      # all commands
 ```
+
+CI runs the same `make` targets, so a green run locally means a green run
+on GitHub (apart from Linux-only differences).
 
 Every new test module declares its milestone on one line, and CI fails a
 test that has none:
