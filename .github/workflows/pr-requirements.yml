@@ -1,0 +1,45 @@
+# Checks that a pull request follows the team's rules (specs/001-ci-cd,
+# User Story 7): the PR description has the CONTRIBUTING.md section 4 items,
+# upstream vLLM edits are listed, the v1 engine is untouched, no datasets or
+# large files are committed. Missing tests and commit-message problems are
+# reported as warnings. project-ci checks that the code works; this checks
+# the PR itself.
+name: pr-requirements
+
+on:
+  pull_request:
+    branches:
+      - main
+    # "edited" re-runs the check after the description is fixed.
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-requirements-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Dependabot's PRs have their own fixed format.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # The checker needs the PR's commits and the upstream base commit.
+          fetch-depth: 0
+      - name: Set up Python 3.12
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Test the checker
+        run: |
+          python -m pip install pytest==8.3.3
+          python -m pytest tools/pr_check -q -p no:cacheprovider
+      - name: Check the PR against CONTRIBUTING.md
+        # The PR description is read from the event file by the script, never
+        # interpolated into this shell script.
+        run: python tools/pr_check/check_pr.py

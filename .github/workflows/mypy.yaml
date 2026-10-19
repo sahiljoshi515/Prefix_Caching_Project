@@ -45,6 +45,10 @@ jobs:
         pip install types-PyYAML
         pip install types-requests
         pip install types-setuptools
+        # pkg_resources ships with setuptools, which the Python 3.12 runner
+        # lacks (3.9 to 3.11 include it); version bound as in
+        # constraints-simulator.txt.
+        pip install "setuptools<76"
     - name: Mypy
       run: |
         echo "::add-matcher::.github/workflows/matchers/mypy.json"

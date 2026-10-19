@@ -16,6 +16,8 @@ from prometheus_client.parser import text_string_to_metric_families
 from ..utils import RemoteOpenAIServer
 from .conftest import write_trace
 
+pytestmark = pytest.mark.m1
+
 MODEL_NAME = "gpt2-sim"
 # gpt2 has no chat template, so the server gets a trivial literal one.
 CHAT_TEMPLATE = ("{% for m in messages %}{{ m['role'] }}: {{ m['content'] }}\n"

@@ -9,6 +9,8 @@ from vllm.simulator import Simulator, candidate_ids, load_trace
 
 from .conftest import write_trace
 
+pytestmark = pytest.mark.m1
+
 EOS = 0
 VOCAB = 1000
 BLOCK = 16

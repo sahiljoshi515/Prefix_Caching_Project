@@ -1,6 +1,12 @@
 name: Lint and Deploy Charts
 
-on: pull_request
+# The Helm chart is not part of the prefix-sharing project, so this only
+# runs when the chart itself changes (specs/001-ci-cd). This file is left out
+# of the paths on purpose: editing it should not start a chart deployment.
+on:
+  pull_request:
+    paths:
+      - "examples/chart-helm/**"
 
 jobs:
   lint-and-deploy:

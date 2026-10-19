@@ -17,7 +17,7 @@ from vllm.worker.cache_engine import CacheEngine
 
 from .conftest import write_trace
 
-pytestmark = pytest.mark.skip_global_cleanup
+pytestmark = [pytest.mark.m1, pytest.mark.skip_global_cleanup]
 
 BLOCK = 16
 # 40 ordinary gpt2 token ids: two full blocks plus half a block.

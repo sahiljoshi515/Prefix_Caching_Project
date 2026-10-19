@@ -1,0 +1,76 @@
+# Project tests for the COMP 536 prefix-sharing study (specs/001-ci-cd).
+# Installs the project as the README does for a CPU-only Linux machine, runs
+# the project's tests one milestone at a time, then vLLM's tests/core subset
+# (CONTRIBUTING.md section 6).
+name: project-ci
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VLLM_USE_SIMULATOR: "1"
+      VLLM_NO_USAGE_STATS: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python 3.12
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install uv==0.12.24
+      - name: Install the project (CPU-only PyTorch, pinned dependencies)
+        env:
+          # Pure-Python build: the simulator never runs a kernel.
+          VLLM_TARGET_DEVICE: empty
+          # torch==2.5.1 resolves to 2.5.1+cpu here, also inside the
+          # isolated build environment, instead of the CUDA wheels.
+          UV_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
+          UV_INDEX_STRATEGY: unsafe-best-match
+        run: |
+          uv venv --python "$(command -v python)" .venv
+          uv pip install --python .venv/bin/python --editable . \
+            -c constraints-simulator.txt
+          uv pip install --python .venv/bin/python \
+            pytest==8.3.3 pytest-asyncio==0.24.0
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Check the install
+        run: |
+          python - <<'EOF'
+          import torch
+          from vllm.platforms import current_platform
+          print("torch", torch.__version__, "platform", current_platform)
+          assert torch.__version__.endswith("+cpu"), torch.__version__
+          assert current_platform.is_cpu(), current_platform
+          EOF
+      # Our own tests, one step per milestone (tools/run_project_tests.sh).
+      - name: Every project test is marked with its milestone
+        run: tools/run_project_tests.sh check-markers
+      - name: Milestone 1 tests (simulator)
+        run: tools/run_project_tests.sh m1 -v
+      - name: Milestone 2 tests (client simulator, metrics, cache tuning)
+        run: tools/run_project_tests.sh m2 -v
+      - name: Milestone 3 tests (workloads, eviction policies)
+        run: tools/run_project_tests.sh m3 -v
+      # vLLM's own tests for the scheduler and block manager, which Milestone
+      # 2 Task 3 and Milestone 3 modify (CONTRIBUTING.md section 6.2).
+      - name: vLLM core tests (scheduler, block manager, evictors)
+        run: |
+          python -m pytest tests/core -q \
+            --ignore=tests/core/block/e2e \
+            --ignore=tests/core/test_num_computed_tokens_update.py
