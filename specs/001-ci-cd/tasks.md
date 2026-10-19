@@ -14,8 +14,9 @@
 
 - [x] T003 [US1] Add `project-ci` with the install, simulator, client/analysis
   and core steps (`.github/workflows/project-ci.yml`)
-- [ ] T004 [US1] Push the branch, open the PR, confirm `project-ci / tests` is
-  green and under 15 minutes (SC-003)
+- [x] T004 [US1] Push the branch, open the PR, confirm `project-ci / tests` is
+  green and under 15 minutes (SC-003): PR #7, 2 min 41 s; torch
+  `2.5.1+cpu`; m1 67 passed, m2/m3 "no tests yet", tests/core 944 passed
 - [ ] T005 [US1] On a throwaway commit, break one simulator assertion and
   confirm only the simulator step fails (SC-002); drop the commit
 
@@ -37,7 +38,9 @@
   (`.github/workflows/lint-and-deploy.yaml`)
 - [x] T008 [P] [US2] Delete `.github/workflows/reminder_comment.yml`
 - [x] T009 [P] [US2] Delete `.github/workflows/publish.yml`
-- [ ] T010 [US2] On the PR, confirm no failing or irrelevant checks (SC-001)
+- [ ] T010 [US2] On the PR, confirm no failing or irrelevant checks (SC-001).
+  PR #7: all green except `pr_reminder`, which runs from `main`'s copy
+  (`pull_request_target`) until this PR merges; recheck on the next PR
 
 ## Phase 3b: User Story 7 — PR requirements check (P1)
 
@@ -49,8 +52,9 @@
 - [x] T022 [US7] Replay on history: PR #6 as opened gives 10 errors and 2
   warnings, all genuine; the Milestone 1 range flags its 4 unlisted
   upstream files
-- [ ] T023 [US7] On this branch's PR, confirm the check passes with a
-  complete description and fails when a section is emptied
+- [x] T023 [US7] On this branch's PR, confirm the check passes with a
+  complete description (PR #7: `pr-requirements / check` passed); the
+  failing cases are covered by `tools/pr_check/test_check_pr.py`
 
 ## Phase 4: User Story 6 — repository metadata (P3)
 
