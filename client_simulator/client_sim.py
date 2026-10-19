@@ -11,22 +11,24 @@ from itertools import islice
 from pathlib import Path
 from typing import Iterator
 from urllib.parse import urlsplit, urlunsplit
+
 import httpx
-from client_simulator.schema import Conversation, Message, ReplayRequest, ScheduledConversation
+
+from client_simulator.schema import (Conversation, Message, ReplayRequest,
+                                     ScheduledConversation, request_id)
 
 
-def request_id(conversation_id, turn_index):
-    return f"{conversation_id}:{turn_index}"
-
-def iter_requests(conversation: Conversation, mode="multi") -> Iterator[ReplayRequest]:
+def iter_requests(conversation: Conversation,
+                  mode="multi") -> Iterator[ReplayRequest]:
     """Each request contains the history before its recorded answer"""
     if mode not in {"single", "multi"}:
         raise ValueError("mode must be 'single' or 'multi'")
     for i in range(1, len(conversation.messages), 2):
-        yield ReplayRequest(
-            request_id(conversation.conversation_id, i // 2),
-            conversation.conversation_id, i // 2,
-            conversation.messages[:i], conversation.messages[i].content)
+        turn = i // 2
+        rid = request_id(conversation.conversation_id, turn)
+        yield ReplayRequest(rid, conversation.conversation_id, turn,
+                            conversation.messages[:i],
+                            conversation.messages[i].content)
         if mode == "single":
             break
 
@@ -84,8 +86,15 @@ def server_urls(base_url):
 
 
 class ReplayClient:
-    def __init__(self, http, base_url, model, results, mode="multi",
-                 think_time=0, max_concurrency=32):
+
+    def __init__(self,
+                 http,
+                 base_url,
+                 model,
+                 results,
+                 mode="multi",
+                 think_time=0,
+                 max_concurrency=32):
         self.http, self.model, self.results = http, model, results
         self.root, self.api = server_urls(base_url)
         self.mode, self.think_time = mode, think_time
@@ -107,42 +116,60 @@ class ReplayClient:
                 f"{self.model!r} is not served; available: {available}")
 
     async def tokenize(self, **payload):
-        response = await self.http.post(self.root + "/tokenize", json={"model": self.model, **payload})
+        response = await self.http.post(self.root + "/tokenize",
+                                        json={
+                                            "model": self.model,
+                                            **payload
+                                        })
         response.raise_for_status()
         return response.json()
 
     async def send_turn(self, request: ReplayRequest, result):
         """Check context size, send one request, then validate the answer"""
         messages = [asdict(m) for m in request.messages]
-        prompt = await self.tokenize(messages=messages, add_generation_prompt=True, add_special_tokens=False)
-        answer = await self.tokenize(prompt=request.response, add_special_tokens=False)
+        prompt = await self.tokenize(messages=messages,
+                                     add_generation_prompt=True,
+                                     add_special_tokens=False)
+        answer = await self.tokenize(prompt=request.response,
+                                     add_special_tokens=False)
         budget = answer["count"] + 1  # +1 for the simulator final EOS.
-        result.update(prompt_tokens=prompt["count"], max_tokens=budget, max_model_len=prompt["max_model_len"])
+        result.update(prompt_tokens=prompt["count"],
+                      max_tokens=budget,
+                      max_model_len=prompt["max_model_len"])
         if prompt["count"] + budget > prompt["max_model_len"]:
-            result.update(status="skipped_context", error="Context limit exceeded")
+            result.update(status="skipped_context",
+                          error="Context limit exceeded")
             return
 
         result["sent_s"] = self.elapsed()
         result["dispatch_delay_s"] = result["sent_s"] - result["ready_s"]
-        response = await self.http.post(self.api + "/chat/completions",
+        response = await self.http.post(
+            self.api + "/chat/completions",
             headers={"X-Request-Id": request.request_id},
-            json={"model": self.model, "messages": messages,
-                  "max_tokens": budget, "temperature": 0, "stream": False,
-                  "add_generation_prompt": True, "add_special_tokens": False})
+            json={
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": budget,
+                "temperature": 0,
+                "stream": False,
+                "add_generation_prompt": True,
+                "add_special_tokens": False
+            })
         response.raise_for_status()
         data = response.json()
         choice = data["choices"][0]
         actual = choice["message"].get("content") or ""
         usage = data.get("usage") or {}
-        cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+        # vLLM omits prompt_tokens_details when no prompt token was cached.
+        details = usage.get("prompt_tokens_details") or {}
+        cached = details.get("cached_tokens") or 0
         count = usage.get("prompt_tokens", prompt["count"])
-        result.update(
-            prompt_tokens=count,
-            completion_tokens=usage.get("completion_tokens"),
-            cached_tokens=cached,
-            cached_fraction=(cached / count if cached is not None and count else None),
-            finish_reason=choice.get("finish_reason"),
-            answer_match=actual == request.response)
+        result.update(prompt_tokens=count,
+                      completion_tokens=usage.get("completion_tokens"),
+                      cached_tokens=cached,
+                      cached_fraction=cached / count if count else None,
+                      finish_reason=choice.get("finish_reason"),
+                      answer_match=actual == request.response)
         if choice.get("finish_reason") != "stop":
             result["error"] = "Response did not finish with stop"
         elif actual != request.response:
@@ -165,8 +192,11 @@ class ReplayClient:
                 "planned_conversation_start_s": arrival_s,
                 "actual_conversation_start_s": actual_start,
                 "conversation_start_drift_s": max(0, actual_start - arrival_s),
-                "ready_s": self.elapsed(), "sent_s": None, "latency_s": None,
-                "status": "failed", "error": None,
+                "ready_s": self.elapsed(),
+                "sent_s": None,
+                "latency_s": None,
+                "status": "failed",
+                "error": None,
             }
             try:
                 async with self.slots:
@@ -183,7 +213,8 @@ class ReplayClient:
             self.results.flush()
             self.counts[result["status"]] += 1
             if result["status"] != "completed":
-                self.counts["abandoned_turns"] += turns - request.turn_index - 1
+                remaining = turns - request.turn_index - 1
+                self.counts["abandoned_turns"] += remaining
                 break
             if request.turn_index + 1 < turns:
                 await asyncio.sleep(self.think_time)
@@ -196,7 +227,10 @@ class ReplayClient:
             schedule = schedule_conversations(conversations, rate, seed, limit)
             for item in schedule:
                 await asyncio.sleep(max(0, item.arrival_s - self.elapsed()))
-                tasks.append(asyncio.create_task(self.replay_conversation(item.conversation, item.arrival_s)))
+                tasks.append(
+                    asyncio.create_task(
+                        self.replay_conversation(item.conversation,
+                                                 item.arrival_s)))
             await asyncio.gather(*tasks)
         finally:
             for task in tasks:
@@ -212,13 +246,19 @@ def parse_args(argv=None):
     parser.add_argument("--model", required=True)
     parser.add_argument("--base-url", default="http://localhost:8000/v1")
     parser.add_argument("--mode", choices=["single", "multi"], default="multi")
-    parser.add_argument("--conversation-rate", type=float, default=1, help="New conversations/second; inf starts immediately")
+    parser.add_argument(
+        "--conversation-rate",
+        type=float,
+        default=1,
+        help="New conversations/second; inf starts immediately")
     parser.add_argument("--think-time", type=float, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--max-concurrency", type=int, default=32)
     parser.add_argument("--timeout", type=float, default=120)
-    parser.add_argument("--output", type=Path, default=Path("results/replay.jsonl"))
+    parser.add_argument("--output",
+                        type=Path,
+                        default=Path("results/replay.jsonl"))
     parser.add_argument("--capture-metrics", action="store_true")
     args = parser.parse_args(argv)
     if math.isnan(args.conversation_rate) or args.conversation_rate <= 0:
@@ -227,7 +267,8 @@ def parse_args(argv=None):
         parser.error("--think-time must be finite and nonnegative")
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout must be finite and positive")
-    if args.max_concurrency <= 0 or (args.limit is not None and args.limit <= 0):
+    if args.max_concurrency <= 0 or (args.limit is not None
+                                     and args.limit <= 0):
         parser.error("--max-concurrency and --limit must be positive")
     try:
         server_urls(args.base_url)
@@ -242,40 +283,55 @@ async def run_cli(args):
     metric_paths = {}
     if args.capture_metrics:
         for phase in ("before", "after"):
-            metric_paths[phase] = Path(str(args.output) + f".metrics.{phase}.txt")
+            metric_paths[phase] = Path(
+                str(args.output) + f".metrics.{phase}.txt")
     outputs = [args.output, manifest, *metric_paths.values()]
     if any(p.exists() or p.resolve() == args.trace.resolve() for p in outputs):
         raise ValueError("Output already exists; choose a new output path")
     metadata = {
-        "config": {k: str(v) if isinstance(v, Path) or v == math.inf else v for k, v in vars(args).items()},
+        "config": {
+            k: str(v) if isinstance(v, Path) or v == math.inf else v
+            for k, v in vars(args).items()
+        },
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
         "status": "running",
     }
     limits = httpx.Limits(max_connections=args.max_concurrency + 4)
     async with httpx.AsyncClient(timeout=args.timeout, limits=limits) as http:
         with args.output.open("x", encoding="utf-8") as output:
-            replay = ReplayClient(http, args.base_url, args.model, output, args.mode, args.think_time, args.max_concurrency)
-            manifest.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            replay = ReplayClient(http, args.base_url, args.model, output,
+                                  args.mode, args.think_time,
+                                  args.max_concurrency)
+            manifest.write_text(json.dumps(metadata, indent=2),
+                                encoding="utf-8")
             try:
                 if args.capture_metrics:
                     before = await http.get(replay.root + "/metrics")
                     before.raise_for_status()
-                    metric_paths["before"].write_text(before.text, encoding="utf-8")
-                summary = await replay.run(load_conversations(args.trace), args.conversation_rate, args.seed, args.limit)
+                    metric_paths["before"].write_text(before.text,
+                                                      encoding="utf-8")
+                summary = await replay.run(load_conversations(args.trace),
+                                           args.conversation_rate, args.seed,
+                                           args.limit)
                 metadata.update(status="finished", summary=summary)
                 if args.capture_metrics:
                     after = await http.get(replay.root + "/metrics")
                     after.raise_for_status()
-                    metric_paths["after"].write_text(
-                        after.text, encoding="utf-8")
+                    metric_paths["after"].write_text(after.text,
+                                                     encoding="utf-8")
             except BaseException as exc:
-                interrupted = isinstance(exc, (KeyboardInterrupt, asyncio.CancelledError))
+                interrupted = isinstance(
+                    exc, (KeyboardInterrupt, asyncio.CancelledError))
                 status = "interrupted" if interrupted else "failed"
-                metadata.update(status=status, error=str(exc), summary=dict(replay.counts))
+                metadata.update(status=status,
+                                error=str(exc),
+                                summary=dict(replay.counts))
                 raise
             finally:
-                manifest.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+                manifest.write_text(json.dumps(metadata, indent=2),
+                                    encoding="utf-8")
     return summary
+
 
 def main():
     try:
@@ -285,6 +341,7 @@ def main():
     print(json.dumps(summary, indent=2))
     if summary.get("failed") or summary.get("skipped_context"):
         raise SystemExit(1)
+
 
 if __name__ == "__main__":
     main()

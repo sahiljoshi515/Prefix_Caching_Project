@@ -1,13 +1,12 @@
 import json
 import re
+import shutil
+import urllib.request
 from collections import Counter
 from pathlib import Path
-import shutil
 from typing import Iterator
-import urllib.request
 
-from client_simulator.schema import Conversation, Message, ReplayRequest
-from client_simulator.client_sim import iter_requests
+from client_simulator.schema import Conversation, Message
 
 SHAREGPT_URL = "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"
 
@@ -21,13 +20,14 @@ def check_download(raw_path: Path) -> None:
 
     print(f"Downloading ShareGPT to {raw_path}...")
     try:
-        with urllib.request.urlopen(SHAREGPT_URL, timeout=60) as source:
-            with temporary.open("wb") as destination:
-                shutil.copyfileobj(source, destination)
+        with urllib.request.urlopen(SHAREGPT_URL, timeout=60) as source, \
+                temporary.open("wb") as destination:
+            shutil.copyfileobj(source, destination)
 
         temporary.replace(raw_path)
     finally:
         temporary.unlink(missing_ok=True)
+
 
 def load_sharegpt(raw_path: Path) -> Iterator[Conversation]:
     """Validate ShareGPT's fragments int IR"""
@@ -44,16 +44,20 @@ def load_sharegpt(raw_path: Path) -> Iterator[Conversation]:
             raise ValueError(f"{cur_conversation}: expected an object")
         source_id = record.get("id")
         if not isinstance(source_id, str) or not source_id.strip():
-            raise ValueError(f"{cur_conversation}: missing or invalid conversation ID")
+            raise ValueError(
+                f"{cur_conversation}: missing or invalid conversation ID")
         match = re.fullmatch(r"(.+)_(\d+)", source_id)
         base_id = match.group(1) if match else source_id
         offset = int(match.group(2)) if match else 0
         raw_messages = record.get("conversations")
         if not isinstance(raw_messages, list):
-            raise ValueError(f"{cur_conversation}: expected a conversation list")
+            raise ValueError(
+                f"{cur_conversation}: expected a conversation list")
 
         group = groups.setdefault(base_id, {
-            "positions": {}, "conflict": False, "fragments": 0,
+            "positions": {},
+            "conflict": False,
+            "fragments": 0,
         })
         group["fragments"] += 1
         counts["source_fragments"] += 1
@@ -116,9 +120,10 @@ def load_sharegpt(raw_path: Path) -> Iterator[Conversation]:
             counts["skipped_no_exchange_groups"] += 1
             continue
 
-        messages = [Message(role=roles[message["from"]],
-                            content=message["value"])
-                    for message in raw_messages]
+        messages = [
+            Message(role=roles[message["from"]], content=message["value"])
+            for message in raw_messages
+        ]
         counts["retained_conversations"] += 1
         counts["replay_requests"] += len(messages) // 2
         if group["fragments"] > 1:
@@ -126,7 +131,8 @@ def load_sharegpt(raw_path: Path) -> Iterator[Conversation]:
         yield Conversation(conversation_id=f"sharegpt:{base_id}",
                            messages=messages)
 
-    print("ShareGPT reconstruction: " + json.dumps(dict(counts), sort_keys=True))
+    print("ShareGPT reconstruction: " +
+          json.dumps(dict(counts), sort_keys=True))
 
 
 def load_conversations(raw_path: Path) -> Iterator[Conversation]:
