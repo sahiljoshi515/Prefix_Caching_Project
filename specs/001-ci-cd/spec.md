@@ -201,7 +201,8 @@ history, which `CONTRIBUTING.md` §4 discourages.
 ### Functional Requirements
 
 - **FR-001**: A workflow `project-ci` MUST run on `pull_request` to `main`
-  and on `push` to `main`, and cancel superseded runs of the same branch.
+  or a `milestone-*` branch and on `push` to them, and cancel superseded
+  runs of the same branch. The other checks use the same branch filter.
 - **FR-002**: It MUST install the project as the README's Linux instructions
   do (Python 3.12, `VLLM_TARGET_DEVICE=empty`, `-c constraints-simulator.txt`)
   but from the PyTorch CPU index.

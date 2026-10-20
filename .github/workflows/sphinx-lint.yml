@@ -4,11 +4,13 @@ on:
   push:
     branches:
       - main
+      - "milestone-*"
     paths:
       - "docs/**"
   pull_request:
     branches:
       - main
+      - "milestone-*"
     paths:
       - "docs/**"
 

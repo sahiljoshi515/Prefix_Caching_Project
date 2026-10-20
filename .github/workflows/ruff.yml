@@ -2,10 +2,11 @@ name: ruff
 
 on:
   # Trigger the workflow on push or pull request,
-  # but only for the main branch
+  # but only for main and the milestone-* branches
   push:
     branches:
       - main
+      - "milestone-*"
     paths:
       - "**/*.py"
       - pyproject.toml
@@ -15,6 +16,7 @@ on:
   pull_request:
     branches:
       - main
+      - "milestone-*"
     # This workflow is only relevant when one of the following files changes.
     # However, we have github configured to expect and require this workflow
     # to run and pass before github with auto-merge a pull request. Until github

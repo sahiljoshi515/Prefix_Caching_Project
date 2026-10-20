@@ -73,9 +73,11 @@ fixtures under 1 MB in total may be committed.
 ### VI. Reviewed, preserved history
 
 The submission is the `.git` folder itself, so history is part of the
-deliverable. Work happens on feature branches created from `main`, reaches
-`main` only through a reviewed PR (at least one other member approves), and
-is merged with a merge commit. `main` is never rewritten or force-pushed.
+deliverable. Work happens on feature branches created from the current
+milestone branch (the default branch, e.g. `milestone-2`), reaches it only
+through a reviewed PR (at least one other member approves), and is merged
+with a merge commit; milestone branches reach `main` the same way. `main`
+and the milestone branches are never rewritten or force-pushed.
 
 ### VII. Understood and disclosed AI use
 
@@ -104,9 +106,9 @@ so the report's AI-usage section and appendix can be assembled from them.
    each naming its file and its test.
 4. **Implement:** follow `tasks.md` on a feature branch, ticking tasks off
    in the same PR.
-5. **Review:** open a PR against `main` with the description required by
-   `CONTRIBUTING.md` §4. The reviewer checks the change against the spec's
-   requirements and success criteria, not only the code.
+5. **Review:** open a PR against the milestone branch with the description
+   required by `CONTRIBUTING.md` §4. The reviewer checks the change against
+   the spec's requirements and success criteria, not only the code.
 
 A spec may be amended during implementation; the amendment is part of the
 same PR and called out in its description.
@@ -129,5 +131,5 @@ are made by PR, need approval from at least two members, and bump the version
 below: major for removing or redefining a principle, minor for adding one,
 patch for wording.
 
-**Version**: 1.0.0 | **Status**: Proposed 2026-10-18; ratified when its PR
-is merged to `main` | **Last Amended**: 2026-10-18
+**Version**: 1.0.1 | **Status**: Ratified 2026-10-20 (PR #7) |
+**Last Amended**: 2026-10-20 (PRs target the milestone branch)

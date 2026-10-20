@@ -45,9 +45,10 @@
   (`.github/workflows/lint-and-deploy.yaml`)
 - [x] T008 [P] [US2] Delete `.github/workflows/reminder_comment.yml`
 - [x] T009 [P] [US2] Delete `.github/workflows/publish.yml`
-- [ ] T010 [US2] On the PR, confirm no failing or irrelevant checks (SC-001).
-  PR #7: all green except `pr_reminder`, which runs from `main`'s copy
-  (`pull_request_target`) until this PR merges; recheck on the next PR
+- [x] T010 [US2] On the PR, confirm no failing or irrelevant checks (SC-001).
+  PR #7: all green except `pr_reminder`, which ran from `main`'s copy
+  (`pull_request_target`). After the merge, Dependabot PRs #1, #3 and #4
+  ran all green with no `pr_reminder`
 
 ## Phase 3b: User Story 7 — PR requirements check (P1)
 
@@ -74,7 +75,12 @@
   Lu's handles (known: `sahiljoshi515`, `trietmchau`)
 - [ ] T014 [US6] Ask the repository owner to mark `project-ci / tests`,
   `pr-requirements / check`, `ruff`, `yapf`, `mypy` and `codespell` as
-  required checks on `main`
+  required checks on `main` and `milestone-*`. The existing
+  `Protect_main` ruleset has no target branches, so it protects nothing
+  yet (checked 2026-10-20)
+- [x] T029 [US1] Run the checks on PRs into `milestone-*` branches, the
+  default branch since 2026-10-20 (`branches` filters, `Makefile` `BASE`,
+  `CONTRIBUTING.md` §4)
 
 ## Phase 5: User Story 4 — e2e replay smoke test (P2)
 

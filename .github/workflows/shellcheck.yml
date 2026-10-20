@@ -3,12 +3,14 @@ on:
   push:
     branches:
       - "main"
+      - "milestone-*"
     paths:
       - '**/*.sh'
       - '.github/workflows/shellcheck.yml'
   pull_request:
     branches:
       - "main"
+      - "milestone-*"
     paths:
       - '**/*.sh'
       - '.github/workflows/shellcheck.yml'
