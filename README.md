@@ -9,6 +9,19 @@ only the model forward pass is replaced by replaying pre-collected responses
 from a trace. Upstream's README is kept as `README_vllm.md`; the Milestone 1
 design and test notes are in `report.md`.
 
+## Project status
+
+| Milestone | What | Status | Where |
+|---|---|---|---|
+| 1 | Simulator that replaces model execution | Done | `vllm/simulator.py`, `tests/simulator/` |
+| 2, Task 1 | Client simulator and ShareGPT preprocessing | Done | `client_simulator/` |
+| 2, Tasks 2–3 | Prefix-sharing metrics; cache size, block size and eviction policies | Planned | `specs/004-*`, `specs/005-*` |
+| 3 | Eviction policies across workloads; a workload-aware policy | Planned | `specs/006-*`, `specs/007-*` |
+
+How the team works (branches, pull requests, tests, CI) is in
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Each feature has a spec, a plan and a
+task list under [`specs/`](specs/README.md).
+
 ## What changed
 
 | Path | Purpose |
@@ -19,8 +32,12 @@ design and test notes are in `report.md`.
 | `vllm/engine/llm_engine.py`, `vllm/engine/async_llm_engine.py` | Select `SimulatorExecutor` (four lines each). |
 | `vllm/entrypoints/launcher.py`, `vllm/entrypoints/openai/api_server.py`, `vllm/utils.py` | macOS fixes: hand the already-bound port to uvicorn instead of binding it twice, and skip a root-only port lookup during shutdown. |
 | `constraints-simulator.txt` (new) | Dependency pins contemporary with this vLLM commit. |
-| `tests/simulator/` (new) | 59 tests: unit, in-process engine, and a real `vllm serve`. |
+| `tests/simulator/` (new) | 67 tests: unit, in-process engine, and a real `vllm serve`. |
 | `examples/simulator/` (new) | Example trace and a client that replays it. |
+| `client_simulator/` (new) | Milestone 2: ShareGPT download and preprocessing, and the replay client (Poisson arrivals, single- and multi-turn, chat template). |
+| `Makefile`, `tools/run_project_tests.sh` (new) | Shared commands for setup, tests per milestone, linting and PR checks. |
+| `.github/workflows/project-ci.yml`, `pr-requirements.yml`, `tools/pr_check/` (new) | CI: the project's tests on every PR, and a check of each PR against `CONTRIBUTING.md`. |
+| `CONTRIBUTING.md`, `.specify/`, `specs/` (new) | Team rules, the project constitution, and a spec per milestone task. |
 
 ## Setup
 
@@ -41,6 +58,10 @@ VLLM_USE_PRECOMPILED=1 uv pip install --editable . -c constraints-simulator.txt
 
 uv pip install pytest==8.3.3 pytest-asyncio==0.24.0   # only needed for the tests
 ```
+
+Shortcut: `make setup` runs these steps on macOS or Linux (on Linux it takes
+CPU-only PyTorch), then `make test` runs the project's tests. `make help`
+lists every command.
 
 Check the install:
 
@@ -143,6 +164,39 @@ Rules of replay:
 - `n > 1`, batched prompts and streaming all work; every sub-request maps to
   the same trace entry.
 
+### Replaying ShareGPT (Milestone 2)
+
+The client simulator downloads ShareGPT, rebuilds whole conversations, and
+replays them against the server with Poisson arrivals, in single-turn (first
+exchange only) or multi-turn mode. Each request carries its trace id, so the
+server answers with the recorded response. In short:
+
+```bash
+# 1. Preprocess once (downloads about 670 MB into data/raw/, gitignored)
+python -m client_simulator.process_raw_traces --dataset sharegpt \
+  --raw data/raw/sharegpt.json \
+  --output data/processed/sharegpt.responses.jsonl \
+  --client-output data/processed/sharegpt.conversations.jsonl
+
+# 2. Terminal 1: the simulator server with the response trace
+export VLLM_USE_SIMULATOR=1 VLLM_NO_USAGE_STATS=1
+export VLLM_SIMULATOR_TRACE="$PWD/data/processed/sharegpt.responses.jsonl"
+vllm serve Qwen/Qwen2.5-0.5B-Instruct --enable-prefix-caching \
+  --enable-prompt-tokens-details --max-model-len 8192 --port 8000
+
+# 3. Terminal 2: replay 10 conversations, all turns
+python -m client_simulator.client_sim \
+  --trace data/processed/sharegpt.conversations.jsonl \
+  --model Qwen/Qwen2.5-0.5B-Instruct --mode multi \
+  --conversation-rate 2 --think-time 1 --seed 1 --limit 10 \
+  --output results/multi.jsonl --capture-metrics
+```
+
+`results/multi.jsonl` gets one line per request, with its cached prompt
+tokens, and the run's configuration and `/metrics` snapshots are saved next
+to it. All options and output fields are in
+[`client_simulator/README.md`](client_simulator/README.md).
+
 ### Useful vLLM flags for experiments
 
 `--enable-prefix-caching` (off by default in this vLLM version),
@@ -158,13 +212,21 @@ here, both are 2 bytes per value.
 
 ## Tests
 
-`VLLM_USE_SIMULATOR=1` must be exported before pytest starts (vLLM chooses
-its platform when it is imported).
+The project's tests are grouped by milestone. The `make` commands set the
+required environment variables and use `.venv` directly:
 
 ```bash
-export VLLM_USE_SIMULATOR=1 VLLM_NO_USAGE_STATS=1
-python -m pytest tests/simulator -v -o asyncio_default_fixture_loop_scope=function
+make test        # every milestone
+make test-m1     # one milestone: test-m1, test-m2, test-m3
+make test-core   # vLLM's own scheduler and block-manager tests (CPU-safe subset)
+make ci          # everything CI runs, in the same order
 ```
+
+Without `make`, export `VLLM_USE_SIMULATOR=1 VLLM_NO_USAGE_STATS=1` before
+pytest starts (vLLM chooses its platform when it is imported) and run
+`tools/run_project_tests.sh [m1|m2|m3]`. Each test module declares its
+milestone with `pytestmark = pytest.mark.m1` (or `m2`, `m3`). Milestones 2
+and 3 have no tests yet. The Milestone 1 tests:
 
 | File | What it covers | Time |
 |---|---|---|
@@ -173,7 +235,12 @@ python -m pytest tests/simulator -v -o asyncio_default_fixture_loop_scope=functi
 | `tests/simulator/test_online.py` | A real `vllm serve` (both front-ends) through the OpenAI client: completions, chat, streaming, concurrency, `/metrics`. | ~20 s |
 
 vLLM's own CPU-safe tests for the scheduler and block manager still pass
-with the simulator enabled (see `report.md`, section 4).
+with the simulator enabled (`make test-core`; see `report.md`, section 4).
+
+Every pull request runs these tests on GitHub (`project-ci`), together with a
+check of the PR against `CONTRIBUTING.md` (`pr-requirements`) and the
+repository's linters. Run `make lint` and `make check-pr BODY=pr.md` before
+opening one.
 
 ## Known limitations
 

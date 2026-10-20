@@ -1,0 +1,65 @@
+# Project tests for the COMP 536 prefix-sharing study (specs/001-ci-cd).
+# Installs the project with `make setup` (CPU-only), runs the project's tests
+# one milestone at a time, then vLLM's tests/core subset (CONTRIBUTING.md
+# section 6). Every step is a Makefile target that members also run locally.
+name: project-ci
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: project-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VLLM_USE_SIMULATOR: "1"
+      VLLM_NO_USAGE_STATS: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python 3.12
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install uv==0.12.24
+      # The same commands everyone runs locally (Makefile), so CI also checks
+      # that they work on Linux. On Linux `make setup` installs the pure-Python
+      # build with CPU-only PyTorch (torch==2.5.1 resolves to 2.5.1+cpu).
+      - name: Install the project (make setup)
+        run: |
+          make setup
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Check the install
+        run: |
+          python - <<'EOF'
+          import torch
+          from vllm.platforms import current_platform
+          print("torch", torch.__version__, "platform", current_platform)
+          assert torch.__version__.endswith("+cpu"), torch.__version__
+          assert current_platform.is_cpu(), current_platform
+          EOF
+      # Our own tests, one step per milestone (tools/run_project_tests.sh).
+      - name: Every project test is marked with its milestone
+        run: make check-markers
+      - name: Milestone 1 tests (simulator)
+        run: make test-m1 ARGS=-v
+      - name: Milestone 2 tests (client simulator, metrics, cache tuning)
+        run: make test-m2 ARGS=-v
+      - name: Milestone 3 tests (workloads, eviction policies)
+        run: make test-m3 ARGS=-v
+      # vLLM's own tests for the scheduler and block manager, which Milestone
+      # 2 Task 3 and Milestone 3 modify (CONTRIBUTING.md section 6.2).
+      - name: vLLM core tests (scheduler, block manager, evictors)
+        run: make test-core
