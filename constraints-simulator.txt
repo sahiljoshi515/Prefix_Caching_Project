@@ -27,3 +27,7 @@ opencv-python-headless==4.10.0.84
 ray==2.40.0
 setuptools<76
 xgrammar<0.2
+# Analysis figures (analysis/plots.py). pyparsing 3.3 deprecates names
+# matplotlib 3.9 still uses and floods the test output with warnings.
+matplotlib==3.9.2
+pyparsing<3.3

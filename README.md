@@ -15,7 +15,8 @@ design and test notes are in `report.md`.
 |---|---|---|---|
 | 1 | Simulator that replaces model execution | Done | `vllm/simulator.py`, `tests/simulator/` |
 | 2, Task 1 | Client simulator and ShareGPT preprocessing | Done | `client_simulator/` |
-| 2, Tasks 2–3 | Prefix-sharing metrics; cache size, block size and eviction policies | Planned | `specs/004-*`, `specs/005-*` |
+| 2, Task 2 | Cache event log, prefix-sharing metrics, single- vs multi-turn replay | In progress | `vllm/core/block/cache_events.py`, `analysis/`, `specs/004-*` |
+| 2, Task 3 | Cache size, block size and eviction policies | Planned | `specs/005-*` |
 | 3 | Eviction policies across workloads; a workload-aware policy | Planned | `specs/006-*`, `specs/007-*` |
 
 How the team works (branches, pull requests, tests, CI) is in
@@ -27,7 +28,8 @@ task list under [`specs/`](specs/README.md).
 | Path | Purpose |
 |---|---|
 | `vllm/simulator.py` (new) | `Simulator` (trace replay logic) and `SimulatorExecutor` (the vLLM executor that uses it). |
-| `vllm/envs.py` | Declares `VLLM_USE_SIMULATOR` and `VLLM_SIMULATOR_TRACE`. |
+| `vllm/envs.py` | Declares `VLLM_USE_SIMULATOR`, `VLLM_SIMULATOR_TRACE` and `VLLM_CACHE_EVENT_LOG`. |
+| `vllm/core/block/cache_events.py` (new), `prefix_caching_block.py`, `cpu_gpu_block_allocator.py`, `block_manager.py` | Milestone 2: opt-in log of every prefix-cache event (hit, miss, insert, free, revive, evict) with its request; off unless `VLLM_CACHE_EVENT_LOG` is set. |
 | `vllm/platforms/__init__.py` | Pins the CPU platform when the simulator is on, so the engine starts on any machine. |
 | `vllm/engine/llm_engine.py`, `vllm/engine/async_llm_engine.py` | Select `SimulatorExecutor` (four lines each). |
 | `vllm/entrypoints/launcher.py`, `vllm/entrypoints/openai/api_server.py`, `vllm/utils.py` | macOS fixes: hand the already-bound port to uvicorn instead of binding it twice, and skip a root-only port lookup during shutdown. |
@@ -35,6 +37,7 @@ task list under [`specs/`](specs/README.md).
 | `tests/simulator/` (new) | 67 tests: unit, in-process engine, and a real `vllm serve`. |
 | `examples/simulator/` (new) | Example trace and a client that replays it. |
 | `client_simulator/` (new) | Milestone 2: ShareGPT download and preprocessing, and the replay client (Poisson arrivals, single- and multi-turn, chat template). |
+| `analysis/` (new) | Milestone 2: the shared metrics (cached fraction, hits per block, reuse intervals, hit sources), the server launcher, figures, and the Task 2 experiment command. |
 | `Makefile`, `tools/run_project_tests.sh` (new) | Shared commands for setup, tests per milestone, linting and PR checks. |
 | `.github/workflows/project-ci.yml`, `pr-requirements.yml`, `tools/pr_check/` (new) | CI: the project's tests on every PR, and a check of each PR against `CONTRIBUTING.md`. |
 | `CONTRIBUTING.md`, `.specify/`, `specs/` (new) | Team rules, the project constitution, and a spec per milestone task. |
@@ -57,6 +60,7 @@ VLLM_USE_PRECOMPILED=1 uv pip install --editable . -c constraints-simulator.txt
 #   VLLM_TARGET_DEVICE=empty uv pip install --editable . -c constraints-simulator.txt
 
 uv pip install pytest==8.3.3 pytest-asyncio==0.24.0   # only needed for the tests
+uv pip install matplotlib==3.9.2 -c constraints-simulator.txt   # analysis figures
 ```
 
 Shortcut: `make setup` runs these steps on macOS or Linux (on Linux it takes
@@ -196,6 +200,32 @@ python -m client_simulator.client_sim \
 tokens, and the run's configuration and `/metrics` snapshots are saved next
 to it. All options and output fields are in
 [`client_simulator/README.md`](client_simulator/README.md).
+
+### Analyzing prefix sharing (Milestone 2, Task 2)
+
+With `VLLM_CACHE_EVENT_LOG=<file>`, the server writes one JSON line per
+prefix-cache event of the KV cache (format in
+`vllm/core/block/cache_events.py`). One command replays the same sample in
+both settings, each on a fresh server with the log on, and computes the
+metrics and figures of
+[`specs/004-m2-prefix-sharing-analysis`](specs/004-m2-prefix-sharing-analysis/spec.md):
+
+```bash
+# Needs the preprocessed files from step 1 above and a free port 8000.
+python -m analysis.run_m2_task2 --limit 1000 --out results/m2-task2
+# Quick check (about 20 s): 20 conversations, no pacing
+python -m analysis.run_m2_task2 --limit 20 --conversation-rate inf \
+  --think-time 0 --out results/smoke
+# Recompute metrics and figures without replaying
+python -m analysis.run_m2_task2 --out results/m2-task2 --analyze-only
+```
+
+Each setting gets `results/m2-task2/<setting>/` with the client results, the
+event log, `run.json` (configuration, commit, KV-cache size), the metrics as
+CSV files and `summary.json`, which also holds the self-checks: the log's
+hit rate equals vLLM's `gpu_prefix_cache_hit_rate` (SC-003), and how many
+requests' `cached_tokens` differ from the hits logged for them (SC-004).
+Figures go to `results/m2-task2/figures/` (`--figures` to choose).
 
 ### Useful vLLM flags for experiments
 
