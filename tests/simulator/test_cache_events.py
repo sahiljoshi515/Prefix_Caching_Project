@@ -4,11 +4,13 @@ Engine-level tests on the simulator: gpt2's config and tokenizer only, block
 size 16, ``VLLM_CACHE_EVENT_LOG`` pointing into ``tmp_path``.
 """
 import json
+from typing import Dict
 
 import pytest
 
 from vllm import EngineArgs, LLMEngine, SamplingParams, TokensPrompt
 from vllm.core.block import cache_events
+from vllm.outputs import RequestOutput
 from vllm.utils import Device
 
 from .conftest import write_trace
@@ -50,7 +52,7 @@ def make_engine(gpt2_dir, tmp_path, monkeypatch):
 
 def run_to_completion(engine, max_steps=5000):
     """Step the engine until every request finished; return final outputs."""
-    finals = {}
+    finals: Dict[str, RequestOutput] = {}
     for _ in range(max_steps):
         if not engine.has_unfinished_requests():
             return finals

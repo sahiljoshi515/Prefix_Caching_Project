@@ -4,6 +4,7 @@ Every expected value is worked out by hand from the small logs below.
 """
 import gzip
 import json
+from typing import Dict, List
 
 import pytest
 
@@ -179,7 +180,7 @@ def test_hits_per_residency_restarts_after_eviction():
 
 def test_reuse_intervals_between_consecutive_accesses():
     rows = m.reuse_intervals(LOG)
-    by_hash = {}
+    by_hash: Dict[int, List[float]] = {}
     for row in rows:
         by_hash.setdefault(row["hash"], []).append(row["interval_s"])
     # Hash 1: insert 1, hits 4 and 10 -> 3 and 6. Hash 2: one access only.
