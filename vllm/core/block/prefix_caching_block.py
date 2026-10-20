@@ -5,6 +5,7 @@ from os.path import commonprefix
 from typing import (Callable, Dict, FrozenSet, Iterable, List, Optional, Set,
                     Tuple)
 
+from vllm.core.block.cache_events import CacheEventRecorder
 from vllm.core.block.common import (CacheMetricData, CopyOnWriteTracker,
                                     get_all_blocks_recursively)
 from vllm.core.block.interfaces import (Block, BlockAllocator, BlockId, Device,
@@ -67,6 +68,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         block_size: int,
         block_ids: Optional[Iterable[int]] = None,
         eviction_policy: EvictionPolicy = EvictionPolicy.LRU,
+        event_recorder: Optional[CacheEventRecorder] = None,
     ):
         if block_ids is None:
             block_ids = range(num_blocks)
@@ -116,6 +118,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             refcounter=self._refcounter.as_readonly())
 
         self.metric_data = CacheMetricData()
+        # COMP 536 cache event log; None unless VLLM_CACHE_EVENT_LOG is set.
+        self._events = event_recorder
 
     # Implements Block.Factory.
     def _create_block(
@@ -170,10 +174,14 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         cached_block_id = self._cached_blocks.get(block.content_hash, None)
         if cached_block_id is not None:
             self.metric_data.query(hit=True)
+            if self._events is not None:
+                self._events.log("hit", block.content_hash, cached_block_id)
             block.block_id = cached_block_id
             self._incr_refcount_cached_block(block)
             return block
         self.metric_data.query(hit=False)
+        if self._events is not None:
+            self._events.log("miss", block.content_hash, None)
         self._block_pool.free_block(block)
 
         # No cached block => Allocate a new block
@@ -236,6 +244,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             # In case a cached block was evicted, restore its tracking
             if block_id in self.evictor:
                 self.evictor.remove(block_id)
+                if self._events is not None:
+                    self._events.log("revive", block.content_hash, block_id)
 
             self._track_block_id(block_id, computed=True)
 
@@ -260,6 +270,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         # (This keeps the cached block around so it can be reused)
         self.evictor.add(block_id, block.content_hash, block.num_tokens_total,
                          self._block_tracker[block_id].last_accessed)
+        if self._events is not None:
+            self._events.log("free", block.content_hash, block_id)
 
         # Stop tracking the block
         self._untrack_block_id(block_id)
@@ -325,6 +337,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         assert _block_id == block_id
 
         self._cached_blocks.pop(content_hash_to_evict)
+        if self._events is not None:
+            self._events.log("evict", content_hash_to_evict, block_id)
 
         self._refcounter.incr(block_id)
         self._track_block_id(block_id, computed=False)
@@ -462,11 +476,15 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             # Mark this block as touched so that it can be marked as
             # computed after the entire batch of sequences are scheduled.
             self._touched_blocks.add(block.block_id)
+            if self._events is not None:
+                self._events.log("insert", block.content_hash, block.block_id)
             return block.block_id
 
         # Reuse the cached content hash
         self._decr_refcount_hashless_block(block)
         block.block_id = self._cached_blocks[block.content_hash]
+        if self._events is not None:
+            self._events.log("dedupe", block.content_hash, block.block_id)
 
         # Increment refcount of the cached block and (possibly) restore
         # it from the evictor.

@@ -88,7 +88,7 @@ These change details of the 2026-10-18 draft:
 
 | Path | Purpose |
 |---|---|
-| `vllm/core/block/cache_events.py` | `CacheEventRecorder` (buffered JSONL writer, count/time flush, `end` line on close), `recorder_from_env()` (one recorder per path per process), `bind_seq`/`unbind_seq`, `context(request_id, op)` |
+| `vllm/core/block/cache_events.py` | `CacheEventRecorder` (buffered JSONL writer, count/time flush, `end` line on close, sequence-to-request map), `recorder_from_env()` (one recorder per path per process), `close_all()`, and the `attributed(op)` decorator for block-manager methods |
 | `analysis/__init__.py` | Package marker |
 | `analysis/events.py` | Load an event log (plain or `.gz`) into typed rows; check header and `end` line |
 | `analysis/metrics.py` | The metric definitions of the spec, as pure functions, plus hit-source attribution |
@@ -103,9 +103,9 @@ These change details of the 2026-10-18 draft:
 | Path | Change | Reason |
 |---|---|---|
 | `vllm/envs.py` | Declare `VLLM_CACHE_EVENT_LOG` next to `VLLM_SIMULATOR_TRACE` (:76, :480) | Same pattern as the simulator |
-| `vllm/core/block/prefix_caching_block.py` | `self._events = None` in `__init__` (:64); one `if self._events is not None:` call at: `hit`/`miss` in `allocate_immutable_block` (:170-176); `revive` in `_incr_refcount_cached_block` (:236-238); `free` in `_decr_refcount_cached_block` (:261); `evict` in `_maybe_allocate_evicted_block_id` (:319); `insert` and `dedupe` in `promote_to_immutable_block` (:458-469) | The events exist only inside the allocator |
+| `vllm/core/block/prefix_caching_block.py` | Optional `event_recorder` argument stored as `self._events` in `__init__` (:64); one `if self._events is not None:` call at: `hit`/`miss` in `allocate_immutable_block` (:170-176); `revive` in `_incr_refcount_cached_block` (:236-238); `free` in `_decr_refcount_cached_block` (:261); `evict` in `_maybe_allocate_evicted_block_id` (:319); `insert` and `dedupe` in `promote_to_immutable_block` (:458-469) | The events exist only inside the allocator |
 | `vllm/core/block/cpu_gpu_block_allocator.py` | In `create` (:79), attach the recorder to the GPU `PrefixCachingBlockAllocator` only | Keeps swap-space blocks out of the log |
-| `vllm/core/block_manager.py` | When the recorder is on: `bind_seq` in `allocate` (:164); run `allocate`, `append_slots` (:234), `free` (:252) and `swap_in` (:359) inside `context(request_id, op)`; `unbind_seq` in `free` | Request attribution without new allocator arguments (FR-004) |
+| `vllm/core/block_manager.py` | `self._events` from `recorder_from_env()` in `__init__`; `@cache_events.attributed(op)` on `allocate` (:164), `append_slots` (:234), `free` (:252), `swap_in` (:359) and `swap_out` (:412). The decorator calls the method directly when `self._events` is None | Request attribution without new allocator arguments or re-indented method bodies (FR-004) |
 
 ### Other repository files
 

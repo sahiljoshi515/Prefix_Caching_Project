@@ -129,18 +129,20 @@ The log's request ids let each hit be attributed to one source.
   "block": <physical id>, "req": <request id or null>, "op": <operation or
   null>}`, with `ev` one of `hit`, `miss`, `insert`, `dedupe`, `free`,
   `revive`, `evict`, and `op` the block-manager call it happened in:
-  `allocate` (prompt), `append_slots` (decode), `swap_in` or `free`. The
-  first line is a header with `time.time()` and `time.monotonic()` so the
-  log can be aligned with the client's UTC start time.
+  `allocate` (prompt), `append_slots` (decode), `free`, `swap_in` or
+  `swap_out`. The first line is a header with `time.time()` and
+  `time.monotonic()` so the log can be aligned with the client's UTC
+  start time.
 - **FR-003**: The recorder MUST buffer lines and flush every 4,096 events or
   1 second, whichever comes first, and at engine shutdown. Closing writes a
   final `{"ev": "end"}` line; the analysis MUST warn when it is missing (the
   engine was killed and the tail may be lost).
 - **FR-004**: Request attribution MUST come from the block manager setting
   the current request id and operation around `allocate`, `append_slots`,
-  `free` and `swap_in`, not from new allocator arguments, to keep upstream
-  edits small. `append_slots` and `free` receive only a sequence, so the
-  recorder keeps a sequence-id-to-request-id map, filled in `allocate`.
+  `free`, `swap_in` and `swap_out`, not from new allocator arguments, to
+  keep upstream edits small. `append_slots` and `free` receive only a
+  sequence, so the recorder keeps a sequence-id-to-request-id map, filled
+  in `allocate`.
 - **FR-005**: Metric code MUST live in `analysis/` as pure functions of the
   event log and result JSONL, with no vLLM import, so it is unit-testable and
   reusable by `005` to `007`.
