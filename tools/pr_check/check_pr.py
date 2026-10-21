@@ -8,7 +8,7 @@ reported but do not.
 In GitHub Actions the pull request is read from ``GITHUB_EVENT_PATH``. To run
 it locally on your branch before opening a PR::
 
-    python tools/pr_check/check_pr.py --base origin/main --head HEAD \\
+    python tools/pr_check/check_pr.py --base origin/milestone-2 --head HEAD \\
         --body-file my_pr_description.md
 
 Pass ``--no-description`` instead of ``--body-file`` to check only the

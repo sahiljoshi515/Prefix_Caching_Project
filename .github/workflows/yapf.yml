@@ -2,16 +2,18 @@ name: yapf
 
 on:
   # Trigger the workflow on push or pull request,
-  # but only for the main branch
+  # but only for main and the milestone-* branches
   push:
     branches:
       - main
+      - "milestone-*"
     paths:
       - "**/*.py"
       - .github/workflows/yapf.yml
   pull_request:
     branches:
       - main
+      - "milestone-*"
     paths:
       - "**/*.py"
       - .github/workflows/yapf.yml

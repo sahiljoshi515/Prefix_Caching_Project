@@ -59,7 +59,10 @@ and Linux, and `make help` lists the other shortcuts. In particular:
 ## 4. Branching and Review
 
 All changes shall be developed on a dedicated feature branch created from
-`main`. Direct commits to `main` are not permitted.
+the current milestone branch, which is the repository's default branch
+(`milestone-2` during Milestone 2). Direct commits to a milestone branch or
+to `main` are not permitted; a milestone branch reaches `main` through a PR
+as well.
 
 Branch names shall take the form `<type>-<name>-<description>`: the type
 below, the author's first name, and a short description, all lowercase with
@@ -75,8 +78,8 @@ words separated by hyphens:
 
 Each feature should be specified first under `specs/` (see
 [`specs/README.md`](specs/README.md)). Once it has been implemented and
-tested, its author shall open a pull request (PR) against `main`. Each PR
-shall:
+tested, its author shall open a pull request (PR) against the milestone
+branch. Each PR shall:
 
 - address a single feature or fix and contain no unrelated changes;
 - pass the tests required by Section 6 and include tests for new
@@ -99,18 +102,20 @@ PR whose description lacks one of them, which changes an upstream vLLM file
 without listing it, which touches `vllm/v1/`, or which commits data, results
 or a file over 1 MB; it warns about missing tests, commit messages that break
 Section 5 and branch names that break the pattern above. Run it before
-opening the PR:
+opening the PR (after `git fetch origin`):
 
 ```bash
-python tools/pr_check/check_pr.py --base origin/main --head HEAD \
-    --body-file my_pr_description.md
+make check-pr BODY=my_pr_description.md
+# same as: python tools/pr_check/check_pr.py --base origin/milestone-2 \
+#     --head HEAD --body-file my_pr_description.md
 ```
 
 At least one other team member shall review and approve the PR before it is
 merged. Review feedback should be addressed in follow-up commits rather than
 by rewriting branch history. PRs shall be merged with a merge commit, not
 squashed, so that the complete commit history required for submission is
-preserved. The history of `main` shall never be rewritten or force-pushed.
+preserved. The history of `main` and of the milestone branches shall never
+be rewritten or force-pushed.
 
 ## 5. Commit Conventions
 

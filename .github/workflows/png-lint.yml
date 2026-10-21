@@ -3,12 +3,14 @@ on:
   push:
     branches:
       - "main"
+      - "milestone-*"
     paths:
       - '*.excalidraw.png'
       - '.github/workflows/png-lint.yml'
   pull_request:
     branches:
       - "main"
+      - "milestone-*"
     paths:
       - '*.excalidraw.png'
       - '.github/workflows/png-lint.yml'

@@ -10,6 +10,7 @@ on:
   pull_request:
     branches:
       - main
+      - "milestone-*"
     # "edited" re-runs the check after the description is fixed.
     types: [opened, edited, reopened, synchronize, ready_for_review]
 

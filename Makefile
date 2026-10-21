@@ -4,8 +4,9 @@
 
 PYTHON_VERSION ?= 3.12
 VENV ?= .venv
-# Branch or commit to compare against in `lint` and `check-pr`.
-BASE ?= origin/main
+# Branch PRs merge into (the default branch on GitHub); `lint` and
+# `check-pr` compare against it. Update it when the default branch changes.
+BASE ?= origin/milestone-2
 # Extra pytest arguments, e.g. `make test-m1 ARGS="-k prefix -x"`.
 ARGS ?=
 # PR description file for `check-pr`; without it the description is skipped.
@@ -23,7 +24,7 @@ PYTORCH_CPU_INDEX := https://download.pytorch.org/whl/cpu
 	test-pr-check ci lint check-pr
 
 help: ## List the available commands
-	@echo "Usage: make <target> [ARGS=\"pytest args\"] [BASE=origin/main] [BODY=pr.md]"
+	@echo "Usage: make <target> [ARGS=\"pytest args\"] [BASE=$(BASE)] [BODY=pr.md]"
 	@echo
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  make %-15s %s\n", $$1, $$2}'
