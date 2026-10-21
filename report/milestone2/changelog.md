@@ -17,6 +17,11 @@ follow-ups open (spec 003, Phase 5).
 
 ### Unreleased (Task 2 branch)
 
+- **Changed:** the Task 1 note records the full run: 5,097 of 5,098
+  multi-turn requests that reached the server replayed exactly, the one
+  mismatch comes from an `<|endoftext|>` string in a recording, the context
+  limit removed 25% of multi-turn turns, and the ShareGPT rebuild kept
+  99.1% of conversations (`33393edb`).
 - **Added:** the Task 1 note,
   [`task1-client-simulator.md`](task1-client-simulator.md): what was built
   and what Task 2's runs verified about it, including a likely connection
@@ -53,12 +58,17 @@ follow-ups open (spec 003, Phase 5).
 
 ## Task 2: replay ShareGPT and analyze prefix sharing
 
-[Spec 004](../../specs/004-m2-prefix-sharing-analysis/spec.md). In progress
-on branch `milestone2-marcus-prefix-sharing-analysis` (marcus); the
-1,000-conversation run is under way, and the PR opens after PR #8.
+[Spec 004](../../specs/004-m2-prefix-sharing-analysis/spec.md). Done on
+branch `milestone2-marcus-prefix-sharing-analysis` (marcus), with the
+1,000-conversation results recorded; the PR opens after PR #8.
 
 ### Unreleased: 2026-10-21
 
+- **Added:** the results of the 1,000-conversation run, in the Task 2 note
+  with seven figures (`figures/task2/`). Multi-turn hits on 95% of block
+  lookups against 13% for single-turn; 98% of multi-turn hits are within
+  the conversation, three quarters on blocks of generated tokens; both
+  self-checks pass. Spec 004's T017 and T018 are ticked (`33393edb`).
 - **Added:** the Task 2 note,
   [`task2-prefix-sharing-analysis.md`](task2-prefix-sharing-analysis.md),
   with its setup; the results follow the 1,000-conversation run
@@ -144,7 +154,7 @@ started.
 - Task 1 follow-ups (spec 003, Phase 5): keep replaying after an answer
   mismatch, exit non-zero only on failures, unit tests, and PR #6's entry in
   [`ai-usage.md`](../ai-usage.md), and the likely keep-alive race (T015).
-- Task 2: the full run, its results and figures, then the PR.
+- Task 2: the PR, once PR #8 has merged.
 - Task 3 has not started; it builds on Task 2's event log and `analysis/`.
 - The branch protection ruleset targets no branch, so nothing stops a direct
   push to `main` (spec 001, T014; repository settings, owner only).
