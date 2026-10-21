@@ -17,6 +17,11 @@ follow-ups open (spec 003, Phase 5).
 
 ### Unreleased (Task 2 branch)
 
+- **Added:** the Task 1 note,
+  [`task1-client-simulator.md`](task1-client-simulator.md): what was built
+  and what Task 2's runs verified about it, including a likely connection
+  race between vLLM's 5 s keep-alive and the 5 s think time, now follow-up
+  T015 in spec 003 (marcus, `b79d7be3`).
 - **Fixed:** `/results/` is now in `.gitignore`, closing follow-up T014
   (marcus, `0bdb37be`).
 
@@ -54,6 +59,10 @@ on branch `milestone2-marcus-prefix-sharing-analysis` (marcus); the
 
 ### Unreleased: 2026-10-21
 
+- **Added:** the Task 2 note,
+  [`task2-prefix-sharing-analysis.md`](task2-prefix-sharing-analysis.md),
+  with its setup; the results follow the 1,000-conversation run
+  (`b79d7be3`).
 - **Changed:**
   - Spec 004 brought up to date: 16 tasks ticked, the Phase 0 measurements
     and the overhead check recorded, one PR for the whole task, seven
@@ -85,6 +94,12 @@ on branch `milestone2-marcus-prefix-sharing-analysis` (marcus); the
 [Spec 005](../../specs/005-m2-cache-tuning/spec.md), drafted in PR #7. Not
 started.
 
+### Unreleased (Task 2 branch)
+
+- **Added:** a placeholder note,
+  [`task3-cache-tuning.md`](task3-cache-tuning.md), with the sections to
+  fill (marcus, `b79d7be3`).
+
 ## Across tasks: team process, CI and documentation
 
 ### Unreleased: 2026-10-21 (Task 2 branch)
@@ -99,6 +114,9 @@ started.
 - **Changed:** `report/` split into one folder per milestone, with each
   milestone's changelog, notes and figures inside it and `ai-usage.md` at
   the top (`22598a4c`). Milestone 1's own files are in its changelog.
+- **Changed:** task notes are named after their specs
+  (`task<K>-<name>.md`), every task has a note or a placeholder, and
+  Milestone 3 has its folder and changelog (`b79d7be3`).
 
 ### PR #8, open (ChiaXinLiang, commits by marcus)
 
@@ -125,8 +143,8 @@ started.
 - PR #8 needs review; until it merges, PRs into `milestone-2` run no checks.
 - Task 1 follow-ups (spec 003, Phase 5): keep replaying after an answer
   mismatch, exit non-zero only on failures, unit tests, and PR #6's entry in
-  [`ai-usage.md`](../ai-usage.md).
-- Task 2: the full run, its note and figures, then the PR.
+  [`ai-usage.md`](../ai-usage.md), and the likely keep-alive race (T015).
+- Task 2: the full run, its results and figures, then the PR.
 - Task 3 has not started; it builds on Task 2's event log and `analysis/`.
 - The branch protection ruleset targets no branch, so nothing stops a direct
   push to `main` (spec 001, T014; repository settings, owner only).

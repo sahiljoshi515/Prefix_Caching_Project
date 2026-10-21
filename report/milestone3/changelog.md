@@ -14,6 +14,12 @@ here.
 
 [Spec 006](../../specs/006-m3-workload-eviction/spec.md). Not started.
 
+### Unreleased (Milestone 2, Task 2 branch)
+
+- **Added:** this changelog and a placeholder note,
+  [`task1-workload-eviction.md`](task1-workload-eviction.md) (marcus,
+  `b79d7be3`).
+
 ### 2026-10-20: PR #7 merged into `main` by sahiljoshi515
 
 - **Added:** spec 006, a draft (ChiaXinLiang, commits by marcus,
@@ -22,6 +28,12 @@ here.
 ## Task 2: a workload-aware policy for mixed workloads
 
 [Spec 007](../../specs/007-m3-mixed-workload-policy/spec.md). Not started.
+
+### Unreleased (Milestone 2, Task 2 branch)
+
+- **Added:** a placeholder note,
+  [`task2-mixed-workload-policy.md`](task2-mixed-workload-policy.md)
+  (marcus, `b79d7be3`).
 
 ### 2026-10-20: PR #7 merged into `main` by sahiljoshi515
 
