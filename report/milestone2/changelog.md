@@ -60,7 +60,7 @@ follow-ups open (spec 003, Phase 5).
 
 [Spec 004](../../specs/004-m2-prefix-sharing-analysis/spec.md). Done on
 branch `milestone2-marcus-prefix-sharing-analysis` (marcus), with the
-1,000-conversation results recorded; the PR opens after PR #8.
+1,000-conversation results recorded; in review as PR #9.
 
 ### Unreleased: 2026-10-21
 
@@ -154,7 +154,7 @@ started.
 - Task 1 follow-ups (spec 003, Phase 5): keep replaying after an answer
   mismatch, exit non-zero only on failures, unit tests, and PR #6's entry in
   [`ai-usage.md`](../ai-usage.md), and the likely keep-alive race (T015).
-- Task 2: the PR, once PR #8 has merged.
+- Task 2: review and merge PR #9; its checks run once PR #8 merges.
 - Task 3 has not started; it builds on Task 2's event log and `analysis/`.
 - The branch protection ruleset targets no branch, so nothing stops a direct
   push to `main` (spec 001, T014; repository settings, owner only).

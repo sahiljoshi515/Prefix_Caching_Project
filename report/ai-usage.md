@@ -42,3 +42,18 @@ Entry format:
   workflow filter, Makefile and document changes. Marcus asked for the
   `milestone-2` branch and gave the go-ahead for the fix.
 - **Prompts:** none beyond the request for the branch.
+
+### PR #9: Milestone 2 Task 2: Prefix-sharing analysis
+
+- **Tools:** Claude Code (Claude Opus 5.5).
+- **Used for:** reading vLLM's v0 allocator, the cache event log and its
+  hooks, `analysis/`, the tests, the experiment runs and their analysis,
+  the notes, the changelogs and the documentation rules. Marcus chose one
+  PR for all of Task 2, the report layout (a folder per milestone,
+  changelogs, notes named after their specs, placeholders), port 8000 in
+  the docs, and keeping PR #8 separate.
+- **Prompts:** "right now I am going to continue the task 2 in milestone2,
+  please create a branch and plan for it to implement"; "can you test it
+  first the task?"; "Since we are a group, so what method do you suggest
+  that we should do for our project? a way to document all things";
+  "please run the full run testing for me and record it".
