@@ -2,7 +2,8 @@
 
 **Spec**: [spec.md](spec.md) | **Branch**:
 `milestone2-marcus-prefix-sharing-analysis` (from `milestone-2`) |
-**Date**: 2026-10-18, revised 2026-10-20 after reading the code at `72cfea62`
+**Date**: 2026-10-18, revised 2026-10-20 after reading the code at `72cfea62`,
+and 2026-10-21 with the Phase 0 results and the single-PR decision
 
 ## Summary
 
@@ -19,13 +20,16 @@ shared measurement layer for `005`, `006` and `007`.
 (1.26.4, pinned) and `matplotlib` (new, `3.9.2`, pinned in
 `constraints-simulator.txt` and installed by `make setup`) for analysis
 **Storage**: `results/<experiment>/<setting>/` (gitignored: `/results/` is
-added to `.gitignore` in PR 2); figures in `figures/m2-task2/` (only figures
-used in the report are committed)
+in `.gitignore`); figures in `results/<experiment>/figures/`, and the ones the
+report uses are committed under `report/figures/m2-task2/`
 **Testing**: `tests/simulator/test_cache_events.py` (engine-level, gpt2
-config only, like `tests/simulator/test_engine.py`) and
-`tests/analysis/test_metrics.py` (pure functions). Both carry
+config only, like `tests/simulator/test_engine.py`),
+`tests/analysis/test_metrics.py` (pure functions), and
+`tests/analysis/test_run_m2_task2.py` and `test_server.py` (the experiment
+command and launcher without a server). All carry
 `pytestmark = pytest.mark.m2`.
-**Performance Goals**: recorder-off overhead < 2% (SC-001)
+**Performance Goals**: recorder-off overhead < 2% (SC-001); measured in
+[Overhead](#overhead-sc-001-t009)
 
 ## Findings from the code (2026-10-20)
 
@@ -78,8 +82,8 @@ These change details of the 2026-10-18 draft:
 - [x] IV. This spec owns the shared metric definitions; `analysis/metrics.py`
       is the single implementation
 - [x] V. Manifest per run; data and bulk results gitignored
-- [x] VI. One PR per phase from this branch, merge commits into
-      `milestone-2`
+- [x] VI. One PR for all of Task 2 from this branch (team decision,
+      2026-10-20), merged into `milestone-2` with a merge commit
 - [x] VII. AI usage noted per PR
 
 ## Files
@@ -97,6 +101,8 @@ These change details of the 2026-10-18 draft:
 | `analysis/run_m2_task2.py` | Runs both settings, writes run folders, CSVs, figures and the SC-003/SC-004 checks |
 | `tests/simulator/test_cache_events.py` | Engine-level recorder tests |
 | `tests/analysis/__init__.py`, `tests/analysis/test_metrics.py` | Hand-derived metric tests |
+| `tests/analysis/test_run_m2_task2.py` | Sample writing, CSVs and self-checks, figures, refusal to overwrite, all without a server |
+| `tests/analysis/test_server.py` | Launcher: busy port refused, binds 127.0.0.1, reads the KV-cache size |
 
 ### Modified upstream vLLM files
 
@@ -183,20 +189,68 @@ settings together. Refuses to overwrite an existing run folder.
    - Research: replay 100 conversations per mode; fix the sample size, rate
      and think time so one setting takes 30 minutes or less; record the KV
      block count and whether the sample evicts at all.
-1. **Phase 1 — Recorder** (PR 1): recorder, hooks, engine tests, overhead
-   check.
-2. **Phase 2 — Analysis library** (PR 2): `analysis/events.py`,
-   `metrics.py`, unit tests, `matplotlib` pin, `/results/` ignore.
-3. **Phase 3 — Experiments** (PR 3): `server.py`, `plots.py`,
-   `run_m2_task2.py`, report figures, written analysis in
-   `report/notes/m2-task2.md`.
+1. **Phase 1 — Recorder**: recorder, hooks, engine tests, overhead check.
+2. **Phase 2 — Analysis library**: `analysis/events.py`, `metrics.py`, unit
+   tests, `matplotlib` pin, `/results/` ignore.
+3. **Phase 3 — Experiments**: `server.py`, `plots.py`, `run_m2_task2.py`,
+   report figures, written analysis in `report/notes/m2-task2.md`.
+
+All three phases go into one PR (Constitution Check, VI); the phases are the
+order of work and of commits.
+
+### Phase 0 results (2026-10-20)
+
+100 conversations per mode at the defaults (seed 0, 1 conversation/s, think
+time 5 s), recorder on:
+
+| | Single-turn | Multi-turn |
+|---|---|---|
+| Replay time | 121 s | 260 s |
+| Requests completed | 100 | 507 |
+| Skipped (prompt over 8,192 tokens) | 0 | 6 |
+| Events logged | 5,280 | 194,259 |
+| Event log | 0.7 MB | 26.8 MB (138 bytes per event) |
+| Distinct blocks inserted | 2,191 (22 per conversation) | 11,318 (113 per conversation) |
+| Evictions | 0 | 0 |
+
+- **KV cache** at the defaults: 21,845 blocks of 16 tokens
+  (`VLLM_CPU_KVCACHE_SPACE` 4 GiB, 12,288 bytes per token for Qwen2.5-0.5B).
+- **Sample kept**: the first 1,000 conversations, 1/s, think time 5 s. They
+  hold 6,833 turns; 306 conversations have one turn and the longest has 300,
+  which bounds the multi-turn run at about 300 × 5 s = 25 minutes of think
+  time.
+- **Eviction (T004)**: cached blocks stay until evicted, so a run evicts once
+  it has inserted more distinct blocks than the cache holds. Single-turn
+  sends one request per conversation, so 1,000 conversations insert about
+  10 × 2,191 ≈ 21,900 blocks and reach the 21,845 limit only near the end.
+  Multi-turn inserted 11,318 blocks for the first 100 conversations (592
+  turns, 513 of them sent before over-long turns ended their
+  conversations), and the sample has 11.5 times as many turns, so it evicts
+  well before the end. The full run's `evict` counts give the exact numbers.
+
+### Overhead (SC-001, T009)
+
+100 conversations multi-turn (507 requests), `--conversation-rate inf
+--think-time 0`, three runs each, replay time in seconds:
+
+| Code | Runs | Mean | vs `milestone-2` |
+|---|---|---|---|
+| `milestone-2` (`72cfea62`) | 4.93, 5.06, 5.76 | 5.25 | |
+| This branch, recorder off | 5.08, 5.00, 5.39 | 5.16 | −1.8% |
+| This branch, recorder on | 5.46, 5.48, 5.64 | 5.53 | +5.3% |
+
+With the recorder off, the difference is inside the run-to-run spread
+(up to 0.8 s between runs of the same code), so SC-001 holds. With it on,
+replay is about 5% slower; experiments always run with it on, so their
+timings are comparable with each other.
 
 ## Verification
 
 ```bash
 make test-m2 ARGS=-v      # recorder and metric tests
 make test-m1 test-core    # unchanged behaviour with the recorder off
-python -m analysis.run_m2_task2 --limit 20 --out results/smoke   # < 2 min
+python -m analysis.run_m2_task2 --limit 20 --conversation-rate inf \
+  --think-time 0 --out results/smoke                         # < 2 min
 ```
 
 SC-003 and SC-004 are computed at the end of `run_m2_task2` and written to
@@ -206,8 +260,8 @@ the manifest.
 
 | Risk | Mitigation |
 |---|---|
-| Default cache (about 21,800 blocks at 4 GiB for Qwen2.5-0.5B) never evicts for the sample, so reuse intervals reflect only the workload | Report it; Task 3 studies cache pressure |
-| Event logs grow large (one line per block lookup) | About 100 bytes per event; measure in Phase 0; gzip after the run if needed |
+| Default cache (21,845 blocks at 4 GiB for Qwen2.5-0.5B) never evicts for the sample, so reuse intervals reflect only the workload | Phase 0: multi-turn evicts at 1,000 conversations, single-turn barely; report the `evict` counts; Task 3 studies cache pressure |
+| Event logs grow large (one line per block lookup) | Measured 138 bytes per event (Phase 0); the full run's size goes into the note; gzip after the run if needed |
 | `hash()` randomization differs between runs | Never compare hashes across runs |
 | Hook placement drifts from line numbers | Hooks are named by method; tests fail if an event kind goes missing |
 | Engine killed before the final flush | 1-second flush; missing `end` line is reported |

@@ -4,7 +4,7 @@
 Task 2
 **Owner**: Xin Liang Chia | **Reviewers**: Jasmine Lu, Triet Chau
 **Status**: In progress (branch `milestone2-marcus-prefix-sharing-analysis`)
-**Created**: 2026-10-18 | **Updated**: 2026-10-20 |
+**Created**: 2026-10-18 | **Updated**: 2026-10-21 |
 **Depends on**: `003` (client simulator)
 
 **Input**: Charter: "Replay ShareGPT in two settings: single-turn (first turn
@@ -61,16 +61,21 @@ worked out by hand (for example, hits at t=1, 4 and 10 give intervals 3 and
 ### User Story 3 - Single-turn vs multi-turn comparison (Priority: P1)
 
 One command runs both settings on the same conversation sample with the same
-seed and default cache settings, then draws the comparison plots:
+seed and default cache settings, then draws the comparison plots (file
+names as `run_m2_task2` writes them):
 
-1. CDF of per-request cached fraction, single vs multi.
-2. CDF of hits per block, single vs multi (zero-hit blocks included).
-3. CDF of reuse interval in seconds, log x-axis, single vs multi.
-4. Mean cached fraction by turn index (multi only).
-5. Hit rate over time (windowed), both settings.
+- `fig1`: CDF of per-request cached fraction, single vs multi.
+- `fig2`: CDF of hits per block, single vs multi (zero-hit blocks included).
+- `fig3`: CDF of reuse interval in seconds, log x-axis, single vs multi.
+- `fig3b`: the same intervals counted in requests allocated in between,
+  which does not depend on simulator speed (see Edge Cases).
+- `fig4`: mean cached fraction by turn index (multi only).
+- `fig5`: hit rate over time (windowed), both settings.
+- `fig6`: hit sources, intra vs cross conversation and prompt vs
+  decode-written blocks (for User Story 4).
 
 **Independent Test**: on a 20-conversation fixture, the command finishes in
-under 2 minutes and writes all five figures plus the CSVs behind them.
+under 2 minutes and writes all seven figures plus the CSVs behind them.
 
 ---
 
@@ -149,7 +154,8 @@ The log's request ids let each hit be attributed to one source.
 - **FR-006**: One command (`python -m analysis.run_m2_task2`) MUST run both
   settings, write a run folder per setting
   (`results/m2-task2/<setting>/`) with the client output, event log, manifest
-  and metrics CSVs, and render the figures to `figures/m2-task2/`.
+  and metrics CSVs, and render the figures to `results/m2-task2/figures/`.
+  The figures the report uses are committed under `report/figures/m2-task2/`.
 - **FR-007**: The manifest MUST record everything constitution V lists,
   including the KV-cache block count that vLLM logs at startup.
 
@@ -184,7 +190,7 @@ These definitions are shared project-wide (constitution IV).
   case.
 - **SC-003**: The log agrees with vLLM's own count:
   `gpu_prefix_cache_hit_rate` from `/metrics` equals `hit/(hit+miss)` over
-  all logged lookups (both `src` values), to 4 decimal places.
+  all logged lookups (including `swap_in` lookups), to 4 decimal places.
 - **SC-004**: For every completed request, the run reports
   `d = cached_tokens − block_size × (allocate-op hits the log attributes to
   it)`. `d = 0` is expected for most requests. `d < 0` happens when a hit was
@@ -194,7 +200,7 @@ These definitions are shared project-wide (constitution IV).
   records how many requests fall in each case, and the analysis explains any
   share above 1%.
 - **SC-005**: Both settings run on the agreed sample (default 1,000
-  conversations, seed 0) and all five figures are produced from committed
+  conversations, seed 0) and all seven figures are produced from committed
   scripts.
 
 ## Assumptions
@@ -203,8 +209,8 @@ These definitions are shared project-wide (constitution IV).
   16, `VLLM_CPU_KVCACHE_SPACE` 4 GiB, LRU. Task 3 varies them.
 - Sample: the first 1,000 conversations of the preprocessed file, in file
   order (the client's `--limit`; it has no shuffle), Poisson arrivals with
-  seed 0, conversation rate 1/s, think time 5 s. Finalized in Phase 0 from a
-  throughput measurement.
+  seed 0, conversation rate 1/s, think time 5 s. Kept after the Phase 0
+  measurement (`plan.md`, Phase 0 results).
 - Model: `Qwen/Qwen2.5-0.5B-Instruct` (tokenizer and config only), served
   with `--enable-prefix-caching --enable-prompt-tokens-details
   --max-model-len 8192`, as in `client_simulator/README.md`. Its chat
