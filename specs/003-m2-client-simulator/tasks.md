@@ -24,7 +24,8 @@
 
 - [ ] T006 [US2] Keep replaying after an answer mismatch (FR-008, plan #2)
 - [ ] T007 [US2] Non-zero exit only on failures (FR-009, plan #3)
-- [ ] T014 [P] Add `/results/` to `.gitignore` (FR-012, plan #6)
+- [x] T014 [P] Add `/results/` to `.gitignore` (FR-012, plan #6); done in
+  the Task 2 PR (spec 004, T013)
 - [ ] T010 [P] Add `__init__.py` files and the module docstring (plan #7, #8)
 - [ ] T011 Tests for FR-010 (`tests/client_simulator/test_sharegpt.py`,
   `test_client_sim.py`, fixture under `tests/client_simulator/fixtures/`)

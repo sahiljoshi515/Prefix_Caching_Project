@@ -134,8 +134,8 @@ before/after `/metrics` snapshots.
   `cached_tokens` default. *(Open: follow-up)*
 - **FR-011**: The code MUST pass ruff, isort and yapf. *(Done in `e026ae82`)*
 - **FR-012**: Experiment output (`results/`) MUST NOT be committed
-  (constitution V); `results/` is gitignored. *(Partly done: the files were
-  removed in `e026ae82`; the `.gitignore` entry is still missing)*
+  (constitution V); `results/` is gitignored. *(Done: the files were
+  removed in `e026ae82`, and the Task 2 PR adds the `.gitignore` entry)*
 - **FR-013**: Adapters for later workloads (`006`) MUST implement
   `check_download(raw_path)` and `load_conversations(raw_path)` and plug into
   `process_raw_traces.ADAPTERS`.
