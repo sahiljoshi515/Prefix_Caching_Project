@@ -1,8 +1,8 @@
 # Milestone 1 report: a prefix-sharing simulator inside vLLM
 
 COMP 536 project. This report explains what was changed in vLLM, how the
-simulator works, and how to test it. Setup and run instructions are in
-`README.md`.
+simulator works, and how to test it. Setup and run instructions are in the
+root [`README.md`](../../README.md).
 
 ## 1. Goal and result
 
@@ -32,7 +32,7 @@ real server driven through the OpenAI API.
 | `vllm/engine/async_llm_engine.py` | +4 lines in `_get_executor_cls` | Same hook for `--disable-frontend-multiprocessing`. |
 | `vllm/entrypoints/launcher.py`, `vllm/entrypoints/openai/api_server.py`, `vllm/utils.py` | ~15 lines | macOS fixes unrelated to the simulator. The API server bound its port and then uvicorn bound it a second time, which Linux tolerates and macOS rejects ("address already in use"); the pre-bound socket is now handed to uvicorn. On shutdown, a debug-only port lookup called `psutil.net_connections()`, which needs root on macOS and turned every Ctrl-C into a traceback; it is skipped there. Both are the fixes upstream adopted later. |
 | `constraints-simulator.txt` (new) | version pins | PyPI today resolves to transformers 5, openai 2+, huggingface_hub 1+, which this Dec-2024 vLLM cannot import. The pins are the versions vLLM's own CI used at this commit. |
-| `tests/simulator/` (new) | 4 files, 59 tests | See section 5. |
+| `tests/simulator/` (new) | 3 test files and a `conftest.py`, 67 tests | See section 4. |
 | `examples/simulator/` (new) | trace + client | A runnable walkthrough for the README. |
 | `README.md` / `README_vllm.md` | project README; upstream README renamed | Submission requirement. |
 

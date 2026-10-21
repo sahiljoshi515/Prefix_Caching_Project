@@ -7,7 +7,8 @@ and without model weights. Request handling, continuous batching, the
 scheduler, the KV-cache block manager and prefix caching all run unchanged;
 only the model forward pass is replaced by replaying pre-collected responses
 from a trace. Upstream's README is kept as `README_vllm.md`; the Milestone 1
-design and test notes are in `report.md`.
+design and test notes are in
+[`report/notes/m1-simulator.md`](report/notes/m1-simulator.md).
 
 ## Project status
 
@@ -272,8 +273,8 @@ Figures go to `results/m2-task2/figures/` (`--figures` to choose).
 `--swap-space GiB` with `--preemption-mode swap`, `--max-num-seqs`,
 `--max-num-batched-tokens`, `--enable-chunked-prefill`,
 `--disable-frontend-multiprocessing` (run the engine inside the API process;
-easier to debug). See `report.md` for how each one interacts with the
-simulator. The KV cache must hold at least `--max-model-len` tokens, as on a
+easier to debug). See `report/notes/m1-simulator.md` for how each one
+interacts with the simulator. The KV cache must hold at least `--max-model-len` tokens, as on a
 real GPU; the server refuses to start otherwise. With prefix caching or
 chunked prefill the CPU platform logs that it casts fp16 to bf16: harmless
 here, both are 2 bytes per value.
@@ -314,7 +315,8 @@ Milestone 2 (`make test-m2`, 39 tests):
 | `tests/analysis/test_server.py` | The server launcher: a busy port is refused, it binds 127.0.0.1, it reads the KV-cache size. | < 1 s |
 
 vLLM's own CPU-safe tests for the scheduler and block manager still pass
-with the simulator enabled (`make test-core`; see `report.md`, section 4).
+with the simulator enabled (`make test-core`; see
+`report/notes/m1-simulator.md`, section 4).
 
 Every pull request runs these tests on GitHub (`project-ci`), together with a
 check of the PR against `CONTRIBUTING.md` (`pr-requirements`) and the
