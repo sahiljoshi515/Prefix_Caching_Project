@@ -25,6 +25,12 @@ in the [changelog](changelog.md). How to run it is in
   server's response trace, one line per turn with the id
   `<conversation_id>:<turn>`. The full dataset gives 49,704 conversations
   and 328,525 turns, 6.6 turns per conversation on average.
+- **What rebuilding did:** 94,145 fragments formed 50,142 conversations, of
+  which 49,704 (99.1%) were kept; 13,392 of those had been split across
+  several fragments. The 438 skipped ones used other roles than user and
+  assistant (224), started with the assistant (109), broke the alternation
+  (96) or were empty (9). Eight unanswered final user messages were
+  dropped.
 
 ### Replay client
 
@@ -57,29 +63,39 @@ From Task 2's runs: seed 0, 1 conversation/s, think time 5 s,
 |---|---|---|---|
 | Phase 0: 100 conversations, single-turn | 100 | 0 | 0 |
 | Phase 0: 100 conversations, multi-turn | 507 | 6, which ended 79 later turns | 0 |
-| Full run: 1,000 conversations | Added when the run finishes | | |
+| Full run: 1,000 conversations, single-turn | 997 | 3 | 0 |
+| Full run: 1,000 conversations, multi-turn | 5,097 | 60, which ended 1,671 later turns | 2, which ended 3 later turns |
 
 - **Answers match the recording.** A request only counts as completed when
-  the reply equals the recorded answer and finished normally, so every
-  completed request replayed exactly (spec 003, SC-001, at 100
-  conversations).
-- **The context limit trims long conversations.** In the first 100
-  conversations, 85 of 592 turns (14%) were never replayed: 6 were too long
-  and 79 came after them. Multi-turn statistics are therefore biased toward
-  shorter histories.
+  the reply equals the recorded answer and finished normally. In the full
+  multi-turn run, 5,098 requests reached the server and 5,097 replayed
+  exactly; the one mismatch is explained below, so spec 003's SC-001 holds
+  at 1,000 conversations.
+- **One mismatch, explained.** The recorded answer of
+  `sharegpt:Fakxkr4:6` contains the text `<|endoftext|>`. Qwen's tokenizer
+  turns that text into its real end-of-text token, so the simulated reply
+  stops there ("Skipped 1 messages" instead of "Skipped 1
+  messages<|endoftext|>"). Spec 003 lists this case: special-token strings
+  inside ShareGPT text.
+- **The context limit trims long conversations.** In the full multi-turn
+  run, 938 of 1,000 conversations replayed whole. 60 reached a turn too
+  long for 8,192 tokens, which removed 1,731 of 6,833 turns (25%), always
+  the turns with the longest histories. Multi-turn statistics are
+  therefore biased toward shorter histories.
 
 ## Open issues
 
 - **A connection race, likely.** In the full multi-turn run, request
   `sharegpt:QWJhYvA:5` failed instantly, before it was sent, with an empty
-  error message and no error on the server. vLLM's HTTP server closes idle
+  error message and no error on the server. It happened once in 5,159
+  requests. vLLM's HTTP server closes idle
   connections after 5 s (`TIMEOUT_KEEP_ALIVE`,
   `vllm/entrypoints/openai/api_server.py:70`), exactly our think time, so
   the client can reuse a pooled connection just as the server closes it.
   Not confirmed yet. A client keep-alive shorter than 5 s, or one retry on
-  connection errors, would avoid it. Since a failed turn ends its
-  conversation, each such failure also drops the conversation's remaining
-  turns.
+  connection errors, would avoid it (spec 003, T015). Since a failed turn
+  ends its conversation, each such failure also drops the conversation's
+  remaining turns; this one was the conversation's last turn.
 - **Spec 003's follow-ups** (Phase 5 of its
   [tasks](../../specs/003-m2-client-simulator/tasks.md)): keep replaying
   after an answer mismatch, exit with an error only on failures, unit tests,

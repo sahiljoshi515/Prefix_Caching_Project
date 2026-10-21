@@ -226,7 +226,9 @@ time 5 s), recorder on:
   Multi-turn inserted 11,318 blocks for the first 100 conversations (592
   turns, 513 of them sent before over-long turns ended their
   conversations), and the sample has 11.5 times as many turns, so it evicts
-  well before the end. The full run's `evict` counts give the exact numbers.
+  well before the end. The full run confirmed both: single-turn inserted
+  25,587 blocks and evicted 3,743 from 834 s on; multi-turn inserted 114,964
+  and evicted 94,360 from 222 s on.
 
 ### Overhead (SC-001, T009)
 
@@ -260,8 +262,8 @@ the manifest.
 
 | Risk | Mitigation |
 |---|---|
-| Default cache (21,845 blocks at 4 GiB for Qwen2.5-0.5B) never evicts for the sample, so reuse intervals reflect only the workload | Phase 0: multi-turn evicts at 1,000 conversations, single-turn barely; report the `evict` counts; Task 3 studies cache pressure |
-| Event logs grow large (one line per block lookup) | Measured 138 bytes per event (Phase 0); the full run's size goes into the note; gzip after the run if needed |
+| Default cache (21,845 blocks at 4 GiB for Qwen2.5-0.5B) never evicts for the sample, so reuse intervals reflect only the workload | Both settings evict, but evictions cost multi-turn only 627 misses (0.1% of lookups); Task 3 needs smaller caches to see policies differ |
+| Event logs grow large (one line per block lookup) | 138 bytes per event; the full multi-turn run wrote 286 MB (2.07 million events), so logs stay in `results/` |
 | `hash()` randomization differs between runs | Never compare hashes across runs |
 | Hook placement drifts from line numbers | Hooks are named by method; tests fail if an event kind goes missing |
 | Engine killed before the final flush | 1-second flush; missing `end` line is reported |
