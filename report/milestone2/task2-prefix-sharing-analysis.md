@@ -29,10 +29,9 @@ of it the chat template's system prompt and a few duplicated prompts.
   with the client's per-request results; the metrics are computed by
   `analysis/metrics.py`.
 - **Command:** `python -m analysis.run_m2_task2 --limit 1000 --out
-  results/m2-task2`, with `--port 8010` and absolute data paths. It ran on
-  2026-10-21 at commit `e6849da8` (clean): 985 s of single-turn replay,
-  1,097 s of multi-turn replay, 35 minutes in all. Each setting's
-  `run.json` records the full configuration.
+  results/m2-task2`. It ran on 2026-10-21 at commit `e6849da8` (clean):
+  985 s of single-turn replay, 1,097 s of multi-turn replay, 35 minutes in
+  all. Each setting's `run.json` records the full configuration.
 
 Phase 0 and the recorder's overhead are in
 [`plan.md`](../../specs/004-m2-prefix-sharing-analysis/plan.md#phase-0-results-2026-10-20).
@@ -183,8 +182,7 @@ python -m analysis.run_m2_task2 --out results/m2-task2 --analyze-only  # metrics
 
 The run folders (event logs, CSVs, `summary.json`) stay in `results/`,
 which git ignores; the figures above are copies of
-`results/m2-task2/figures/`. The port does not affect the results: the
-full run used `--port 8010` because 8000 was busy, and on 2026-10-21 the
-documented commands were checked on the default port 8000 (the
-20-conversation smoke run passes SC-003 in both settings in 20 s, and the
-README's "How to tell the prefix cache worked" gives the values it lists).
+`results/m2-task2/figures/`. The commands use port 8000, which must be
+free. On 2026-10-21 they were checked there: the 20-conversation smoke run
+passes SC-003 in both settings in 20 s, and the README's "How to tell the
+prefix cache worked" gives the values it lists.
