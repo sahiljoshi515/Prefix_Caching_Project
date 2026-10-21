@@ -183,4 +183,8 @@ python -m analysis.run_m2_task2 --out results/m2-task2 --analyze-only  # metrics
 
 The run folders (event logs, CSVs, `summary.json`) stay in `results/`,
 which git ignores; the figures above are copies of
-`results/m2-task2/figures/`.
+`results/m2-task2/figures/`. The port does not affect the results: the
+full run used `--port 8010` because 8000 was busy, and on 2026-10-21 the
+documented commands were checked on the default port 8000 (the
+20-conversation smoke run passes SC-003 in both settings in 20 s, and the
+README's "How to tell the prefix cache worked" gives the values it lists).
