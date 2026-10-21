@@ -95,9 +95,10 @@ started.
     (`532371fb`, `5e1a2f9d`).
   - `CONTRIBUTING.md` Section 8, Documentation, and a PR-template checkbox
     for updated documents (`532371fb`).
-  - This changelog (`fc120862`).
-- **Changed:** `report.md` moved to `report/milestone1/simulator.md`, with
-  its test count corrected (`295c1c8e`).
+  - This changelog (`fc120862`, `bef0b579`).
+- **Changed:** `report/` split into one folder per milestone, with each
+  milestone's changelog, notes and figures inside it and `ai-usage.md` at
+  the top (`22598a4c`). Milestone 1's own files are in its changelog.
 
 ### PR #8, open (ChiaXinLiang, commits by marcus)
 

@@ -19,7 +19,8 @@ Built by sahiljoshi515. Independent verification:
 
 - **Changed:** `report.md` moved to `report/milestone1/simulator.md`; its
   "What was modified" table now gives 67 tests in 3 test files, matching its
-  own section 4, instead of 59 (marcus, `295c1c8e`).
+  own section 4, instead of 59 (marcus, `295c1c8e`, `22598a4c`).
+- **Added:** this changelog (marcus, `561462a3`, `22598a4c`).
 
 ### 2026-10-20: PR #7 merged into `main` by sahiljoshi515
 
