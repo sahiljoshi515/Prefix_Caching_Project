@@ -31,6 +31,7 @@ here.
 | Note | Task | Spec |
 |---|---|---|
 | [`m1-simulator.md`](notes/m1-simulator.md) | Milestone 1: the simulator | [`002`](../specs/002-m1-simulator-verification/spec.md) |
+| [`milestone1.md`](notes/milestone1.md) | Milestone 1 changelog | [`002`](../specs/002-m1-simulator-verification/spec.md) |
 | [`milestone2.md`](notes/milestone2.md) | Milestone 2 changelog, by task | All Milestone 2 specs |
 | `m2-task1.md` | Milestone 2, Task 1: the client simulator (design only) | [`003`](../specs/003-m2-client-simulator/spec.md) |
 | `m2-task2.md` | Milestone 2, Task 2: ShareGPT single- vs multi-turn sharing | [`004`](../specs/004-m2-prefix-sharing-analysis/spec.md) |
