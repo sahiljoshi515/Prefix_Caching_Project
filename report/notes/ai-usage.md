@@ -22,3 +22,23 @@ Entry format:
 ```
 
 ## Entries
+
+### PR #7: Add contributing guide, spec-kit specs and project CI
+
+- **Tools:** Claude Code (Claude Opus 5.5).
+- **Used for:** the review of PR #6, the specs, the workflows,
+  `tools/pr_check/`, `tools/run_project_tests.sh`, the Makefile and the
+  README update. Marcus chose the scope, the branch-name rule and the
+  one-PR packaging.
+- **Prompts:** "can you help me to create a speckit that related to this
+  task: <the charter>"; "What I would like to do is if someone make pr, then
+  the test will be run on it to detect is there fits the requirement for
+  us"; "I mean we can do make file for everyone for testing?"
+
+### PR #8: Run CI checks on PRs into the milestone branches
+
+- **Tools:** Claude Code (Claude Opus 5.5).
+- **Used for:** finding that PRs into `milestone-2` ran no checks, and the
+  workflow filter, Makefile and document changes. Marcus asked for the
+  `milestone-2` branch and gave the go-ahead for the fix.
+- **Prompts:** none beyond the request for the branch.
