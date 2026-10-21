@@ -73,7 +73,7 @@ same once the PR is open).
   figures used in the report (`report/milestone2/figures/task2/`)
 - [ ] T018 [US4] Write the analysis with numbers, including the
   intra/cross and prompt/decode-written hit shares
-  (`report/milestone2/task2.md`)
+  (`report/milestone2/task2-prefix-sharing-analysis.md`)
 - [x] T019 Document the commands in `README.md`; tick these tasks
 
 ## Dependencies

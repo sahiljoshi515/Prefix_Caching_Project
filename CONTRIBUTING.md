@@ -204,7 +204,7 @@ other documents link to it rather than repeat it:
 | How to install, run and test the project | [`README.md`](README.md) |
 | How the team works | `CONTRIBUTING.md` (this document) |
 | What a task builds and why, how, and what is left | `specs/<NNN>-<name>/spec.md`, `plan.md`, `tasks.md` |
-| What a task found: numbers, figures, interpretation | `report/milestone<N>/task<K>.md` |
+| What a task found: numbers, figures, interpretation | `report/milestone<N>/task<K>-<name>.md` |
 | What the group changed in a milestone, task by task (changelog) | `report/milestone<N>/changelog.md` |
 | The figures the technical report uses | `report/milestone<N>/figures/task<K>/` |
 | How AI tools were used | `report/ai-usage.md` (Section 10) |

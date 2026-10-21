@@ -193,7 +193,7 @@ settings together. Refuses to overwrite an existing run folder.
 2. **Phase 2 — Analysis library**: `analysis/events.py`, `metrics.py`, unit
    tests, `matplotlib` pin, `/results/` ignore.
 3. **Phase 3 — Experiments**: `server.py`, `plots.py`, `run_m2_task2.py`,
-   report figures, written analysis in `report/milestone2/task2.md`.
+   report figures, written analysis in `report/milestone2/task2-prefix-sharing-analysis.md`.
 
 All three phases go into one PR (Constitution Check, VI); the phases are the
 order of work and of commits.

@@ -95,7 +95,7 @@ the manifest carry it instead.
 2. **Phase 1** (PR 1): evictors, hit hook, variable, tests.
 3. **Phase 2** (PR 2): sweep runner and tests.
 4. **Phase 3** (PR 3): run the grid, figures, write-up in
-   `report/milestone2/task3.md`.
+   `report/milestone2/task3-cache-tuning.md`.
 
 ## Verification
 

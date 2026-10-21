@@ -91,7 +91,7 @@ Alternatives to evaluate in User Story 2 before committing:
 2. **Phase 1**: finalize scoring from the characterization; write it here.
 3. **Phase 2**: implement `wa` (oracle), tests, first comparison.
 4. **Phase 3**: inferred labels; full evaluation grid; write-up in
-   `report/milestone3/task2.md`.
+   `report/milestone3/task2-mixed-workload-policy.md`.
 
 ## Verification
 

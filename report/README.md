@@ -25,15 +25,24 @@ report/
 │   └── simulator.md       how the simulator works and how it was tested
 ├── milestone2/
 │   ├── changelog.md
-│   ├── task<K>.md         one note per task, once its results are final
+│   ├── task1-client-simulator.md
+│   ├── task2-prefix-sharing-analysis.md
+│   ├── task3-cache-tuning.md
 │   └── figures/task<K>/   the figures the paper uses
-└── milestone3/            the same, once Milestone 3 starts
+└── milestone3/
+    ├── changelog.md
+    ├── task1-workload-eviction.md
+    └── task2-mixed-workload-policy.md
 ```
+
+A task's note is named `task<K>-<name>.md`, with the name of its spec
+(`specs/005-m2-cache-tuning` gives `task3-cache-tuning.md`). A task that has
+not started has a placeholder with the sections to fill.
 
 | File | Holds | Written |
 |---|---|---|
 | `milestone<N>/changelog.md` | What the group changed in the milestone, task by task and newest first, with who and which commit or PR | An entry in each PR that adds to the milestone |
-| `milestone<N>/task<K>.md` | One task's findings: setup, numbers, figures, interpretation | In the task's PR, once its results are final |
+| `milestone<N>/task<K>-<name>.md` | One task's findings: setup, numbers, figures, interpretation | A placeholder until the task starts; filled in the task's PR once its results are final |
 | `milestone<N>/figures/task<K>/` | The figures the paper uses (PDF for LaTeX, PNG for the notes) | With the note |
 | `ai-usage.md` | How AI tools were used, and the prompts worth quoting | See [AI usage](#ai-usage) |
 | LaTeX source (MLSys 2025 style) | The paper | Once Milestone 3's notes exist; `specs/001-ci-cd` (User Story 5) then builds the PDF in CI |
@@ -44,17 +53,17 @@ here.
 
 ## Notes
 
-| Milestone | Note | Covers | Spec |
-|---|---|---|---|
-| 1 | [`simulator.md`](milestone1/simulator.md) | The simulator: design, changes to vLLM, tests | [`002`](../specs/002-m1-simulator-verification/spec.md) |
-| 2 | `task1.md` | Task 1: the client simulator (design only) | [`003`](../specs/003-m2-client-simulator/spec.md) |
-| 2 | `task2.md` | Task 2: ShareGPT single- vs multi-turn sharing | [`004`](../specs/004-m2-prefix-sharing-analysis/spec.md) |
-| 2 | `task3.md` | Task 3: cache size, block size, eviction policy | [`005`](../specs/005-m2-cache-tuning/spec.md) |
-| 3 | `task1.md` | Task 1: the best policy per workload | [`006`](../specs/006-m3-workload-eviction/spec.md) |
-| 3 | `task2.md` | Task 2: a policy for the mixed workload | [`007`](../specs/007-m3-mixed-workload-policy/spec.md) |
+| Milestone | Note | Covers | Spec | State |
+|---|---|---|---|---|
+| 1 | [`simulator.md`](milestone1/simulator.md) | The simulator: design, changes to vLLM, tests | [`002`](../specs/002-m1-simulator-verification/spec.md) | Written |
+| 2 | [`task1-client-simulator.md`](milestone2/task1-client-simulator.md) | Task 1: the client simulator and the ShareGPT data | [`003`](../specs/003-m2-client-simulator/spec.md) | Written |
+| 2 | [`task2-prefix-sharing-analysis.md`](milestone2/task2-prefix-sharing-analysis.md) | Task 2: ShareGPT single- vs multi-turn sharing | [`004`](../specs/004-m2-prefix-sharing-analysis/spec.md) | Setup written; results after the full run |
+| 2 | [`task3-cache-tuning.md`](milestone2/task3-cache-tuning.md) | Task 3: cache size, block size, eviction policy | [`005`](../specs/005-m2-cache-tuning/spec.md) | Placeholder |
+| 3 | [`task1-workload-eviction.md`](milestone3/task1-workload-eviction.md) | Task 1: the best policy per workload | [`006`](../specs/006-m3-workload-eviction/spec.md) | Placeholder |
+| 3 | [`task2-mixed-workload-policy.md`](milestone3/task2-mixed-workload-policy.md) | Task 2: a policy for the mixed workload | [`007`](../specs/007-m3-mixed-workload-policy/spec.md) | Placeholder |
 
 The changelogs: [Milestone 1](milestone1/changelog.md),
-[Milestone 2](milestone2/changelog.md).
+[Milestone 2](milestone2/changelog.md), [Milestone 3](milestone3/changelog.md).
 
 Each note follows the shape of a paper section, so that condensing it is
 mostly cutting:
@@ -81,9 +90,9 @@ the 6-page limit.
 |---|---|---|---|
 | 1. Introduction | Prefix sharing in LLM serving, what we measured, the main findings | All notes | 0.5 |
 | 2. Simulator | Replacing model execution while keeping vLLM's scheduler and cache | `milestone1/simulator.md` | 0.75 |
-| 3. Workload replay and metrics | Client simulator, cache event log, metric definitions | `milestone2/task1.md`, `task2.md` | 0.5 |
-| 4. Homogeneous chatbot workload | ShareGPT single- vs multi-turn; cache parameters and policies | `milestone2/task2.md`, `task3.md` | 1.75 |
-| 5. Heterogeneous and mixed workloads | Best policy per workload; the workload-aware policy against the baselines | `milestone3/task1.md`, `task2.md` | 1.75 |
+| 3. Workload replay and metrics | Client simulator, cache event log, metric definitions | Milestone 2, tasks 1 and 2 | 0.5 |
+| 4. Homogeneous chatbot workload | ShareGPT single- vs multi-turn; cache parameters and policies | Milestone 2, tasks 2 and 3 | 1.75 |
+| 5. Heterogeneous and mixed workloads | Best policy per workload; the workload-aware policy against the baselines | Milestone 3, tasks 1 and 2 | 1.75 |
 | 6. AI usage | Required by the course | `ai-usage.md` | 0.25 |
 | 7. Conclusion | | | 0.5 |
 | Appendix | The most helpful prompts (required) | `ai-usage.md` | not counted |
