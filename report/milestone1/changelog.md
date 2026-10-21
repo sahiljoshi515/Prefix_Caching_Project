@@ -4,7 +4,7 @@ What the group changed in Milestone 1, newest first, so the milestone can be
 reviewed in one place. Each entry says what changed, who made the change,
 and where (commit or PR). It comes from the git history and the pull
 requests. How the simulator works and how it was tested are in
-[`m1-simulator.md`](m1-simulator.md).
+[`simulator.md`](simulator.md).
 
 Commit dates are the author's local date; merge dates are GitHub's (UTC).
 Last updated 2026-10-21. Each PR that changes Milestone 1's code or
@@ -17,7 +17,7 @@ Built by sahiljoshi515. Independent verification:
 
 ### Unreleased (Task 2 branch)
 
-- **Changed:** `report.md` moved to `report/notes/m1-simulator.md`; its
+- **Changed:** `report.md` moved to `report/milestone1/simulator.md`; its
   "What was modified" table now gives 67 tests in 3 test files, matching its
   own section 4, instead of 59 (marcus, `295c1c8e`).
 
@@ -69,6 +69,6 @@ Committed directly, without a PR; the team's PR rules came later
 ## Open items
 
 - Spec 002: both verifiers run its procedure and report (T001 to T006).
-- Milestone 1's entry in [`ai-usage.md`](ai-usage.md). Section 7 of the
+- Milestone 1's entry in [`ai-usage.md`](../ai-usage.md). Section 7 of the
   report says an AI assistant (Claude) was used, and there is no PR
   description to copy it from, so its author writes it.

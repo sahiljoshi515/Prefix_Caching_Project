@@ -96,7 +96,7 @@ started.
   - `CONTRIBUTING.md` Section 8, Documentation, and a PR-template checkbox
     for updated documents (`532371fb`).
   - This changelog (`fc120862`).
-- **Changed:** `report.md` moved to `report/notes/m1-simulator.md`, with
+- **Changed:** `report.md` moved to `report/milestone1/simulator.md`, with
   its test count corrected (`295c1c8e`).
 
 ### PR #8, open (ChiaXinLiang, commits by marcus)
@@ -124,7 +124,7 @@ started.
 - PR #8 needs review; until it merges, PRs into `milestone-2` run no checks.
 - Task 1 follow-ups (spec 003, Phase 5): keep replaying after an answer
   mismatch, exit non-zero only on failures, unit tests, and PR #6's entry in
-  [`ai-usage.md`](ai-usage.md).
+  [`ai-usage.md`](../ai-usage.md).
 - Task 2: the full run, its note and figures, then the PR.
 - Task 3 has not started; it builds on Task 2's event log and `analysis/`.
 - The branch protection ruleset targets no branch, so nothing stops a direct

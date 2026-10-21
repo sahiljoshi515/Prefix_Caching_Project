@@ -29,7 +29,7 @@
 
 - [ ] T010 [US4] `analysis/run_m3_task2.py` grid: mixes × seeds × policies ×
   label modes, plus single-workload traces
-- [ ] T011 [US4] Figures and write-up (`report/notes/m3-task2.md`)
+- [ ] T011 [US4] Figures and write-up (`report/milestone3/task2.md`)
 
 ## Dependencies
 

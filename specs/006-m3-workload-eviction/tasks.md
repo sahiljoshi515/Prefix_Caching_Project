@@ -28,7 +28,7 @@
 ## Phase 3: User Story 3 — analysis (P2)
 
 - [ ] T011 [US3] Per-workload reuse-profile figures and the comparison plot
-- [ ] T012 [US3] Write-up (`report/notes/m3-task1.md`)
+- [ ] T012 [US3] Write-up (`report/milestone3/task1.md`)
 
 ## Dependencies
 

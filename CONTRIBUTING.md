@@ -191,7 +191,7 @@ active.
   Small samples used as test fixtures may be committed and should be kept
   under 1 MB in total.
 - Raw logs and bulk results should not be committed. Final figures that
-  appear in the report may be, under `report/figures/<task>/`.
+  appear in the report may be, under `report/milestone<N>/figures/task<K>/`.
 
 ## 8. Documentation
 
@@ -204,10 +204,10 @@ other documents link to it rather than repeat it:
 | How to install, run and test the project | [`README.md`](README.md) |
 | How the team works | `CONTRIBUTING.md` (this document) |
 | What a task builds and why, how, and what is left | `specs/<NNN>-<name>/spec.md`, `plan.md`, `tasks.md` |
-| What a task found: numbers, figures, interpretation | `report/notes/<task>.md` |
-| What the group changed in a milestone, task by task (changelog) | `report/notes/milestone<N>.md` |
-| The figures the technical report uses | `report/figures/<task>/` |
-| How AI tools were used | `report/notes/ai-usage.md` (Section 10) |
+| What a task found: numbers, figures, interpretation | `report/milestone<N>/task<K>.md` |
+| What the group changed in a milestone, task by task (changelog) | `report/milestone<N>/changelog.md` |
+| The figures the technical report uses | `report/milestone<N>/figures/task<K>/` |
+| How AI tools were used | `report/ai-usage.md` (Section 10) |
 | File formats, classes and functions | Docstrings in the code |
 
 - A PR that changes behaviour, commands or results shall update the
@@ -246,7 +246,7 @@ The project specification permits AI tools subject to the following rules:
 - Prompts that produced a significant portion of a change shall be
   recorded, so that they can be collected for the AI-usage section and the
   appendix of the technical report. A PR that used AI tools shall add an
-  entry with them to `report/notes/ai-usage.md`, because PR descriptions are
+  entry with them to `report/ai-usage.md`, because PR descriptions are
   not part of the submitted git history; the description may point to that
   entry instead of repeating the prompts.
 - Commits written largely by an AI tool may carry a `Co-Authored-By:`

@@ -30,7 +30,7 @@
 - [ ] T011 Tests for FR-010 (`tests/client_simulator/test_sharegpt.py`,
   `test_client_sim.py`, fixture under `tests/client_simulator/fixtures/`)
 - [ ] T012 Record PR #6's AI usage for the report (the PR is merged, so add
-  it to `report/notes/ai-usage.md` instead of the description)
+  it to `report/ai-usage.md` instead of the description)
 
 ## Dependencies
 

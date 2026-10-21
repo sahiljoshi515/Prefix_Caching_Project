@@ -21,7 +21,7 @@ shared measurement layer for `005`, `006` and `007`.
 `constraints-simulator.txt` and installed by `make setup`) for analysis
 **Storage**: `results/<experiment>/<setting>/` (gitignored: `/results/` is
 in `.gitignore`); figures in `results/<experiment>/figures/`, and the ones the
-report uses are committed under `report/figures/m2-task2/`
+report uses are committed under `report/milestone2/figures/task2/`
 **Testing**: `tests/simulator/test_cache_events.py` (engine-level, gpt2
 config only, like `tests/simulator/test_engine.py`),
 `tests/analysis/test_metrics.py` (pure functions), and
@@ -193,7 +193,7 @@ settings together. Refuses to overwrite an existing run folder.
 2. **Phase 2 — Analysis library**: `analysis/events.py`, `metrics.py`, unit
    tests, `matplotlib` pin, `/results/` ignore.
 3. **Phase 3 — Experiments**: `server.py`, `plots.py`, `run_m2_task2.py`,
-   report figures, written analysis in `report/notes/m2-task2.md`.
+   report figures, written analysis in `report/milestone2/task2.md`.
 
 All three phases go into one PR (Constitution Check, VI); the phases are the
 order of work and of commits.

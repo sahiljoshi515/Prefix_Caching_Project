@@ -78,7 +78,7 @@ request with the full history, the same as multi-turn ShareGPT.
 2. **Phase 1**: adapters with fixtures and tests (one PR per adapter).
 3. **Phase 2**: client timestamps and token prompts with tests.
 4. **Phase 3**: `run_m3_task1.py`, runs, figures, write-up in
-   `report/notes/m3-task1.md`.
+   `report/milestone3/task1.md`.
 
 ## Verification
 

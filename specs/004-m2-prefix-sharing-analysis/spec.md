@@ -155,7 +155,8 @@ The log's request ids let each hit be attributed to one source.
   settings, write a run folder per setting
   (`results/m2-task2/<setting>/`) with the client output, event log, manifest
   and metrics CSVs, and render the figures to `results/m2-task2/figures/`.
-  The figures the report uses are committed under `report/figures/m2-task2/`.
+  The figures the report uses are committed under
+  `report/milestone2/figures/task2/`.
 - **FR-007**: The manifest MUST record everything constitution V lists,
   including the KV-cache block count that vLLM logs at startup.
 

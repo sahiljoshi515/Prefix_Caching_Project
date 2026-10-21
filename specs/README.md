@@ -60,8 +60,8 @@ Shared building blocks, so later specs do not re-implement them:
 4. If the implementation changes the design, update `plan.md` in the same PR
    and say so in the description.
 5. When the results are final, write them up in the task's note under
-   `report/notes/` (see [`report/README.md`](../report/README.md)). The spec
-   holds the plan; findings go into the note.
+   `report/milestone<N>/` (see [`report/README.md`](../report/README.md)).
+   The spec holds the plan; findings go into the note.
 
 ## Running the tests
 
