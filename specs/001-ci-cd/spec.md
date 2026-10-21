@@ -229,7 +229,8 @@ history, which `CONTRIBUTING.md` §4 discourages.
 - **FR-012** *(US4)*: A workflow MUST run the end-to-end replay smoke test
   once `client_simulator/` is on `main`.
 - **FR-013** *(US5)*: Workflows MUST build the report PDF and publish a
-  submission release as described in US5 once `report/` exists.
+  submission release as described in US5 once the LaTeX source in
+  `report/` exists.
 - **FR-014** *(US7)*: A workflow `pr-requirements` MUST run
   `tools/pr_check/check_pr.py` on every PR event (opened, edited,
   reopened, synchronize, ready for review), applying the rules of US7, and

@@ -20,9 +20,10 @@ design and test notes are in
 | 2, Task 3 | Cache size, block size and eviction policies | Planned | `specs/005-*` |
 | 3 | Eviction policies across workloads; a workload-aware policy | Planned | `specs/006-*`, `specs/007-*` |
 
-How the team works (branches, pull requests, tests, CI) is in
-[`CONTRIBUTING.md`](CONTRIBUTING.md). Each feature has a spec, a plan and a
-task list under [`specs/`](specs/README.md).
+How the team works (branches, pull requests, tests, CI, documentation) is
+in [`CONTRIBUTING.md`](CONTRIBUTING.md). Each feature has a spec, a plan and
+a task list under [`specs/`](specs/README.md); what each task found goes
+into the technical report under [`report/`](report/README.md).
 
 ## What changed
 
@@ -43,6 +44,7 @@ task list under [`specs/`](specs/README.md).
 | `Makefile`, `tools/run_project_tests.sh` (new) | Shared commands for setup, tests per milestone, linting and PR checks. |
 | `.github/workflows/project-ci.yml`, `pr-requirements.yml`, `tools/pr_check/` (new) | CI: the project's tests on every PR, and a check of each PR against `CONTRIBUTING.md`. |
 | `CONTRIBUTING.md`, `.specify/`, `specs/` (new) | Team rules, the project constitution, and a spec per milestone task. |
+| `report/` (new) | The technical report: one note of findings per task, the figures it uses, and later its LaTeX source. |
 
 ## Setup
 

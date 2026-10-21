@@ -89,7 +89,8 @@ Unblocked: `003` merged on 2026-10-19 (PR #6).
 
 ## Phase 6: User Story 5 — report and submission delivery (P3)
 
-Blocked until `report/` (MLSys 2025 LaTeX) exists.
+Blocked until the LaTeX source (MLSys 2025) is in `report/`; the folder
+itself holds the per-task notes from the start (`report/README.md`).
 
 - [ ] T017 [US5] Build the report PDF on changes to `report/`, check the page
   limit, upload the artifact (`.github/workflows/report.yml`)
@@ -99,5 +100,6 @@ Blocked until `report/` (MLSys 2025 LaTeX) exists.
 ## Dependencies
 
 - T004, T005 and T010 need the branch pushed (needs the author's go-ahead).
-- Phase 5 can start now (`003` is on `main`); Phase 6 needs `report/`.
+- Phase 5 can start now (`003` is on `main`); Phase 6 needs the LaTeX
+  source in `report/`.
 - T013 needs two teammates' GitHub handles; T014 needs the owner.

@@ -11,7 +11,8 @@ subset on every PR and push to `main`. Remove or scope the inherited vLLM
 workflows that fail for reasons unrelated to our code, fix the `mypy` job
 that already fails on `main`, and replace vLLM's PR template and Dependabot
 settings. The end-to-end replay smoke test (US4) and the report/submission
-delivery (US5) are later phases, gated on `003` and on `report/` existing.
+delivery (US5) are later phases, gated on `003` and on the LaTeX source in
+`report/`.
 
 ## Technical Context
 
@@ -134,9 +135,9 @@ workflow cannot.
   (`tests/fixtures/sharegpt_small.json`), runs `process_raw_traces` and
   `client_sim` in both modes, and asserts that all requests complete and that
   the multi-turn mean cached fraction is above 0.
-- **US5, report and submission** (after `report/` exists): `report.yml` builds
-  the MLSys LaTeX source with a pinned TeX Live action and checks the page
-  count with `pdfinfo`. `submission.yml` runs on `submission-*` tags with
+- **US5, report and submission** (once the LaTeX source is in `report/`):
+  `report.yml` builds the MLSys LaTeX source with a pinned TeX Live action
+  and checks the page count with `pdfinfo`. `submission.yml` runs on `submission-*` tags with
   `contents: write`, creates a `git bundle --all`, and attaches it and the PDF
   to a release.
 
