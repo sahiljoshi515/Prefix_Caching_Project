@@ -17,7 +17,7 @@ memory a week before the deadline.
 | Path | Holds | Written |
 |---|---|---|
 | `notes/<task>.md` | One task's findings: setup, numbers, figures, interpretation | In the task's PR, once its results are final |
-| `notes/milestone<N>.md` | A record of what the group did in a milestone, for review | A row in each PR that adds to the milestone |
+| `notes/milestone<N>.md` | The milestone's changelog: what the group changed, task by task, for review | An entry in each PR that adds to the milestone |
 | `notes/ai-usage.md` | How AI tools were used, and the prompts worth quoting | See [AI usage](#ai-usage) |
 | `figures/<task>/` | The figures the paper uses (PDF for LaTeX, PNG for the notes) | With the note |
 | LaTeX source (MLSys 2025 style) | The paper | Once Milestone 3's notes exist; `specs/001-ci-cd` (User Story 5) then builds the PDF in CI |
@@ -31,7 +31,7 @@ here.
 | Note | Task | Spec |
 |---|---|---|
 | [`m1-simulator.md`](notes/m1-simulator.md) | Milestone 1: the simulator | [`002`](../specs/002-m1-simulator-verification/spec.md) |
-| [`milestone2.md`](notes/milestone2.md) | Milestone 2: record of who did what | All Milestone 2 specs |
+| [`milestone2.md`](notes/milestone2.md) | Milestone 2 changelog, by task | All Milestone 2 specs |
 | `m2-task1.md` | Milestone 2, Task 1: the client simulator (design only) | [`003`](../specs/003-m2-client-simulator/spec.md) |
 | `m2-task2.md` | Milestone 2, Task 2: ShareGPT single- vs multi-turn sharing | [`004`](../specs/004-m2-prefix-sharing-analysis/spec.md) |
 | `m2-task3.md` | Milestone 2, Task 3: cache size, block size, eviction policy | [`005`](../specs/005-m2-cache-tuning/spec.md) |

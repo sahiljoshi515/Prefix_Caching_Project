@@ -205,7 +205,7 @@ other documents link to it rather than repeat it:
 | How the team works | `CONTRIBUTING.md` (this document) |
 | What a task builds and why, how, and what is left | `specs/<NNN>-<name>/spec.md`, `plan.md`, `tasks.md` |
 | What a task found: numbers, figures, interpretation | `report/notes/<task>.md` |
-| What the group did in a milestone, for review | `report/notes/milestone<N>.md` |
+| What the group changed in a milestone, task by task (changelog) | `report/notes/milestone<N>.md` |
 | The figures the technical report uses | `report/figures/<task>/` |
 | How AI tools were used | `report/notes/ai-usage.md` (Section 10) |
 | File formats, classes and functions | Docstrings in the code |
