@@ -7,7 +7,8 @@ and without model weights. Request handling, continuous batching, the
 scheduler, the KV-cache block manager and prefix caching all run unchanged;
 only the model forward pass is replaced by replaying pre-collected responses
 from a trace. Upstream's README is kept as `README_vllm.md`; the Milestone 1
-design and test notes are in `report.md`.
+design and test notes are in
+[`report/milestone1/simulator.md`](report/milestone1/simulator.md).
 
 ## Project status
 
@@ -15,29 +16,35 @@ design and test notes are in `report.md`.
 |---|---|---|---|
 | 1 | Simulator that replaces model execution | Done | `vllm/simulator.py`, `tests/simulator/` |
 | 2, Task 1 | Client simulator and ShareGPT preprocessing | Done | `client_simulator/` |
-| 2, Tasks 2–3 | Prefix-sharing metrics; cache size, block size and eviction policies | Planned | `specs/004-*`, `specs/005-*` |
+| 2, Task 2 | Cache event log, prefix-sharing metrics, single- vs multi-turn replay | In progress | `vllm/core/block/cache_events.py`, `analysis/`, `specs/004-*` |
+| 2, Task 3 | Cache size, block size and eviction policies | Planned | `specs/005-*` |
 | 3 | Eviction policies across workloads; a workload-aware policy | Planned | `specs/006-*`, `specs/007-*` |
 
-How the team works (branches, pull requests, tests, CI) is in
-[`CONTRIBUTING.md`](CONTRIBUTING.md). Each feature has a spec, a plan and a
-task list under [`specs/`](specs/README.md).
+How the team works (branches, pull requests, tests, CI, documentation) is
+in [`CONTRIBUTING.md`](CONTRIBUTING.md). Each feature has a spec, a plan and
+a task list under [`specs/`](specs/README.md); what each task found goes
+into the technical report under [`report/`](report/README.md).
 
 ## What changed
 
 | Path | Purpose |
 |---|---|
 | `vllm/simulator.py` (new) | `Simulator` (trace replay logic) and `SimulatorExecutor` (the vLLM executor that uses it). |
-| `vllm/envs.py` | Declares `VLLM_USE_SIMULATOR` and `VLLM_SIMULATOR_TRACE`. |
+| `vllm/envs.py` | Declares `VLLM_USE_SIMULATOR`, `VLLM_SIMULATOR_TRACE` and `VLLM_CACHE_EVENT_LOG`. |
+| `vllm/core/block/cache_events.py` (new), `prefix_caching_block.py`, `cpu_gpu_block_allocator.py`, `block_manager.py` | Milestone 2: opt-in log of every prefix-cache event (hit, miss, insert, free, revive, evict) with its request; off unless `VLLM_CACHE_EVENT_LOG` is set. |
 | `vllm/platforms/__init__.py` | Pins the CPU platform when the simulator is on, so the engine starts on any machine. |
 | `vllm/engine/llm_engine.py`, `vllm/engine/async_llm_engine.py` | Select `SimulatorExecutor` (four lines each). |
 | `vllm/entrypoints/launcher.py`, `vllm/entrypoints/openai/api_server.py`, `vllm/utils.py` | macOS fixes: hand the already-bound port to uvicorn instead of binding it twice, and skip a root-only port lookup during shutdown. |
 | `constraints-simulator.txt` (new) | Dependency pins contemporary with this vLLM commit. |
-| `tests/simulator/` (new) | 67 tests: unit, in-process engine, and a real `vllm serve`. |
+| `tests/simulator/` (new) | 78 tests: unit, in-process engine, a real `vllm serve`, and the cache event log. |
+| `tests/analysis/` (new) | Milestone 2: 28 tests of the metrics, the experiment command and the server launcher, without a server. |
 | `examples/simulator/` (new) | Example trace and a client that replays it. |
 | `client_simulator/` (new) | Milestone 2: ShareGPT download and preprocessing, and the replay client (Poisson arrivals, single- and multi-turn, chat template). |
+| `analysis/` (new) | Milestone 2: the shared metrics (cached fraction, hits per block, reuse intervals, hit sources), the server launcher, figures, and the Task 2 experiment command. |
 | `Makefile`, `tools/run_project_tests.sh` (new) | Shared commands for setup, tests per milestone, linting and PR checks. |
 | `.github/workflows/project-ci.yml`, `pr-requirements.yml`, `tools/pr_check/` (new) | CI: the project's tests on every PR, and a check of each PR against `CONTRIBUTING.md`. |
 | `CONTRIBUTING.md`, `.specify/`, `specs/` (new) | Team rules, the project constitution, and a spec per milestone task. |
+| `report/` (new) | The technical report: one note of findings per task, the figures it uses, and later its LaTeX source. |
 
 ## Setup
 
@@ -57,6 +64,7 @@ VLLM_USE_PRECOMPILED=1 uv pip install --editable . -c constraints-simulator.txt
 #   VLLM_TARGET_DEVICE=empty uv pip install --editable . -c constraints-simulator.txt
 
 uv pip install pytest==8.3.3 pytest-asyncio==0.24.0   # only needed for the tests
+uv pip install matplotlib==3.9.2 -c constraints-simulator.txt   # analysis figures
 ```
 
 Shortcut: `make setup` runs these steps on macOS or Linux (on Linux it takes
@@ -83,13 +91,14 @@ Notes:
 
 ## Running the simulator
 
-Three environment variables control it:
+These environment variables control it:
 
 | Variable | Meaning |
 |---|---|
 | `VLLM_USE_SIMULATOR=1` | Replace model execution by trace replay (and pin the CPU platform). |
 | `VLLM_SIMULATOR_TRACE=/path/to/trace.jsonl` | The trace to replay (optional; without it every request gets filler tokens). |
 | `VLLM_CPU_KVCACHE_SPACE=<GiB>` | Simulated KV-cache budget in GiB (default 4). `--num-gpu-blocks-override N` gives an exact block count instead. |
+| `VLLM_CACHE_EVENT_LOG=/path/to/events.jsonl` | Milestone 2: log every prefix-cache event, one JSON line each (off when unset; see [Analyzing prefix sharing](#analyzing-prefix-sharing-milestone-2-task-2)). |
 
 Start a server and replay the example trace:
 
@@ -139,6 +148,40 @@ curl -s http://localhost:8000/v1/chat/completions -H 'Content-Type: application/
 
 `--enable-prompt-tokens-details` adds `usage.prompt_tokens_details.cached_tokens`
 to chat responses, the number of prompt tokens served from the prefix cache.
+
+### How to tell the prefix cache worked
+
+The trace decides only the *answer*: the server looks the request id up and
+never compares prompts. The prefix cache works on the prompt's tokens, as in
+real vLLM, so a hit needs the same leading 16-token blocks, whatever the id.
+For example, send the same question twice to a fresh Qwen server started as
+above (39 prompt tokens with the chat template: 2 full blocks and 7 tokens
+that never fill a block):
+
+```bash
+for id in demo-1 demo-2; do
+  curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' \
+    -H "X-Request-Id: $id" \
+    -d '{"model": "Qwen/Qwen2.5-0.5B-Instruct", "max_tokens": 5,
+         "messages": [{"role": "user", "content": "Explain prefix caching in one paragraph, please."}]}'
+  echo
+done
+```
+
+Three views of the same two hits, from coarse to detailed:
+
+1. **vLLM's counter.** `curl -s localhost:8000/metrics | grep
+   '^vllm:gpu_prefix_cache_hit_rate'` gives `0.5`: 2 hits out of 4 block
+   lookups since the server started.
+2. **Per request** (needs `--enable-prompt-tokens-details`). `demo-2`'s
+   `usage` has `"prompt_tokens_details": {"cached_tokens": 32}`; `demo-1`'s is
+   `null`, because vLLM omits a zero. A different question gets 16: only the
+   first block, Qwen's default system prompt, matches.
+3. **Per block** (needs `VLLM_CACHE_EVENT_LOG`, see below). `demo-1` logs
+   `miss` and `insert` for each block, `demo-2` logs `hit` and `revive`.
+
+The Task 2 experiment checks on every run that 1 and 3 agree (`sc003_pass`
+in `summary.json`).
 
 ### Trace format
 
@@ -197,6 +240,34 @@ tokens, and the run's configuration and `/metrics` snapshots are saved next
 to it. All options and output fields are in
 [`client_simulator/README.md`](client_simulator/README.md).
 
+### Analyzing prefix sharing (Milestone 2, Task 2)
+
+With `VLLM_CACHE_EVENT_LOG=<file>`, the server writes one JSON line per
+prefix-cache event of the KV cache (format in
+`vllm/core/block/cache_events.py`). Lines are written in batches, so read the
+file after stopping the server; a complete log ends with `{"ev": "end"}`.
+One command replays the same sample in
+both settings, each on a fresh server with the log on, and computes the
+metrics and figures of
+[`specs/004-m2-prefix-sharing-analysis`](specs/004-m2-prefix-sharing-analysis/spec.md):
+
+```bash
+# Needs the preprocessed files from step 1 above and a free port 8000.
+python -m analysis.run_m2_task2 --limit 1000 --out results/m2-task2
+# Quick check (about 20 s): 20 conversations, no pacing
+python -m analysis.run_m2_task2 --limit 20 --conversation-rate inf \
+  --think-time 0 --out results/smoke
+# Recompute metrics and figures without replaying
+python -m analysis.run_m2_task2 --out results/m2-task2 --analyze-only
+```
+
+Each setting gets `results/m2-task2/<setting>/` with the client results, the
+event log, `run.json` (configuration, commit, KV-cache size), the metrics as
+CSV files and `summary.json`, which also holds the self-checks: the log's
+hit rate equals vLLM's `gpu_prefix_cache_hit_rate` (SC-003), and how many
+requests' `cached_tokens` differ from the hits logged for them (SC-004).
+Figures go to `results/m2-task2/figures/` (`--figures` to choose).
+
 ### Useful vLLM flags for experiments
 
 `--enable-prefix-caching` (off by default in this vLLM version),
@@ -204,8 +275,8 @@ to it. All options and output fields are in
 `--swap-space GiB` with `--preemption-mode swap`, `--max-num-seqs`,
 `--max-num-batched-tokens`, `--enable-chunked-prefill`,
 `--disable-frontend-multiprocessing` (run the engine inside the API process;
-easier to debug). See `report.md` for how each one interacts with the
-simulator. The KV cache must hold at least `--max-model-len` tokens, as on a
+easier to debug). See `report/milestone1/simulator.md` for how each one
+interacts with the simulator. The KV cache must hold at least `--max-model-len` tokens, as on a
 real GPU; the server refuses to start otherwise. With prefix caching or
 chunked prefill the CPU platform logs that it casts fp16 to bf16: harmless
 here, both are 2 bytes per value.
@@ -225,8 +296,10 @@ make ci          # everything CI runs, in the same order
 Without `make`, export `VLLM_USE_SIMULATOR=1 VLLM_NO_USAGE_STATS=1` before
 pytest starts (vLLM chooses its platform when it is imported) and run
 `tools/run_project_tests.sh [m1|m2|m3]`. Each test module declares its
-milestone with `pytestmark = pytest.mark.m1` (or `m2`, `m3`). Milestones 2
-and 3 have no tests yet. The Milestone 1 tests:
+milestone with `pytestmark = pytest.mark.m1` (or `m2`, `m3`). Milestone 3
+has no tests yet.
+
+Milestone 1 (`make test-m1`, 67 tests):
 
 | File | What it covers | Time |
 |---|---|---|
@@ -234,13 +307,38 @@ and 3 have no tests yet. The Milestone 1 tests:
 | `tests/simulator/test_engine.py` | In-process `LLMEngine` with gpt2's tokenizer: KV-cache sizing, stop rules, batching, prefix-cache hits, preemption, chunked prefill. | ~6 s |
 | `tests/simulator/test_online.py` | A real `vllm serve` (both front-ends) through the OpenAI client: completions, chat, streaming, concurrency, `/metrics`. | ~20 s |
 
+Milestone 2 (`make test-m2`, 39 tests):
+
+| File | What it covers | Time |
+|---|---|---|
+| `tests/simulator/test_cache_events.py` | The cache event log in an in-process engine: miss and insert, then hit and revive on a repeated prompt; blocks written during decode; eviction in a 6-block cache; sharing between concurrent requests; swap-in lookups; the log's hit rate equal to vLLM's; flushing. | ~4 s |
+| `tests/analysis/test_metrics.py` | Every metric of spec 004 on a handcrafted log whose answers are worked out by hand. | < 1 s |
+| `tests/analysis/test_run_m2_task2.py` | The experiment command without a server: the sample, CSVs and self-checks, all seven figures, refusing to overwrite a run. | ~1 s |
+| `tests/analysis/test_server.py` | The server launcher: a busy port is refused, it binds 127.0.0.1, it reads the KV-cache size. | < 1 s |
+
 vLLM's own CPU-safe tests for the scheduler and block manager still pass
-with the simulator enabled (`make test-core`; see `report.md`, section 4).
+with the simulator enabled (`make test-core`; see
+`report/milestone1/simulator.md`, section 4).
 
 Every pull request runs these tests on GitHub (`project-ci`), together with a
 check of the PR against `CONTRIBUTING.md` (`pr-requirements`) and the
 repository's linters. Run `make lint` and `make check-pr BODY=pr.md` before
 opening one.
+
+## Troubleshooting
+
+- **Requests reach another program (macOS).** `vllm serve` listens on
+  0.0.0.0 by default, and macOS lets it start even when another program
+  already listens on 127.0.0.1 at that port; requests to `localhost` then go
+  to the other program. Pass `--host 127.0.0.1` so the server refuses to
+  start instead, or pick a free port (`lsof -nP -iTCP:8000 -sTCP:LISTEN`
+  shows who has one). `analysis/server.py` does both.
+- **`FileNotFoundError` from `os.getcwd()` while importing vLLM.** The
+  terminal's current folder no longer exists, typically after an external
+  drive was unmounted and mounted again. `cd` back into the repository by
+  its full path.
+- **The cache event log looks incomplete.** Lines are written in batches;
+  stop the server and check for the final `{"ev": "end"}` line.
 
 ## Known limitations
 

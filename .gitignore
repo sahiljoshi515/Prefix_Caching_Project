@@ -207,3 +207,7 @@ shellcheck*/
 # Downloaded datasets and processed traces
 /data/raw/
 /data/processed/
+
+# Experiment outputs: run folders, event logs, client results
+# (specs/004-m2-prefix-sharing-analysis); report figures go in figures/
+/results/

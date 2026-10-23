@@ -33,4 +33,8 @@ significant portion of the change (for the report's AI-usage appendix). -->
 - [ ] Follows `CONTRIBUTING.md` and the spec's requirements
 - [ ] Tests added for new behaviour; all required checks pass
 - [ ] Spec `tasks.md` boxes ticked for the tasks this PR completes
+- [ ] Documents updated where affected: `README.md`, the spec's `plan.md`,
+      the task's note and the milestone's changelog in `report/milestone<N>/`,
+      and `report/ai-usage.md`
+      (`CONTRIBUTING.md` Section 8)
 - [ ] No datasets, bulk results or local environment files committed

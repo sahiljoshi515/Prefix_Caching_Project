@@ -1,5 +1,6 @@
 from typing import Dict, FrozenSet, List, Optional, Tuple
 
+from vllm.core.block import cache_events
 from vllm.core.block.interfaces import (Block, BlockAllocator, BlockId,
                                         DeviceAwareBlockAllocator)
 from vllm.core.block.naive_block import NaiveBlock, NaiveBlockAllocator
@@ -80,6 +81,8 @@ class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
                 num_blocks=num_gpu_blocks,
                 block_size=block_size,
                 block_ids=gpu_block_ids,
+                # COMP 536: swap-space (CPU) blocks are not logged.
+                event_recorder=cache_events.recorder_from_env(block_size),
             )
 
             cpu_allocator = PrefixCachingBlockAllocator(

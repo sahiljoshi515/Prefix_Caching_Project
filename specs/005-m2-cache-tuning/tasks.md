@@ -36,7 +36,7 @@
 - [ ] T011 [US3] Run the full grid; commit only report figures
 - [ ] T012 [US3] Figures 1 to 5 of the spec (`analysis/plots.py`)
 - [ ] T013 [US3] Write-up with the recommendation table
-  (`report/notes/m2-task3.md`)
+  (`report/milestone2/task3-cache-tuning.md`)
 
 ## Dependencies
 

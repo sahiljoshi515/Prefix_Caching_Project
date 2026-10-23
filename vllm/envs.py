@@ -74,6 +74,7 @@ if TYPE_CHECKING:
     VLLM_DISABLE_COMPILE_CACHE: bool = False
     VLLM_USE_SIMULATOR: bool = False
     VLLM_SIMULATOR_TRACE: Optional[str] = None
+    VLLM_CACHE_EVENT_LOG: Optional[str] = None
 
 
 def get_default_cache_root():
@@ -479,6 +480,11 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     # "request_id" and either "response" (text) or "response_token_ids".
     "VLLM_SIMULATOR_TRACE":
     lambda: os.getenv("VLLM_SIMULATOR_TRACE", None),
+
+    # COMP 536: JSONL log of every prefix-cache event of the GPU block
+    # allocator (vllm/core/block/cache_events.py). Unset: no logging.
+    "VLLM_CACHE_EVENT_LOG":
+    lambda: os.getenv("VLLM_CACHE_EVENT_LOG", None),
 }
 
 # end-env-vars-definition
