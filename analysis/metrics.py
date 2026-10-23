@@ -141,6 +141,20 @@ def block_hit_rate(events: Iterable[Event]) -> Optional[float]:
     return counts["hit"] / lookups if lookups else None
 
 
+def eviction_count(events: Iterable[Event]) -> int:
+    """Number of `evict` events (spec 005, FR-007); 0 if the cache never
+    filled."""
+    return sum(e.ev == "evict" for e in events)
+
+
+def eviction_rate(events: Iterable[Event]) -> Optional[float]:
+    """Evictions per 1,000 lookups, ``1000 × evictions / (hits + misses)``
+    (spec 005, FR-007)."""
+    counts = Counter(e.ev for e in events)
+    lookups = counts["hit"] + counts["miss"]
+    return 1000 * counts["evict"] / lookups if lookups else None
+
+
 def windowed_hit_rate(events: Sequence[Event],
                       window_s: float = 10.0) -> List[Row]:
     """Hit rate per window of `window_s`, from the first event."""
