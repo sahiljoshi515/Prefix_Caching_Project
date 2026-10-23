@@ -304,3 +304,74 @@ def test_other_folders_are_not_used(tmp_path, data):
         task3.main(data + ["--grid", "smoke", "--out", str(tmp_path)])
     with pytest.raises(SystemExit, match="nothing to analyze"):
         task3.main(data + ["--analyze-only", "--out", str(tmp_path / "new")])
+
+
+# --- Results: figure 4's capacity, the best-configuration table, figures ----
+
+
+def result(policy, block_size, capacity, reused, status="finished"):
+    return {
+        "name": Config(policy, block_size, capacity).name,
+        "policy": policy,
+        "block_size": block_size,
+        "capacity_tokens": capacity,
+        "status": status,
+        "token_reused_fraction": reused,
+        "block_hit_rate": reused,
+        "evictions": 0,
+    }
+
+
+RESULTS = [
+    # 1,024 tokens: spread 0.3; 2,048: spread 0.1; 4,096: LFU missing.
+    result("lru", 16, 1024, 0.5),
+    result("fifo", 16, 1024, 0.2),
+    result("lfu", 16, 1024, 0.4),
+    result("lru", 16, 2048, 0.8),
+    result("fifo", 16, 2048, 0.7),
+    result("lfu", 16, 2048, 0.75),
+    result("lru", 16, 4096, 0.9),
+    result("fifo", 16, 4096, 0.1),
+    result("lfu", 16, 4096, None, status="missing"),
+    result("lru", 32, 1024, 0.6),
+    result("lru", 16, 512, None, status="infeasible"),
+]
+
+
+def test_pressure_capacity_is_where_policies_differ_most():
+    assert task3.pressure_capacity(RESULTS, 16) == 1024
+    assert task3.pressure_capacity(RESULTS, 64) is None
+
+
+def test_pressure_capacity_ties_go_to_the_smaller_cache():
+    tied = [
+        result(p, 16, c, v) for c in (2048, 1024)
+        for p, v in (("lru", 0.5), ("fifo", 0.4), ("lfu", 0.45))
+    ]
+    assert task3.pressure_capacity(tied, 16) == 1024
+
+
+def test_best_configuration_per_capacity():
+    best = task3.best_by_capacity(RESULTS)
+    assert [(b["capacity_tokens"], b["best"], b["configurations"])
+            for b in best] == [(1024, "lru-bs32-cap1024", 4),
+                               (2048, "lru-bs16-cap2048", 3),
+                               (4096, "lru-bs16-cap4096", 2)]
+    assert best[0]["next_best"] == "lru-bs16-cap1024"
+    assert best[0]["margin"] == pytest.approx(0.1)
+    table = task3.markdown_table(best).splitlines()
+    assert table[0].startswith("| capacity_tokens | best |")
+    assert "| 1024 | lru-bs32-cap1024 | lru | 32 | 0.6000 |" in table[2]
+
+
+def test_figures_are_drawn_from_the_runs(tmp_path):
+    pytest.importorskip("matplotlib")
+    grid = sweep.expand_grid(list(sweep.POLICIES), [16, 32], [2048, 4096])
+    rows = run(grid, tmp_path, FakeReplay())
+    written = task3.make_figures(tmp_path, tmp_path / "figures", rows, 16,
+                                 2048)
+    names = sorted(p.name for p in written)
+    assert len(names) == 10  # five figures, PDF and PNG
+    assert "fig4a_hits_per_residency_bs16_cap2048.png" in names
+    assert "fig3_evictions_vs_capacity.pdf" in names
+    assert all(p.stat().st_size > 0 for p in written)
