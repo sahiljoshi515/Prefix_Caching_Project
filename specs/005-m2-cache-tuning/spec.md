@@ -2,7 +2,8 @@
 
 **Spec**: `005-m2-cache-tuning` | **Milestone/Task**: Milestone 2, Task 3
 **Owner**: Jasmine Lu | **Reviewers**: Xin Liang Chia, Marcus
-**Status**: Draft
+**Status**: In progress (Phase 1, branch
+`milestone2-jasmine-eviction-policies`)
 **Created**: 2026-10-18 | **Depends on**: `003`, `004` (recorder, metrics,
 server launcher)
 

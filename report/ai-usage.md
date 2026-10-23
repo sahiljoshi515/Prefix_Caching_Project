@@ -57,3 +57,15 @@ Entry format:
   first the task?"; "Since we are a group, so what method do you suggest
   that we should do for our project? a way to document all things";
   "please run the full run testing for me and record it".
+
+### PR #<number>: Milestone 2 Task 3, Phase 1: FIFO and LFU evictors
+
+- **Tools:** Claude Code (Claude Opus 5.5).
+- **Used for:** reading spec 005 and Task 2's allocator hooks, the
+  evictors, the `VLLM_EVICTION_POLICY` wiring, both test modules, the
+  check that an unset variable replays identically to `milestone-2`, and
+  the document updates. Jasmine chose the full 1,000-conversation sample
+  for the sweep and to keep spec 005's capacity range as written.
+- **Prompts:** "now milestone 2 task 2 is finished. start working on task
+  3. read the specs/ and report/ folders first. ask me if anything's
+  unclear, don't just assume."
