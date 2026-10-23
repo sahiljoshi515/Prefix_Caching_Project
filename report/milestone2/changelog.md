@@ -102,7 +102,8 @@ branch `milestone2-marcus-prefix-sharing-analysis` (marcus), with the
 ## Task 3: cache size, block size and eviction policy
 
 [Spec 005](../../specs/005-m2-cache-tuning/spec.md), drafted in PR #7. Phase 1
-done on branch `milestone2-jasmine-eviction-policies` (Jasmine Lu).
+done on branch `milestone2-jasmine-eviction-policies` (Jasmine Lu); in review
+as PR #10.
 
 ### Unreleased: 2026-10-23 (Task 3 branch)
 

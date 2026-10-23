@@ -58,7 +58,7 @@ Entry format:
   that we should do for our project? a way to document all things";
   "please run the full run testing for me and record it".
 
-### PR #<number>: Milestone 2 Task 3, Phase 1: FIFO and LFU evictors
+### PR #10: Milestone 2 Task 3, Phase 1: FIFO and LFU evictors
 
 - **Tools:** Claude Code (Claude Opus 5.5).
 - **Used for:** reading spec 005 and Task 2's allocator hooks, the
