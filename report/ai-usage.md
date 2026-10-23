@@ -70,7 +70,7 @@ Entry format:
   3. read the specs/ and report/ folders first. ask me if anything's
   unclear, don't just assume."
 
-### PR #<number>: Milestone 2 Task 3, Phase 2: cache sweep runner
+### PR #11: Milestone 2 Task 3, Phase 2: cache sweep runner
 
 - **Tools:** Claude Code (Claude Opus 5.5).
 - **Used for:** the sweep runner (`analysis/sweep.py`,

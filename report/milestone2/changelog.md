@@ -105,7 +105,7 @@ branch `milestone2-marcus-prefix-sharing-analysis` (marcus), with the
 done on branch `milestone2-jasmine-eviction-policies` (Jasmine Lu); in review
 as PR #10.
 
-### Unreleased: 2026-10-23 (Phase 2 branch, `milestone2-jasmine-cache-sweep`)
+### Unreleased: 2026-10-23 (Phase 2, PR #11)
 
 - **Added:** the sweep runner, `python -m analysis.run_m2_task3`: one fresh
   server per configuration of policy, block size and capacity (in tokens),
@@ -181,6 +181,6 @@ as PR #10.
   [`ai-usage.md`](../ai-usage.md), and the likely keep-alive race (T015).
 - Task 2: review and merge PR #9; its checks run once PR #8 merges.
 - Task 3: Phase 1 (evictors) in review as PR #10; Phase 2 (sweep runner)
-  done on its own branch; Phase 3 (the 45-run grid and write-up) next.
+  in review as PR #11, after #10; Phase 3 (the 45-run grid and write-up) next.
 - The branch protection ruleset targets no branch, so nothing stops a direct
   push to `main` (spec 001, T014; repository settings, owner only).
