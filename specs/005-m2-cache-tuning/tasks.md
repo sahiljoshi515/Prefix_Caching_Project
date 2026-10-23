@@ -9,18 +9,26 @@
 
 ## Phase 1: User Story 1 — selectable eviction policy (P1)
 
-- [ ] T002 [US1] Test first: scenarios 1 and 2 of the spec, tie-breaks,
+- [x] T002 [US1] Test first: scenarios 1 and 2 of the spec, tie-breaks,
   reuse after free, evict-then-reinsert resets FIFO order and LFU count
   (`tests/eviction/test_eviction_policies.py`, marked `m2`)
-- [ ] T003 [US1] `FIFOEvictor`, `LFUEvictor` (`vllm/core/eviction_policies.py`)
-- [ ] T004 [US1] Enum members, dispatch, `Evictor.record_hit` default
+- [x] T003 [US1] `FIFOEvictor`, `LFUEvictor` (`vllm/core/eviction_policies.py`)
+- [x] T004 [US1] Enum members, dispatch, `Evictor.record_hit` default
   (`vllm/core/evictor.py`)
-- [ ] T005 [US1] Variable, allocator wiring, hit hook, startup log
-  (`vllm/envs.py`, `vllm/core/block/prefix_caching_block.py`)
-- [ ] T006 [US1] Engine test: the variable selects the evictor; bad value
+- [x] T005 [US1] Variable, allocator wiring, hit hook, startup log
+  (`vllm/envs.py`, `vllm/core/block/prefix_caching_block.py`,
+  `vllm/core/block/cpu_gpu_block_allocator.py`; see plan, Changes from the
+  draft)
+- [x] T006 [US1] Engine test: the variable selects the evictor; bad value
   fails; unset is LRU (`tests/simulator/test_eviction_policy_env.py`)
-- [ ] T007 [US1] SC-001: same replay with the variable unset gives identical
-  `cached_tokens` as `main`
+- [x] T007 [US1] SC-001: same replay with the variable unset gives identical
+  `cached_tokens` as `main`. Checked 2026-10-23 against `milestone-2`
+  (`728c0d8a`): the first 30 ShareGPT conversations, multi-turn,
+  `--conversation-rate inf --think-time 0 --max-concurrency 1` (so the
+  order is deterministic), `--num-gpu-blocks-override 1024` (so it evicts).
+  Both gave 147 requests and 5,209 evictions, with identical per-request
+  `cached_tokens` and identical per-request hit/miss/evict sequences in the
+  event log
 
 **Checkpoint**: PR 1 merged; `tests/core` green.
 

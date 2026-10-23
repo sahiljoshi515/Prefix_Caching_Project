@@ -1,5 +1,6 @@
 from typing import Dict, FrozenSet, List, Optional, Tuple
 
+from vllm.core import eviction_policies
 from vllm.core.block import cache_events
 from vllm.core.block.interfaces import (Block, BlockAllocator, BlockId,
                                         DeviceAwareBlockAllocator)
@@ -81,6 +82,8 @@ class CpuGpuBlockAllocator(DeviceAwareBlockAllocator):
                 num_blocks=num_gpu_blocks,
                 block_size=block_size,
                 block_ids=gpu_block_ids,
+                # COMP 536: VLLM_EVICTION_POLICY applies to the GPU cache only.
+                eviction_policy=eviction_policies.eviction_policy_from_env(),
                 # COMP 536: swap-space (CPU) blocks are not logged.
                 event_recorder=cache_events.recorder_from_env(block_size),
             )

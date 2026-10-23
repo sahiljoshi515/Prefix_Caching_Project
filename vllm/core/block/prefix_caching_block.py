@@ -176,6 +176,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             self.metric_data.query(hit=True)
             if self._events is not None:
                 self._events.log("hit", block.content_hash, cached_block_id)
+            # COMP 536: LFU counts hits, including on blocks in use.
+            self.evictor.record_hit(cached_block_id)
             block.block_id = cached_block_id
             self._incr_refcount_cached_block(block)
             return block

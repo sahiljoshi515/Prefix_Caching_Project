@@ -101,8 +101,22 @@ branch `milestone2-marcus-prefix-sharing-analysis` (marcus), with the
 
 ## Task 3: cache size, block size and eviction policy
 
-[Spec 005](../../specs/005-m2-cache-tuning/spec.md), drafted in PR #7. Not
-started.
+[Spec 005](../../specs/005-m2-cache-tuning/spec.md), drafted in PR #7. Phase 1
+done on branch `milestone2-jasmine-eviction-policies` (Jasmine Lu); in review
+as PR #10.
+
+### Unreleased: 2026-10-23 (Task 3 branch)
+
+- **Added:** FIFO and LFU evictors next to vLLM's LRU
+  (`vllm/core/eviction_policies.py`), chosen for the GPU prefix cache with
+  `VLLM_EVICTION_POLICY=lru|fifo|lfu`; unset means LRU. The allocator
+  reports each lookup hit to the evictor through `Evictor.record_hit`, which
+  LFU counts. 41 evictor tests and 9 engine tests (`6ade43db`).
+- **Changed:** spec 005's plan records four changes from the draft: the
+  variable is read where the GPU allocator is built; it yields a policy,
+  which vLLM's own `make_evictor` turns into an evictor; FIFO orders by time
+  so a request's blocks keep LRU's deepest-first tie-break; and counters are
+  keyed by block id.
 
 ### Unreleased (Task 2 branch)
 
@@ -155,6 +169,7 @@ started.
   mismatch, exit non-zero only on failures, unit tests, and PR #6's entry in
   [`ai-usage.md`](../ai-usage.md), and the likely keep-alive race (T015).
 - Task 2: review and merge PR #9; its checks run once PR #8 merges.
-- Task 3 has not started; it builds on Task 2's event log and `analysis/`.
+- Task 3: Phase 1 (evictors) in review; Phase 2 (sweep runner) and Phase 3
+  (the 45-run grid and write-up) next.
 - The branch protection ruleset targets no branch, so nothing stops a direct
   push to `main` (spec 001, T014; repository settings, owner only).
