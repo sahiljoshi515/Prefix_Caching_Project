@@ -69,3 +69,13 @@ Entry format:
 - **Prompts:** "now milestone 2 task 2 is finished. start working on task
   3. read the specs/ and report/ folders first. ask me if anything's
   unclear, don't just assume."
+
+### PR #<number>: Milestone 2 Task 3, Phase 2: cache sweep runner
+
+- **Tools:** Claude Code (Claude Opus 5.5).
+- **Used for:** the sweep runner (`analysis/sweep.py`,
+  `analysis/run_m2_task3.py`), the eviction metrics, the small extensions of
+  Task 2's `run_setting` and `analyze_run`, the tests, the smoke run and
+  the memory check, and the document updates. Jasmine asked for one PR per
+  phase.
+- **Prompts:** "now work on the next phase".
