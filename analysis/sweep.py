@@ -90,6 +90,14 @@ def expand_grid(policies: Iterable[str], block_sizes: Iterable[int],
     ]
 
 
+def grid_order(configs: Iterable[Config]) -> List[Config]:
+    """Unique configurations in `expand_grid`'s order: capacity, then
+    block size, then policy in `POLICIES` order."""
+    return sorted(set(configs),
+                  key=lambda c:
+                  (c.capacity_tokens, c.block_size, POLICIES.index(c.policy)))
+
+
 def feasible(config: Config, max_model_len: int) -> bool:
     """vLLM only starts if the cache holds one max_model_len request."""
     return config.capacity_tokens >= max_model_len
@@ -171,14 +179,14 @@ def run_sweep(configs: Sequence[Config],
               analyze: Callable[[Path], Dict[str, Any]],
               max_model_len: int,
               reanalyze: bool = False,
-              replay_missing: bool = True,
+              replay_if: Callable[[Config], bool] = lambda config: True,
               log: Callable[[str], None] = print) -> List[Dict[str, Any]]:
     """Run every configuration not already finished; return summary rows.
 
     `replay(config, run_dir)` must create `run_dir` and write its manifest
     with `finished_at_utc` last; `analyze(run_dir)` returns its summary,
-    which is cached as `summary.json` unless `reanalyze` is set. With
-    `replay_missing` False, configurations that have not finished are
+    which is cached as `summary.json` unless `reanalyze` is set.
+    Unfinished configurations for which `replay_if(config)` is False are
     reported as "missing" instead of being replayed.
     """
     rows = []
@@ -192,7 +200,7 @@ def run_sweep(configs: Sequence[Config],
             continue
         if is_finished(run_dir):
             log(f"{prefix}: finished earlier, analyzing")
-        elif not replay_missing:
+        elif not replay_if(config):
             log(f"{prefix}: missing, not replayed")
             row = summary_row(config, None, None)
             row["status"] = "missing"

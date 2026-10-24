@@ -58,7 +58,7 @@ here.
 | 1 | [`simulator.md`](milestone1/simulator.md) | The simulator: design, changes to vLLM, tests | [`002`](../specs/002-m1-simulator-verification/spec.md) | Written |
 | 2 | [`task1-client-simulator.md`](milestone2/task1-client-simulator.md) | Task 1: the client simulator and the ShareGPT data | [`003`](../specs/003-m2-client-simulator/spec.md) | Written |
 | 2 | [`task2-prefix-sharing-analysis.md`](milestone2/task2-prefix-sharing-analysis.md) | Task 2: ShareGPT single- vs multi-turn sharing | [`004`](../specs/004-m2-prefix-sharing-analysis/spec.md) | Written, with the 1,000-conversation results |
-| 2 | [`task3-cache-tuning.md`](milestone2/task3-cache-tuning.md) | Task 3: cache size, block size, eviction policy | [`005`](../specs/005-m2-cache-tuning/spec.md) | Placeholder |
+| 2 | [`task3-cache-tuning.md`](milestone2/task3-cache-tuning.md) | Task 3: cache size, block size, eviction policy | [`005`](../specs/005-m2-cache-tuning/spec.md) | Written, with the 45-run grid |
 | 3 | [`task1-workload-eviction.md`](milestone3/task1-workload-eviction.md) | Task 1: the best policy per workload | [`006`](../specs/006-m3-workload-eviction/spec.md) | Placeholder |
 | 3 | [`task2-mixed-workload-policy.md`](milestone3/task2-mixed-workload-policy.md) | Task 2: a policy for the mixed workload | [`007`](../specs/007-m3-mixed-workload-policy/spec.md) | Placeholder |
 

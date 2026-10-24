@@ -188,7 +188,7 @@ def test_summary_is_cached_unless_reanalyzed(tmp_path):
 
 def test_missing_runs_are_reported_without_replay(tmp_path):
     replay = FakeReplay()
-    rows = run(GRID, tmp_path, replay, replay_missing=False)
+    rows = run(GRID, tmp_path, replay, replay_if=lambda config: False)
     assert replay.calls == []
     assert [r["status"] for r in rows][2:] == ["missing", "missing"]
 
@@ -304,3 +304,183 @@ def test_other_folders_are_not_used(tmp_path, data):
         task3.main(data + ["--grid", "smoke", "--out", str(tmp_path)])
     with pytest.raises(SystemExit, match="nothing to analyze"):
         task3.main(data + ["--analyze-only", "--out", str(tmp_path / "new")])
+
+
+# --- Results: figure 4's capacity, the best-configuration table, figures ----
+
+
+def result(policy, block_size, capacity, reused, status="finished"):
+    return {
+        "name": Config(policy, block_size, capacity).name,
+        "policy": policy,
+        "block_size": block_size,
+        "capacity_tokens": capacity,
+        "status": status,
+        "token_reused_fraction": reused,
+        "block_hit_rate": reused,
+        "evictions": 0,
+    }
+
+
+RESULTS = [
+    # 1,024 tokens: spread 0.3; 2,048: spread 0.1; 4,096: LFU missing.
+    result("lru", 16, 1024, 0.5),
+    result("fifo", 16, 1024, 0.2),
+    result("lfu", 16, 1024, 0.4),
+    result("lru", 16, 2048, 0.8),
+    result("fifo", 16, 2048, 0.7),
+    result("lfu", 16, 2048, 0.75),
+    result("lru", 16, 4096, 0.9),
+    result("fifo", 16, 4096, 0.1),
+    result("lfu", 16, 4096, None, status="missing"),
+    result("lru", 32, 1024, 0.6),
+    result("lru", 16, 512, None, status="infeasible"),
+]
+
+
+def test_pressure_capacity_is_where_policies_differ_most():
+    assert task3.pressure_capacity(RESULTS, 16) == 1024
+    assert task3.pressure_capacity(RESULTS, 64) is None
+
+
+def test_pressure_capacity_ties_go_to_the_smaller_cache():
+    tied = [
+        result(p, 16, c, v) for c in (2048, 1024)
+        for p, v in (("lru", 0.5), ("fifo", 0.4), ("lfu", 0.45))
+    ]
+    assert task3.pressure_capacity(tied, 16) == 1024
+
+
+def test_best_configuration_per_capacity():
+    best = task3.best_by_capacity(RESULTS)
+    assert [(b["capacity_tokens"], b["best"], b["configurations"])
+            for b in best] == [(1024, "lru-bs32-cap1024", 4),
+                               (2048, "lru-bs16-cap2048", 3),
+                               (4096, "lru-bs16-cap4096", 2)]
+    assert best[0]["next_best"] == "lru-bs16-cap1024"
+    assert best[0]["margin"] == pytest.approx(0.1)
+    table = task3.markdown_table(best).splitlines()
+    assert table[0].startswith("| capacity_tokens | best |")
+    assert "| 1024 | lru-bs32-cap1024 | lru | 32 | 0.6000 |" in table[2]
+
+
+def test_figures_are_drawn_from_the_runs(tmp_path):
+    pytest.importorskip("matplotlib")
+    grid = sweep.expand_grid(list(sweep.POLICIES), [16, 32], [2048, 4096])
+    rows = run(grid, tmp_path, FakeReplay())
+    written = task3.make_figures(tmp_path, tmp_path / "figures", rows, 16,
+                                 2048)
+    names = sorted(p.name for p in written)
+    assert len(names) == 10  # five figures, PDF and PNG
+    assert "fig4a_hits_per_residency_bs16_cap2048.png" in names
+    assert "fig3_evictions_vs_capacity.pdf" in names
+    assert all(p.stat().st_size > 0 for p in written)
+
+
+def test_unmeasured_runs_are_not_ranked():
+    """A finished run with no completed request has no reused fraction."""
+    rows = RESULTS + [
+        result("lfu", 16, 4096, None),
+        result("lfu", 32, 8192, None)
+    ]
+    assert task3.pressure_capacity(rows, 16) == 1024
+    best = task3.best_by_capacity(rows)
+    assert [b["capacity_tokens"] for b in best] == [1024, 2048, 4096]
+
+
+def test_legend_names_a_policy_missing_from_the_first_panel(tmp_path):
+    pytest.importorskip("matplotlib")
+    from analysis import plots
+    rows = [result("lru", 16, c, 0.5) for c in (1024, 2048)]
+    rows.append(result("lfu", 16, 2048, 0.4))
+    names = []
+    original = plots.plt.Figure.legend
+
+    def spy(fig, handles, labels, **kwargs):
+        names.extend(labels)
+        return original(fig, handles, labels, **kwargs)
+
+    plots.plt.Figure.legend = spy
+    try:
+        plots.panel_lines_plot(rows, "block_size", ["block_hit_rate"],
+                               "capacity_tokens", tmp_path / "f")
+    finally:
+        plots.plt.Figure.legend = original
+    assert names == ["LRU", "LFU"]
+
+
+def fake_run_setting(setting, args, sample, run_dir, extra_server_args, env,
+                     manifest_updates):
+    FakeReplay()(Config(env["VLLM_EVICTION_POLICY"], int(extra_server_args[1]),
+                        manifest_updates["capacity_tokens"]), run_dir)
+
+
+def test_analyze_only_reuses_the_recorded_grid(tmp_path, data, monkeypatch):
+    monkeypatch.setattr(task3.task2, "run_setting", fake_run_setting)
+    out = tmp_path / "sweep"
+    task3.main(data + [
+        "--grid", "smoke", "--limit", "2", "--policies", "lfu", "--capacities",
+        "8192", "16384", "--out",
+        str(out)
+    ])
+    # Only --out: the folder's grid and sample settings, not the full grid.
+    task3.main(data + ["--analyze-only", "--out", str(out)])
+    with (out / "summary.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    assert [(r["name"], r["status"]) for r in rows] == [
+        ("lfu-bs16-cap8192", "finished"),
+        ("lfu-bs16-cap16384", "finished"),
+    ]
+
+
+def test_a_narrower_resume_keeps_every_recorded_run(tmp_path, data,
+                                                    monkeypatch):
+    calls = []
+
+    def counting(*args, **kwargs):
+        calls.append(kwargs["env"]["VLLM_EVICTION_POLICY"])
+        fake_run_setting(*args, **kwargs)
+
+    monkeypatch.setattr(task3.task2, "run_setting", counting)
+    out = tmp_path / "sweep"
+    base = data + [
+        "--grid", "smoke", "--limit", "2", "--capacities", "8192", "--out",
+        str(out)
+    ]
+    task3.main(base + ["--policies", "lru", "lfu"])
+    task3.main(base + ["--policies", "fifo"])
+    assert calls == ["lru", "lfu", "fifo"]
+    with (out / "summary.csv").open() as f:
+        names = [r["name"] for r in csv.DictReader(f)]
+    assert names == [
+        "lru-bs16-cap8192", "fifo-bs16-cap8192", "lfu-bs16-cap8192"
+    ]
+
+
+def test_an_interrupted_sample_is_written_again(tmp_path, data, monkeypatch):
+    monkeypatch.setattr(task3.task2, "run_setting", fake_run_setting)
+    out = tmp_path / "sweep"
+    out.mkdir()
+    (out / "sample.conversations.jsonl").write_text("partial")
+    task3.main(data + [
+        "--grid", "smoke", "--limit", "2", "--policies", "lru", "--capacities",
+        "8192", "--out",
+        str(out)
+    ])
+    assert json.loads((out / "sweep.json").read_text())["sample"]["turns"] == 3
+    assert (out / "sample.conversations.jsonl").read_text() != "partial"
+
+
+def test_folders_without_a_recorded_grid_use_their_run_folders(tmp_path):
+    (tmp_path / "sweep.json").write_text(
+        json.dumps({
+            "settings": {},
+            "sample": {}
+        }))
+    for name in ("lfu-bs16-cap16384", "lru-bs16-cap16384", "lru-bs16-cap8192",
+                 "figures"):
+        (tmp_path / name).mkdir()
+    recorded = task3.read_sweep_file(tmp_path)
+    assert [c.name for c in task3.recorded_grid(recorded, tmp_path)] == [
+        "lru-bs16-cap8192", "lru-bs16-cap16384", "lfu-bs16-cap16384"
+    ]

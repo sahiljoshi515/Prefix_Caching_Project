@@ -79,3 +79,13 @@ Entry format:
   the memory check, and the document updates. Jasmine asked for one PR per
   phase.
 - **Prompts:** "now work on the next phase".
+
+### PR #12: Milestone 2 Task 3, Phase 3: cache-tuning results
+
+- **Tools:** Claude Code (Claude Opus 5.5).
+- **Used for:** running the 45-run grid and checking every run, the
+  figures and the best-configuration table, the analyses behind the note's
+  interpretation (what LFU evicts and when, LRU against FIFO by turn), the
+  Task 3 note and the document updates. Jasmine chose block sizes 8, 16
+  and 32.
+- **Prompts:** "next work on phase 3"; "what's the status now".

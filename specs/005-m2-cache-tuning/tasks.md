@@ -42,9 +42,11 @@
 
 ## Phase 3: User Story 3 — results (P2)
 
-- [ ] T011 [US3] Run the full grid; commit only report figures
-- [ ] T012 [US3] Figures 1 to 5 of the spec (`analysis/plots.py`)
-- [ ] T013 [US3] Write-up with the recommendation table
+- [x] T011 [US3] Run the full grid; commit only report figures (45 runs at
+  `9f18c4c8`, 2026-10-23/24; every run passed SC-003 of spec 004)
+- [x] T012 [US3] Figures 1 to 5 of the spec (`analysis/plots.py`,
+  `analysis/run_m2_task3.py`; item 5 is `best_by_capacity.md`)
+- [x] T013 [US3] Write-up with the recommendation table
   (`report/milestone2/task3-cache-tuning.md`)
 
 ## Dependencies

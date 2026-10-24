@@ -47,3 +47,20 @@ def test_kv_cache_blocks_are_read_from_the_log(tmp_path):
         "num_gpu_blocks": 21845,
         "block_size": 16
     }
+
+
+def test_shell_cache_settings_are_not_inherited(tmp_path, monkeypatch):
+    """A leftover VLLM_EVICTION_POLICY would run a server under a policy
+    its manifest does not record."""
+    monkeypatch.setenv("VLLM_EVICTION_POLICY", "lfu")
+    monkeypatch.setenv("VLLM_CACHE_EVENT_LOG", str(tmp_path / "stale.jsonl"))
+    plain = server.SimulatorServer("m",
+                                   tmp_path / "t",
+                                   log_path=tmp_path / "l")
+    assert "VLLM_EVICTION_POLICY" not in plain.env
+    assert "VLLM_CACHE_EVENT_LOG" not in plain.env
+    chosen = server.SimulatorServer("m",
+                                    tmp_path / "t",
+                                    log_path=tmp_path / "l",
+                                    env={"VLLM_EVICTION_POLICY": "fifo"})
+    assert chosen.env["VLLM_EVICTION_POLICY"] == "fifo"
