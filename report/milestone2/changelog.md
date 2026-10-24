@@ -105,7 +105,7 @@ branch `milestone2-marcus-prefix-sharing-analysis` (marcus), with the
 done on branch `milestone2-jasmine-eviction-policies` (Jasmine Lu); in review
 as PR #10.
 
-### Unreleased: 2026-10-24 (Phase 3, branch `milestone2-jasmine-cache-results`)
+### Unreleased: 2026-10-24 (Phase 3, PR #12)
 
 - **Added:** the results of the 45-run grid (3 policies × block sizes 8,
   16, 32 × 5 capacities from 16,384 to 2,097,152 tokens, on Task 2's
@@ -195,7 +195,7 @@ as PR #10.
   [`ai-usage.md`](../ai-usage.md), and the likely keep-alive race (T015).
 - Task 2: review and merge PR #9; its checks run once PR #8 merges.
 - Task 3: Phase 1 (evictors) in review as PR #10, Phase 2 (sweep runner)
-  as PR #11 after #10; Phase 3 (the grid's results and the note) follows
-  #11.
+  as PR #11 after #10, Phase 3 (the grid's results and the note) as PR #12
+  after #11.
 - The branch protection ruleset targets no branch, so nothing stops a direct
   push to `main` (spec 001, T014; repository settings, owner only).

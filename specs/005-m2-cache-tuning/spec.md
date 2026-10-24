@@ -3,7 +3,7 @@
 **Spec**: `005-m2-cache-tuning` | **Milestone/Task**: Milestone 2, Task 3
 **Owner**: Jasmine Lu | **Reviewers**: Xin Liang Chia, Marcus
 **Status**: Done: Phase 1 in PR #10, Phase 2 in PR #11, Phase 3 (results)
-on branch `milestone2-jasmine-cache-results`; findings in
+in PR #12; findings in
 [`report/milestone2/task3-cache-tuning.md`](../../report/milestone2/task3-cache-tuning.md)
 **Created**: 2026-10-18 | **Depends on**: `003`, `004` (recorder, metrics,
 server launcher)

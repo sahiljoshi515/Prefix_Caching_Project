@@ -80,7 +80,7 @@ Entry format:
   phase.
 - **Prompts:** "now work on the next phase".
 
-### PR #<number>: Milestone 2 Task 3, Phase 3: cache-tuning results
+### PR #12: Milestone 2 Task 3, Phase 3: cache-tuning results
 
 - **Tools:** Claude Code (Claude Opus 5.5).
 - **Used for:** running the 45-run grid and checking every run, the
