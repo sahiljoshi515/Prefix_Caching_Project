@@ -158,7 +158,10 @@ the manifest carry it instead.
 2. **Phase 1** (PR 1): evictors, hit hook, variable, tests.
 3. **Phase 2** (PR 2): sweep runner and tests.
 4. **Phase 3** (PR 3): run the grid, figures, write-up in
-   `report/milestone2/task3-cache-tuning.md`.
+   `report/milestone2/task3-cache-tuning.md`. Done 2026-10-24. Figure 4's
+   capacity is chosen from the results (where the policies' reused token
+   fractions spread most at block size 16: 262,144 tokens), and the
+   figures need their own tick rules for evictions spanning six decades.
 
 ## Verification
 

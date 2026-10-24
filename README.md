@@ -17,7 +17,7 @@ design and test notes are in
 | 1 | Simulator that replaces model execution | Done | `vllm/simulator.py`, `tests/simulator/` |
 | 2, Task 1 | Client simulator and ShareGPT preprocessing | Done | `client_simulator/` |
 | 2, Task 2 | Cache event log, prefix-sharing metrics, single- vs multi-turn replay | In progress | `vllm/core/block/cache_events.py`, `analysis/`, `specs/004-*` |
-| 2, Task 3 | Cache size, block size and eviction policies | In progress: evictors and sweep runner done, full grid next | `vllm/core/eviction_policies.py`, `analysis/sweep.py`, `specs/005-*` |
+| 2, Task 3 | Cache size, block size and eviction policies | Done: 45-run grid, [findings](report/milestone2/task3-cache-tuning.md) | `vllm/core/eviction_policies.py`, `analysis/sweep.py`, `analysis/run_m2_task3.py`, `specs/005-*` |
 | 3 | Eviction policies across workloads; a workload-aware policy | Planned | `specs/006-*`, `specs/007-*` |
 
 How the team works (branches, pull requests, tests, CI, documentation) is
@@ -38,7 +38,7 @@ into the technical report under [`report/`](report/README.md).
 | `vllm/entrypoints/launcher.py`, `vllm/entrypoints/openai/api_server.py`, `vllm/utils.py` | macOS fixes: hand the already-bound port to uvicorn instead of binding it twice, and skip a root-only port lookup during shutdown. |
 | `constraints-simulator.txt` (new) | Dependency pins contemporary with this vLLM commit. |
 | `tests/simulator/` (new) | 87 tests: unit, in-process engine, a real `vllm serve`, the cache event log, and the eviction-policy variable. |
-| `tests/analysis/` (new) | Milestone 2: 50 tests of the metrics, the Task 2 and Task 3 experiment commands and the server launcher, without a server. |
+| `tests/analysis/` (new) | Milestone 2: 54 tests of the metrics, the Task 2 and Task 3 experiment commands and the server launcher, without a server. |
 | `tests/eviction/` (new) | Milestone 2, Task 3: 41 tests of the FIFO and LFU evictors with hand-derived victims, and a randomized check against each policy's definition. |
 | `examples/simulator/` (new) | Example trace and a client that replays it. |
 | `client_simulator/` (new) | Milestone 2: ShareGPT download and preprocessing, and the replay client (Poisson arrivals, single- and multi-turn, chat template). |
@@ -300,7 +300,11 @@ Each configuration gets `results/m2-task3/<policy>-bs<B>-cap<T>/`, laid out
 like a Task 2 run folder; `sweep.json` records the sample and pacing, and a
 folder is only resumed with the same ones. A configuration whose cache
 cannot hold one `--max-model-len` request is listed as `infeasible` and not
-run, because vLLM would refuse to start.
+run, because vLLM would refuse to start. The command ends with
+`best_by_capacity.csv`/`.md` and spec 005's figures in
+`results/m2-task3/figures/` (`--figures` to choose, `--no-figures` to skip);
+the results are in
+[`report/milestone2/task3-cache-tuning.md`](report/milestone2/task3-cache-tuning.md).
 
 ### Useful vLLM flags for experiments
 
@@ -341,7 +345,7 @@ Milestone 1 (`make test-m1`, 67 tests):
 | `tests/simulator/test_engine.py` | In-process `LLMEngine` with gpt2's tokenizer: KV-cache sizing, stop rules, batching, prefix-cache hits, preemption, chunked prefill. | ~6 s |
 | `tests/simulator/test_online.py` | A real `vllm serve` (both front-ends) through the OpenAI client: completions, chat, streaming, concurrency, `/metrics`. | ~20 s |
 
-Milestone 2 (`make test-m2`, 111 tests):
+Milestone 2 (`make test-m2`, 115 tests):
 
 | File | What it covers | Time |
 |---|---|---|
@@ -349,7 +353,7 @@ Milestone 2 (`make test-m2`, 111 tests):
 | `tests/analysis/test_metrics.py` | Every metric of spec 004 on a handcrafted log whose answers are worked out by hand. | < 1 s |
 | `tests/analysis/test_run_m2_task2.py` | The experiment command without a server: the sample, CSVs and self-checks, all seven figures, refusing to overwrite a run. | ~1 s |
 | `tests/analysis/test_server.py` | The server launcher: a busy port is refused, it binds 127.0.0.1, it reads the KV-cache size. | < 1 s |
-| `tests/analysis/test_sweep.py` | The Task 3 sweep without a server: eviction count and rate, grid expansion with capacity in tokens, infeasible configurations, resuming after an interruption, the summary rows, and the command with a faked replay. | < 1 s |
+| `tests/analysis/test_sweep.py` | The Task 3 sweep without a server: eviction count and rate, grid expansion with capacity in tokens, infeasible configurations, resuming after an interruption, the summary rows, the command with a faked replay, figure 4's capacity, the best-configuration table and the figures. | ~2 s |
 | `tests/eviction/test_eviction_policies.py` | The FIFO and LFU evictors alone: spec 005's scenarios, every tie-break, reuse and eviction resetting the counters, a bounded heap, and random operations checked against a brute-force reference. | ~3 s |
 | `tests/simulator/test_eviction_policy_env.py` | `VLLM_EVICTION_POLICY` in an in-process engine: it picks the GPU evictor only, refuses unknown values, feeds hits to LFU, and makes FIFO give up a different block than LRU and LFU in a 6-block cache. | ~8 s |
 

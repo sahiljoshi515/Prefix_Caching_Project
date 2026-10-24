@@ -23,7 +23,7 @@ Each folder holds:
 | [002-m1-simulator-verification](002-m1-simulator-verification/spec.md) | Milestone 1 verification | Triet Chau, Xin Liang Chia | Awaiting verification | — |
 | [003-m2-client-simulator](003-m2-client-simulator/spec.md) | M2 Task 1: client simulator | Triet Chau | Merged (PR #6); follow-ups open | M1 |
 | [004-m2-prefix-sharing-analysis](004-m2-prefix-sharing-analysis/spec.md) | M2 Task 2: replay and analyze | Xin Liang Chia | In progress | 003 |
-| [005-m2-cache-tuning](005-m2-cache-tuning/spec.md) | M2 Task 3: cache parameters, LRU/LFU/FIFO | Jasmine Lu | In progress | 003, 004 |
+| [005-m2-cache-tuning](005-m2-cache-tuning/spec.md) | M2 Task 3: cache parameters, LRU/LFU/FIFO | Jasmine Lu | Done (PRs #10, #11 and the results PR) | 003, 004 |
 | [006-m3-workload-eviction](006-m3-workload-eviction/spec.md) | M3 Task 1: policies per workload | TBD | Draft | 003, 004, 005 |
 | [007-m3-mixed-workload-policy](007-m3-mixed-workload-policy/spec.md) | M3 Task 2: workload-aware policy | TBD | Draft | 004, 005, 006 |
 
