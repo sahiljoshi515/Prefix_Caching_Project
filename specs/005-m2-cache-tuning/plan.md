@@ -1,8 +1,9 @@
 # Implementation Plan: Tune cache parameters and eviction policies
 
 **Spec**: [spec.md](spec.md) | **Branch**:
-`milestone2-jasmine-eviction-policies` (Phase 1, from `milestone-2`) |
-**Date**: 2026-10-18, revised 2026-10-23 with Phase 1 as built
+`milestone2-jasmine-eviction-policies` (Phase 1, from `milestone-2`, PR
+#10), `milestone2-jasmine-cache-sweep` (Phase 2, from Phase 1) |
+**Date**: 2026-10-18, revised 2026-10-23 with Phases 1 and 2 as built
 
 ## Summary
 
@@ -38,12 +39,12 @@ tests), `tests/simulator/test_eviction_policy_env.py` (engine wiring),
 | Path | Purpose |
 |---|---|
 | `vllm/core/eviction_policies.py` | `FIFOEvictor`, `LFUEvictor`, and `eviction_policy_from_env()` |
-| `analysis/sweep.py` | Grid definition, resumable runner (one server per configuration) |
-| `analysis/run_m2_task3.py` | The Task 3 grid, summary CSV, figures |
+| `analysis/sweep.py` | Configurations (capacity in tokens), grid expansion, feasibility, resumable runner (one server per configuration), the summary row |
+| `analysis/run_m2_task3.py` | The `full` and `smoke` grids, the shared sample and `sweep.json`, `summary.csv`; figures in Phase 3 |
 | `tests/eviction/test_eviction_policies.py` | Evictor unit tests (a project folder, so `tools/run_project_tests.sh` finds it; marked `m2`) |
 | `tests/eviction/__init__.py` | Package marker, as in `tests/analysis/` |
 | `tests/simulator/test_eviction_policy_env.py` | The variable selects the GPU evictor only; bad values fail; the hit hook reaches LFU; FIFO evicts a different block than LRU and LFU in a 6-block cache |
-| `tests/analysis/test_sweep.py` | Grid expansion, token-capacity conversion, resume |
+| `tests/analysis/test_sweep.py` | Eviction metrics, grid expansion, token-capacity conversion, feasibility, resume, summary rows, the command with a faked replay |
 
 ### Modified upstream vLLM files
 
@@ -106,14 +107,49 @@ the manifest carry it instead.
 
 ### Sweep
 
-- Grid axes: policy ∈ {lru, fifo, lfu}; block size ∈ {8, 16, 32, 64, 128}
-  (at fixed token capacity); capacity ∈ 5 to 7 points spanning the working
-  set (from the `004` infinite-cache run).
-- Each configuration starts a fresh server (`analysis.server.launch`) with
-  `--block-size`, `--num-gpu-blocks-override`, `VLLM_EVICTION_POLICY` and
-  `VLLM_CACHE_EVENT_LOG`, replays the sample, and computes metrics into
-  `results/m2-task3/<policy>-bs<B>-cap<T>/`.
-- `summary.csv` holds one row per configuration; figures are drawn from it.
+- Grid axes: policy ∈ {lru, fifo, lfu}; block size; capacity in tokens.
+  The `full` grid (SC-003's minimum, 45 runs) is block sizes {8, 16, 32}
+  and capacities 2^14, 2^16, 2^18, 2^20 and 2^21 tokens (16,384 to
+  2,097,152). Task 2's multi-turn run cached 114,964 distinct blocks of 16
+  tokens, so its working set is 1,839,424 tokens: the points go from about
+  1% of it to above it, as the spec's Assumptions ask (Phase 0, T001).
+  Powers of two are whole numbers of blocks at every block size, and the
+  smallest is above the 8,192-token minimum. Any axis can be overridden on
+  the command line.
+- The `smoke` grid is US2's independent test: 8,192 and 16,384 tokens,
+  block size 16, the three policies, 20 conversations without pacing.
+- Each configuration starts a fresh server through Task 2's
+  `run_m2_task2.run_setting`, which now takes extra server arguments, an
+  environment and manifest fields: `--block-size`,
+  `--num-gpu-blocks-override capacity/block_size` and
+  `VLLM_EVICTION_POLICY`, with the cache event log on. It replays the
+  multi-turn sample and is analyzed by `run_m2_task2.analyze_run`, whose
+  summary now also holds the eviction count and rate (FR-007, implemented in
+  `analysis/metrics.py`). Run folders are `<out>/<policy>-bs<B>-cap<T>/`.
+- The sample is written once per output folder, with the sample and pacing
+  in `sweep.json`; resuming with other settings is refused, so every run
+  of one folder compares.
+- Resume: a run whose `run.json` has `finished_at_utc` is kept; an
+  unfinished folder is deleted and replayed. `--analyze-only` recomputes
+  every run's summary without replaying and marks unfinished runs
+  `missing`.
+- `summary.csv` holds one row per configuration, including infeasible ones
+  (status `infeasible`, never started), with the block count vLLM reported
+  (a check that the override took effect), preemptions from
+  `vllm:num_preemptions_total` and the SC-003 self-check; figures are drawn
+  from it.
+
+### Phase 2 checks (2026-10-23)
+
+- `python -m analysis.run_m2_task3 --grid smoke --out results/smoke-task3`
+  finished the 6 runs in 123 s (US2's bound is 5 minutes) with 105
+  requests each. Every run's server reported the requested block count
+  and passed SC-003, and the policies already differ under this pressure
+  (block hit rate 0.646 LRU, 0.625 FIFO, 0.633 LFU at 8,192 tokens).
+  Running the command again replayed nothing (0.1 s).
+- The largest `full` configuration, 262,144 blocks of 8 tokens, starts in
+  16 s and uses 1.2 GB across the server's processes, against 0.9 GB at
+  the default 21,845 blocks of 16.
 
 ## Phases
 
