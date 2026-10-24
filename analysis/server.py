@@ -31,7 +31,12 @@ class SimulatorServer:
         log_path: where the server's stdout and stderr go.
         event_log: VLLM_CACHE_EVENT_LOG, or None for no event log.
         args: extra `vllm serve` arguments.
-        env: extra environment variables (e.g. VLLM_CPU_KVCACHE_SPACE).
+        env: extra environment variables (e.g. VLLM_CPU_KVCACHE_SPACE,
+            VLLM_EVICTION_POLICY).
+
+    The shell's VLLM_CACHE_EVENT_LOG and VLLM_EVICTION_POLICY are never
+    inherited: an experiment sets them through `event_log` and `env`, so its
+    manifest describes the server it ran.
     """
 
     def __init__(self,
@@ -56,7 +61,8 @@ class SimulatorServer:
         self.env.update(VLLM_USE_SIMULATOR="1",
                         VLLM_NO_USAGE_STATS="1",
                         VLLM_SIMULATOR_TRACE=str(trace))
-        self.env.pop("VLLM_CACHE_EVENT_LOG", None)
+        for name in ("VLLM_CACHE_EVENT_LOG", "VLLM_EVICTION_POLICY"):
+            self.env.pop(name, None)
         if event_log is not None:
             self.env["VLLM_CACHE_EVENT_LOG"] = str(event_log)
         self.env.update(env or {})

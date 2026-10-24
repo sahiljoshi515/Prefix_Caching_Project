@@ -172,6 +172,11 @@ time; a policy changes which blocks survive, not when they come back.
   load LFU would lose fewer.
 - **Plain LFU only.** No aging or decay; a variant with either is the
   natural next step (spec 005, Risks).
+- **LFU counts lookup hits only** (spec 005, FR-002). A block filled during
+  decode whose content is already cached is remapped to the cached block
+  (a `dedupe` in the event log) without counting as a hit. This is rare
+  and does not change the result: at 262,144 tokens, block size 16, LFU
+  had 84 dedupes against 565,843 evictions.
 - **The cost of small blocks is not modelled.** The simulator computes
   nothing, so block-table size and attention-kernel efficiency, which
   favour larger blocks on a real GPU, do not show up.

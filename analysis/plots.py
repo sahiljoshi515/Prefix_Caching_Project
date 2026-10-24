@@ -213,7 +213,12 @@ def panel_lines_plot(
                 ax.set_xlabel(labels.get(x, x))
             if col == 0:
                 ax.set_ylabel(labels.get(y, y))
-    handles, names = axes[0][0].get_legend_handles_labels()
+    # Every panel's lines, so a line missing from the first still shows.
+    legend: Dict[str, Any] = {}
+    for ax in fig.axes:
+        for handle, name in zip(*ax.get_legend_handles_labels()):
+            legend.setdefault(name, handle)
+    handles, names = list(legend.values()), list(legend)
     if handles:
         fig.legend(handles,
                    names,

@@ -38,7 +38,7 @@ into the technical report under [`report/`](report/README.md).
 | `vllm/entrypoints/launcher.py`, `vllm/entrypoints/openai/api_server.py`, `vllm/utils.py` | macOS fixes: hand the already-bound port to uvicorn instead of binding it twice, and skip a root-only port lookup during shutdown. |
 | `constraints-simulator.txt` (new) | Dependency pins contemporary with this vLLM commit. |
 | `tests/simulator/` (new) | 87 tests: unit, in-process engine, a real `vllm serve`, the cache event log, and the eviction-policy variable. |
-| `tests/analysis/` (new) | Milestone 2: 54 tests of the metrics, the Task 2 and Task 3 experiment commands and the server launcher, without a server. |
+| `tests/analysis/` (new) | Milestone 2: 61 tests of the metrics, the Task 2 and Task 3 experiment commands and the server launcher, without a server. |
 | `tests/eviction/` (new) | Milestone 2, Task 3: 41 tests of the FIFO and LFU evictors with hand-derived victims, and a randomized check against each policy's definition. |
 | `examples/simulator/` (new) | Example trace and a client that replays it. |
 | `client_simulator/` (new) | Milestone 2: ShareGPT download and preprocessing, and the replay client (Poisson arrivals, single- and multi-turn, chat template). |
@@ -101,7 +101,7 @@ These environment variables control it:
 | `VLLM_SIMULATOR_TRACE=/path/to/trace.jsonl` | The trace to replay (optional; without it every request gets filler tokens). |
 | `VLLM_CPU_KVCACHE_SPACE=<GiB>` | Simulated KV-cache budget in GiB (default 4). `--num-gpu-blocks-override N` gives an exact block count instead. |
 | `VLLM_CACHE_EVENT_LOG=/path/to/events.jsonl` | Milestone 2: log every prefix-cache event, one JSON line each (off when unset; see [Analyzing prefix sharing](#analyzing-prefix-sharing-milestone-2-task-2)). |
-| `VLLM_EVICTION_POLICY=lru\|fifo\|lfu` | Milestone 2, Task 3: eviction policy of the prefix cache (default `lru`, vLLM's own). The server logs the policy at startup and refuses unknown values. Definitions: [spec 005](specs/005-m2-cache-tuning/spec.md), FR-003. |
+| `VLLM_EVICTION_POLICY=lru\|fifo\|lfu` | Milestone 2, Task 3: eviction policy of the prefix cache (default `lru`, vLLM's own). It is read only when the prefix cache exists (`--enable-prefix-caching`, v0 engine); the server then logs the policy at startup and refuses unknown values. Definitions: [spec 005](specs/005-m2-cache-tuning/spec.md), FR-003. |
 
 Start a server and replay the example trace:
 
@@ -297,8 +297,11 @@ python -m analysis.run_m2_task3 --out results/m2-task3 --analyze-only
 ```
 
 Each configuration gets `results/m2-task3/<policy>-bs<B>-cap<T>/`, laid out
-like a Task 2 run folder; `sweep.json` records the sample and pacing, and a
-folder is only resumed with the same ones. A configuration whose cache
+like a Task 2 run folder. `sweep.json` records the sample, the pacing and
+every configuration asked for; a folder is only resumed with the same sample
+and pacing, without `--grid` or axis options it reuses its recorded grid
+(so `--analyze-only` needs only `--out`), and `summary.csv` always lists
+every recorded configuration. A configuration whose cache
 cannot hold one `--max-model-len` request is listed as `infeasible` and not
 run, because vLLM would refuse to start. The command ends with
 `best_by_capacity.csv`/`.md` and spec 005's figures in
@@ -345,15 +348,15 @@ Milestone 1 (`make test-m1`, 67 tests):
 | `tests/simulator/test_engine.py` | In-process `LLMEngine` with gpt2's tokenizer: KV-cache sizing, stop rules, batching, prefix-cache hits, preemption, chunked prefill. | ~6 s |
 | `tests/simulator/test_online.py` | A real `vllm serve` (both front-ends) through the OpenAI client: completions, chat, streaming, concurrency, `/metrics`. | ~20 s |
 
-Milestone 2 (`make test-m2`, 115 tests):
+Milestone 2 (`make test-m2`, 122 tests):
 
 | File | What it covers | Time |
 |---|---|---|
 | `tests/simulator/test_cache_events.py` | The cache event log in an in-process engine: miss and insert, then hit and revive on a repeated prompt; blocks written during decode; eviction in a 6-block cache; sharing between concurrent requests; swap-in lookups; the log's hit rate equal to vLLM's; flushing. | ~4 s |
 | `tests/analysis/test_metrics.py` | Every metric of spec 004 on a handcrafted log whose answers are worked out by hand. | < 1 s |
 | `tests/analysis/test_run_m2_task2.py` | The experiment command without a server: the sample, CSVs and self-checks, all seven figures, refusing to overwrite a run. | ~1 s |
-| `tests/analysis/test_server.py` | The server launcher: a busy port is refused, it binds 127.0.0.1, it reads the KV-cache size. | < 1 s |
-| `tests/analysis/test_sweep.py` | The Task 3 sweep without a server: eviction count and rate, grid expansion with capacity in tokens, infeasible configurations, resuming after an interruption, the summary rows, the command with a faked replay, figure 4's capacity, the best-configuration table and the figures. | ~2 s |
+| `tests/analysis/test_server.py` | The server launcher: a busy port is refused, it binds 127.0.0.1, it reads the KV-cache size, it never inherits the shell's cache settings. | < 1 s |
+| `tests/analysis/test_sweep.py` | The Task 3 sweep without a server: eviction count and rate, grid expansion with capacity in tokens, infeasible configurations, resuming after an interruption, the summary rows, the command with a faked replay, the recorded grid, figure 4's capacity, the best-configuration table and the figures. | ~2 s |
 | `tests/eviction/test_eviction_policies.py` | The FIFO and LFU evictors alone: spec 005's scenarios, every tie-break, reuse and eviction resetting the counters, a bounded heap, and random operations checked against a brute-force reference. | ~3 s |
 | `tests/simulator/test_eviction_policy_env.py` | `VLLM_EVICTION_POLICY` in an in-process engine: it picks the GPU evictor only, refuses unknown values, feeds hits to LFU, and makes FIFO give up a different block than LRU and LFU in a 6-block cache. | ~8 s |
 
