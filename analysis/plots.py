@@ -49,6 +49,14 @@ def _style(setting: str) -> Dict[str, str]:
     }
 
 
+def _compact(value: float, _position: Any = None) -> str:
+    """1,500 -> "1.5k", 2,000,000 -> "2M"."""
+    for divisor, suffix in ((1e6, "M"), (1e3, "k")):
+        if abs(value) >= divisor:
+            return f"{value / divisor:g}{suffix}"
+    return f"{value:g}"
+
+
 def _save(fig, path: Path) -> List[Path]:
     path.parent.mkdir(parents=True, exist_ok=True)
     written = []
@@ -187,14 +195,16 @@ def panel_lines_plot(
                 ax.set_xscale("log", base=2)
             if y in symlog_y:
                 ax.set_yscale("symlog", linthresh=1)
-                # 1, 2 and 5 x 10^n, so a range within one decade still
-                # gets labels.
+                values = [r[y] for r in rows if r[y]]
+                # A range within one decade gets ticks at 1, 2 and 5 x 10^n,
+                # so it is labelled at all; wider ones only at powers of 10.
+                narrow = bool(values) and max(values) < 10 * min(values)
                 ax.yaxis.set_major_locator(
-                    ticker.SymmetricalLogLocator(base=10,
-                                                 linthresh=1,
-                                                 subs=[1, 2, 5]))
-                ax.yaxis.set_major_formatter(
-                    ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
+                    ticker.SymmetricalLogLocator(
+                        base=10,
+                        linthresh=1,
+                        subs=[1, 2, 5] if narrow else [1]))
+                ax.yaxis.set_major_formatter(ticker.FuncFormatter(_compact))
             if row_index == 0:
                 ax.set_title(title.format(name=labels.get(panel_by, panel_by),
                                           value=panel),
