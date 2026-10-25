@@ -79,3 +79,11 @@ Entry format:
   the memory check, and the document updates. Jasmine asked for one PR per
   phase.
 - **Prompts:** "now work on the next phase".
+### PR #13: Skip PDF and PNG figures in codespell
+
+- **Tools:** Claude Code (Claude Fable 5.1).
+- **Used for:** reproducing the `codespell` failure that PR #9's figures
+  cause on `milestone-2`, the one-line skip in `pyproject.toml`, the PR
+  description and this entry. Sahil asked for the fix and reviewed it.
+- **Prompts:** "Can you fix the CI for codespell/codecheck and make a
+  commit, and then tell me if we can merge it?"
