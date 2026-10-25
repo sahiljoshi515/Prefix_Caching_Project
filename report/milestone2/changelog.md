@@ -142,6 +142,12 @@ as PR #10.
   (`task<K>-<name>.md`), every task has a note or a placeholder, and
   Milestone 3 has its folder and changelog (`b79d7be3`).
 
+### PR #13, open (sahiljoshi515)
+
+- **Fixed:** the `codespell` check, failing on `milestone-2` since PR #9's
+  PDF figures were committed: `*.pdf` and `*.png` are skipped
+  (`521ed9e6`, 2026-10-24). Unblocks PR #10.
+
 ### PR #8, open (ChiaXinLiang, commits by marcus)
 
 - **Changed:** CI checks also run on PRs into `milestone-*` branches, and
