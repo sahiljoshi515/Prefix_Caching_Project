@@ -57,3 +57,12 @@ Entry format:
   first the task?"; "Since we are a group, so what method do you suggest
   that we should do for our project? a way to document all things";
   "please run the full run testing for me and record it".
+
+### PR #13: Skip PDF and PNG figures in codespell
+
+- **Tools:** Claude Code (Claude Fable 5.1).
+- **Used for:** reproducing the `codespell` failure that PR #9's figures
+  cause on `milestone-2`, the one-line skip in `pyproject.toml`, the PR
+  description and this entry. Sahil asked for the fix and reviewed it.
+- **Prompts:** "Can you fix the CI for codespell/codecheck and make a
+  commit, and then tell me if we can merge it?"
