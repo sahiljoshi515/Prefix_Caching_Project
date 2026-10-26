@@ -156,6 +156,54 @@ def test_token_level_reused_fraction():
     assert m.token_reused_fraction(rows) == pytest.approx(80 / 200)
 
 
+def test_prefix_hits_split_hits_before_and_after_the_first_miss():
+    # A1's first prefill: hit, miss, hit, hit; then decode, then a
+    # re-prefill after preemption whose lookups are not counted.
+    log = [
+        E(1, "hit", 1, A1),
+        E(1, "miss", 2, A1),
+        E(1, "insert", 2, A1),
+        E(1, "hit", 3, A1),
+        E(1, "hit", 4, A1),
+        E(2, "insert", 5, A1, op="append_slots"),
+        E(3, "hit", 1, A1),
+        E(3, "hit", 2, A1),
+        E(4, "hit", 1, B0),
+        E(4, "hit", 2, B0),
+    ]
+    assert m.prefix_hits(log) == {
+        "sharegpt:A:1": {
+            "prefix_hits": 1,
+            "hits_after_miss": 2
+        },
+        "sharegpt:B:0": {
+            "prefix_hits": 2,
+            "hits_after_miss": 0
+        },
+    }
+
+
+def test_usable_fraction_counts_only_the_cached_prefix():
+    rows, _ = m.cached_fractions(RESULTS)
+    prefixes = {
+        "sharegpt:A:1": {
+            "prefix_hits": 1,
+            "hits_after_miss": 2
+        },
+        "sharegpt:B:0": {
+            "prefix_hits": 9,
+            "hits_after_miss": 0
+        },
+    }
+    m.add_usable_fractions(rows, prefixes, block_size=16)
+    # A0: no lookups -> 0. A1: 1 prefix block of 16 of 100 tokens, though
+    # vLLM reported 48. B0: 9 blocks capped at the 60-token prompt.
+    assert [r["usable_cached_tokens"] for r in rows] == [0, 16, 60]
+    assert [r["hits_after_miss"] for r in rows] == [0, 2, 0]
+    assert m.token_reused_fraction(
+        rows, "usable_cached_tokens") == pytest.approx(76 / 200)
+
+
 def test_mean_cached_fraction_by_turn():
     rows, _ = m.cached_fractions(RESULTS)
     assert m.mean_by_turn(rows) == {

@@ -309,14 +309,21 @@ def test_other_folders_are_not_used(tmp_path, data):
 # --- Results: figure 4's capacity, the best-configuration table, figures ----
 
 
-def result(policy, block_size, capacity, reused, status="finished"):
+def result(policy,
+           block_size,
+           capacity,
+           reused,
+           status="finished",
+           vllm_reused=None):
     return {
         "name": Config(policy, block_size, capacity).name,
         "policy": policy,
         "block_size": block_size,
         "capacity_tokens": capacity,
         "status": status,
-        "token_reused_fraction": reused,
+        "usable_reused_fraction": reused,
+        "token_reused_fraction":
+        reused if vllm_reused is None else vllm_reused,
         "block_hit_rate": reused,
         "evictions": 0,
     }
@@ -375,6 +382,16 @@ def test_figures_are_drawn_from_the_runs(tmp_path):
     assert "fig4a_hits_per_residency_bs16_cap2048.png" in names
     assert "fig3_evictions_vs_capacity.pdf" in names
     assert all(p.stat().st_size > 0 for p in written)
+
+
+def test_runs_are_ranked_by_usable_reuse_not_vllm_cached_tokens():
+    """FIFO's vLLM-reported reuse can be higher while less of it is a
+    contiguous prefix that vLLM can skip."""
+    rows = [
+        result("lru", 16, 1024, 0.76),
+        result("fifo", 16, 1024, 0.38, vllm_reused=0.77),
+    ]
+    assert task3.best_by_capacity(rows)[0]["best"] == "lru-bs16-cap1024"
 
 
 def test_unmeasured_runs_are_not_ranked():

@@ -58,7 +58,7 @@ LABELS = {
     "capacity_tokens": "KV-cache capacity (tokens)",
     "block_size": "block size (tokens)",
     "block_hit_rate": "block hit rate",
-    "token_reused_fraction": "reused token fraction",
+    "usable_reused_fraction": "usable reused token fraction",
     "evictions": "evictions",
 }
 # A run folder's name, `sweep.Config.name`.
@@ -125,8 +125,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--pressure-capacity",
         type=int,
-        help="Capacity of figure 4 (default: where the policies' reused "
-        "token fractions differ most at --figure-block-size)")
+        help="Capacity of figure 4 (default: where the policies' usable "
+        "reused fractions differ most at --figure-block-size)")
     args = parser.parse_args(argv)
     recorded = read_sweep_file(args.out)
     axes_given = (args.grid is not None or args.policies is not None
@@ -235,25 +235,28 @@ def finished(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [r for r in rows if r["status"] == "finished"]
 
 
+# What runs are ranked by: the share of prompt tokens served from a
+# contiguous cached prefix. Not vLLM's cached_tokens, which overcounts when
+# a policy leaves a miss before cached blocks (FIFO; see spec 004).
+RANK_BY = "usable_reused_fraction"
+
+
 def measured(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Finished runs with a reused token fraction (None when no request
+    """Finished runs with a usable reused fraction (None when no request
     completed), the ones that can be ranked."""
-    return [
-        r for r in finished(rows) if r["token_reused_fraction"] is not None
-    ]
+    return [r for r in finished(rows) if r[RANK_BY] is not None]
 
 
 def pressure_capacity(rows: Sequence[Dict[str, Any]],
                       block_size: int) -> Optional[int]:
-    """The capacity at which the policies' reused token fractions spread
+    """The capacity at which the policies' usable reused fractions spread
     most, at one block size: where eviction policy matters. Only
     capacities that every policy finished count."""
     by_capacity: Dict[int, Dict[str, float]] = {}
     for r in measured(rows):
         if r["block_size"] == block_size:
-            by_capacity.setdefault(
-                r["capacity_tokens"],
-                {})[r["policy"]] = r["token_reused_fraction"]
+            by_capacity.setdefault(r["capacity_tokens"],
+                                   {})[r["policy"]] = r[RANK_BY]
     policies = {r["policy"] for r in rows}
     spreads = {
         capacity: max(values.values()) - min(values.values())
@@ -266,13 +269,13 @@ def pressure_capacity(rows: Sequence[Dict[str, Any]],
 
 
 def best_by_capacity(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Per capacity, the configuration with the highest reused token
+    """Per capacity, the configuration with the highest usable reused
     fraction, and its margin over the next best."""
     table = []
     for capacity in sorted({r["capacity_tokens"] for r in measured(rows)}):
         ranked = sorted(
             (r for r in measured(rows) if r["capacity_tokens"] == capacity),
-            key=lambda r: -r["token_reused_fraction"])
+            key=lambda r: -r[RANK_BY])
         best = ranked[0]
         table.append({
             "capacity_tokens":
@@ -283,8 +286,8 @@ def best_by_capacity(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             best["policy"],
             "block_size":
             best["block_size"],
-            "token_reused_fraction":
-            best["token_reused_fraction"],
+            RANK_BY:
+            best[RANK_BY],
             "block_hit_rate":
             best["block_hit_rate"],
             "evictions":
@@ -292,8 +295,7 @@ def best_by_capacity(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "next_best":
             ranked[1]["name"] if len(ranked) > 1 else None,
             "margin":
-            best["token_reused_fraction"] -
-            ranked[1]["token_reused_fraction"] if len(ranked) > 1 else None,
+            best[RANK_BY] - ranked[1][RANK_BY] if len(ranked) > 1 else None,
             "configurations":
             len(ranked),
         })
@@ -324,20 +326,20 @@ def make_figures(out: Path, figures: Path, rows: Sequence[Dict[str, Any]],
     written: List[Path] = []
     if not done:
         return written
-    written += plots.panel_lines_plot(
-        done,
-        "capacity_tokens", ["block_hit_rate", "token_reused_fraction"],
-        "block_size",
-        figures / "fig1_vs_capacity",
-        labels=LABELS,
-        title="block size {value}")
-    written += plots.panel_lines_plot(
-        done,
-        "block_size", ["block_hit_rate", "token_reused_fraction"],
-        "capacity_tokens",
-        figures / "fig2_vs_block_size",
-        labels=LABELS,
-        title="{value:,} tokens")
+    written += plots.panel_lines_plot(done,
+                                      "capacity_tokens",
+                                      ["block_hit_rate", RANK_BY],
+                                      "block_size",
+                                      figures / "fig1_vs_capacity",
+                                      labels=LABELS,
+                                      title="block size {value}")
+    written += plots.panel_lines_plot(done,
+                                      "block_size",
+                                      ["block_hit_rate", RANK_BY],
+                                      "capacity_tokens",
+                                      figures / "fig2_vs_block_size",
+                                      labels=LABELS,
+                                      title="{value:,} tokens")
     written += plots.panel_lines_plot(done,
                                       "capacity_tokens", ["evictions"],
                                       "block_size",

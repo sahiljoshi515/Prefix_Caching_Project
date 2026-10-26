@@ -200,6 +200,7 @@ def analyze_run(run_dir: Path, window_s: float) -> Dict[str, Any]:
     for row, gap in zip(rows, gaps):
         row["logged_hits"] = gap["logged_hits"]
         row["gap_tokens"] = gap["gap_tokens"]
+    m.add_usable_fractions(rows, m.prefix_hits(events), block_size)
     hits = m.hits_per_block(events)
     intervals = m.reuse_intervals(events)
     windows = m.windowed_hit_rate(events, window_s)
@@ -234,6 +235,17 @@ def analyze_run(run_dir: Path, window_s: float) -> Dict[str, Any]:
         m.token_reused_fraction(rows),
         "mean_cached_fraction_by_turn":
         m.mean_by_turn(rows),
+        # vLLM's cached_tokens overcounts when a hit follows a miss (FIFO);
+        # these count only the contiguous cached prefix (spec 004).
+        "mean_usable_cached_fraction":
+        statistics.fmean(r["usable_cached_fraction"]
+                         for r in rows) if rows else None,
+        "usable_reused_fraction":
+        m.token_reused_fraction(rows, "usable_cached_tokens"),
+        "mean_usable_cached_fraction_by_turn":
+        m.mean_by_turn(rows, "usable_cached_fraction"),
+        "requests_with_hits_after_miss":
+        sum(r["hits_after_miss"] > 0 for r in rows),
         "blocks":
         len(hits),
         "blocks_with_hits_share":

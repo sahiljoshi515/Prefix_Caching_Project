@@ -8,10 +8,12 @@ metrics: [spec 004](../../specs/004-m2-prefix-sharing-analysis/spec.md).
 
 **Answer in one line.** Capacity decides almost everything: reuse climbs
 from 2% at 16,384 tokens to 95% at 262,144 tokens (14% of the working set)
-and stays there. LRU and FIFO are within 0.01 of each other everywhere,
-while plain LFU collapses whenever the cache must evict, because it throws
-away each conversation's newest blocks before the conversation returns.
-Smaller blocks help a little, most for short prompts.
+and stays there. LRU is the policy to use. FIFO matches LRU's hit rate, but
+under cache pressure half of its hits sit behind a miss, where vLLM cannot
+use them, so it serves half as many prompt tokens from the cache (0.38
+against 0.76 at 65,536 tokens). Plain LFU collapses whenever the cache must
+evict, because it throws away each conversation's newest blocks before the
+conversation returns. Smaller blocks help a little, most for short prompts.
 
 ## Setup
 
@@ -49,29 +51,34 @@ Smaller blocks help a little, most for short prompts.
 
 ## Results
 
-Block size 16 (vLLM's default), all capacities. Reused token fraction is
-`Σ cached_tokens / Σ prompt_tokens`; mean cached fraction is the
-per-request mean.
+Block size 16 (vLLM's default), all capacities. Usable reused fraction is
+the share of prompt tokens served from a contiguous cached prefix (block
+size × the hits before a request's first miss, summed, over the summed
+prompt tokens), the tokens vLLM can skip computing. vLLM's own
+`cached_tokens` overcounts this under FIFO (finding 2), so its share is
+listed next to it; under LRU and LFU the two agree. Mean usable fraction
+is the per-request mean. Spec 004 defines all three.
 
-| Capacity (tokens) | Policy | Block hit rate | Reused token fraction | Mean cached fraction | Evictions | Preemptions |
-|---|---|---|---|---|---|---|
-| 16,384 | LRU | 0.018 | 0.018 | 0.078 | 675,098 | 1 |
-| | FIFO | 0.019 | 0.019 | 0.082 | 675,570 | 0 |
-| | LFU | 0.020 | 0.020 | 0.078 | 675,534 | 2 |
-| 65,536 | LRU | 0.764 | 0.761 | 0.667 | 225,893 | 0 |
-| | FIFO | 0.766 | 0.762 | 0.707 | 224,591 | 0 |
-| | LFU | 0.045 | 0.045 | 0.101 | 657,117 | 0 |
-| 262,144 | LRU | 0.953 | 0.949 | 0.807 | 100,062 | 0 |
-| | FIFO | 0.951 | 0.949 | 0.807 | 100,989 | 0 |
-| | LFU | 0.177 | 0.176 | 0.206 | 565,843 | 0 |
-| 1,048,576 | LRU | 0.953 | 0.949 | 0.808 | 50,052 | 0 |
-| | FIFO | 0.953 | 0.949 | 0.808 | 50,041 | 0 |
-| | LFU | 0.663 | 0.661 | 0.585 | 223,908 | 0 |
-| 2,097,152 | all three | 0.954 | 0.950 | 0.809 | 0 | 0 |
+| Capacity (tokens) | Policy | Block hit rate | Usable reused fraction | vLLM `cached_tokens` share | Mean usable fraction | Evictions | Preemptions |
+|---|---|---|---|---|---|---|---|
+| 16,384 | LRU | 0.018 | 0.018 | 0.018 | 0.078 | 675,098 | 1 |
+| | FIFO | 0.019 | 0.016 | 0.019 | 0.078 | 675,570 | 0 |
+| | LFU | 0.020 | 0.019 | 0.020 | 0.078 | 675,534 | 2 |
+| 65,536 | LRU | 0.764 | 0.761 | 0.761 | 0.666 | 225,893 | 0 |
+| | FIFO | 0.766 | **0.378** | 0.762 | 0.485 | 224,591 | 0 |
+| | LFU | 0.045 | 0.045 | 0.045 | 0.101 | 657,117 | 0 |
+| 262,144 | LRU | 0.953 | 0.949 | 0.949 | 0.807 | 100,062 | 0 |
+| | FIFO | 0.951 | **0.914** | 0.949 | 0.797 | 100,989 | 0 |
+| | LFU | 0.177 | 0.176 | 0.176 | 0.205 | 565,843 | 0 |
+| 1,048,576 | LRU | 0.953 | 0.949 | 0.949 | 0.808 | 50,052 | 0 |
+| | FIFO | 0.953 | 0.949 | 0.949 | 0.807 | 50,041 | 0 |
+| | LFU | 0.663 | 0.661 | 0.661 | 0.585 | 223,908 | 0 |
+| 2,097,152 | all three | 0.954 | 0.950 | 0.950 | 0.809 | 0 | 0 |
 
-**Figure 1: hit rate and reused token fraction against capacity**, one
-panel per block size. LRU and FIFO overlap; LFU lags until the cache is
-large enough never to evict.
+**Figure 1: hit rate and usable reused fraction against capacity**, one
+panel per block size. LRU and FIFO overlap in hit rate but not in usable
+reuse, where FIFO lags at 65,536 and 262,144 tokens; LFU lags until the
+cache is large enough never to evict.
 
 ![Figure 1](figures/task3/fig1_vs_capacity.png)
 
@@ -99,15 +106,18 @@ time; a policy changes which blocks survive, not when they come back.
 ![Figure 4b](figures/task3/fig4b_reuse_interval_bs16_cap262144.png)
 
 **The best configuration per capacity** (spec item 5, from
-`results/m2-task3/best_by_capacity.md`), by reused token fraction:
+`results/m2-task3/best_by_capacity.md`), by usable reused fraction:
 
-| Capacity (tokens) | Best | Reused token fraction | Next best | Margin |
+| Capacity (tokens) | Best | Usable reused fraction | Next best | Margin |
 |---|---|---|---|---|
-| 16,384 | LFU, block size 8 | 0.024 | FIFO, block size 8 | 0.0004 |
-| 65,536 | FIFO, block size 8 | 0.768 | FIFO, block size 16 | 0.006 |
-| 262,144 | LRU, block size 8 | 0.952 | FIFO, block size 8 | < 0.0001 |
+| 16,384 | LFU, block size 8 | 0.024 | LRU, block size 8 | 0.002 |
+| 65,536 | LRU, block size 16 | 0.761 | LRU, block size 8 | 0.001 |
+| 262,144 | LRU, block size 8 | 0.952 | LRU, block size 16 | 0.003 |
 | 1,048,576 | LRU, block size 8 | 0.952 | FIFO, block size 8 | 0.0002 |
 | 2,097,152 | FIFO, block size 8 | 0.953 | LFU, block size 8 | 0 (tie; no evictions) |
+
+At 16,384 tokens every configuration reuses about 2%, so its winner means
+nothing; at 2,097,152 nothing is evicted and the policies tie.
 
 ## Interpretation
 
@@ -121,14 +131,36 @@ time; a policy changes which blocks survive, not when they come back.
    fit is the history of the conversations active within one think time,
    not everything the sample ever cached. This explains Task 2's finding
    that its default cache (349,520 tokens) lost only 0.1% of lookups.
-2. **LRU and FIFO are equivalent here.** Their hit rates differ by at most
-   0.01, and only under pressure. At 65,536 tokens FIFO gives requests a
-   higher mean cached fraction (0.707 against 0.667) with the same token
-   share. Split by turn: turns 1 to 4 keep 0.86 under FIFO against 0.74
-   under LRU, turns 5 to 19 0.77 against 0.80. LRU refreshes a long
-   conversation's whole history on every turn, so those long histories
-   crowd out the many short conversations; FIFO lets the oldest-inserted
-   blocks go, which favours the more numerous early turns.
+2. **FIFO finds blocks as often as LRU but can use only half of them.**
+   Their hit rates differ by at most 0.01. But FIFO evicts the blocks that
+   first entered the free pool longest ago, which are the beginning of
+   each conversation's history, while every later turn reads that history
+   again from the start. The next turn then misses on its first blocks and
+   hits on the ones after them. vLLM only skips the contiguous cached
+   prefix, so hits behind a miss save no compute. At 65,536 tokens, block
+   size 16, 50% of FIFO's prompt-lookup hits are behind a miss (in 2,046 of
+   5,094 requests; LRU: none), and FIFO serves 0.378 of prompt tokens from
+   the cache against 0.761 under LRU. The loss grows with the
+   conversation: turns 1 to 4 keep 0.76 under FIFO and 0.74 under LRU,
+   turns 5 to 19 0.32 against 0.79. At 262,144 tokens FIFO still loses
+   0.035 (0.914 against 0.949); from 1,048,576 tokens it hardly evicts and
+   matches LRU. Block sizes 8 and 32 behave the same.
+
+   **vLLM's own `cached_tokens` hides this.** It comes from
+   `find_cached_blocks_prefix` (`vllm/core/block/prefix_caching_block.py`),
+   a binary search that assumes a cached block's predecessors are cached
+   too. LRU keeps that true: a hit refreshes a block and all its
+   predecessors, and ties evict the deepest block first. Under FIFO the
+   search can land behind a miss, and it overcounted 1,640 requests at
+   65,536 tokens (in our runs it never undercounted): vLLM reports 0.762, the same as
+   LRU. The scheduler skips that many tokens, which in the simulator only
+   inflates the metric; on a GPU it would attend over blocks whose KV was
+   never written, so FIFO, or any policy that leaves a miss before cached
+   blocks, is not safe on vLLM v0 without a linear scan there. The note's
+   first version used `cached_tokens` and called LRU and FIFO
+   equivalent; the review of PR #12 (@sahiljoshi515) found the error,
+   and the reviewer's independent rerun of the grid gives the same
+   picture (FIFO 0.39 against LRU 0.75 at 65,536 tokens).
 3. **Plain LFU evicts exactly the blocks multi-turn reuse needs.** A newly
    freed block has zero hits, so LFU evicts it first. At 262,144 tokens,
    99.9% of LFU's evictions are blocks with no hits in that residency,
@@ -154,17 +186,19 @@ time; a policy changes which blocks survive, not when they come back.
    but no 32-token block. The token-weighted share, dominated by long
    prompts, moves less (0.952 against 0.944).
 5. **Recommendation for this workload:** size the cache for the active
-   conversations' histories (here about 262,144 tokens), use LRU or FIFO,
-   and use the smallest block size the attention kernels run efficiently
-   with. Plain LFU should not be used for multi-turn chat; Milestone 3's
+   conversations' histories (here about 262,144 tokens), use LRU, and use
+   the smallest block size the attention kernels run efficiently with.
+   FIFO is worse under pressure and, on vLLM v0, unsafe on a GPU. Plain LFU should not be used for multi-turn chat; Milestone 3's
    workload-aware policy (spec 007) should give recently freed blocks a
    grace period or age its frequencies.
 
 ## Limitations
 
-- **One sample, one seed.** The LRU–FIFO differences (≤ 0.01) are within
-  what a different seed could move; the LFU gap and the capacity cliff
-  are far larger.
+- **One sample, one seed.** Hit-rate differences of 0.01, such as between
+  LRU and FIFO, are within what a different seed or a rerun could move
+  (an independent rerun of LRU at 65,536 tokens gave 0.752 against our
+  0.764); FIFO's usable-reuse gap, the LFU gap and the capacity cliff are
+  far larger.
 - **Pacing is fixed.** Every turn comes back after exactly 5 s, so Figure
   4b is one step. LFU's failure depends on that: blocks are evicted 1.5 s
   after being freed, before the 5 s return. With longer think times or

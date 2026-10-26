@@ -147,8 +147,14 @@ def summary_row(config: Config, run_dir: Optional[Path],
         summary.get("block_hit_rate_log"),
         "mean_cached_fraction":
         summary.get("mean_cached_fraction"),
+        "usable_reused_fraction":
+        summary.get("usable_reused_fraction"),
+        "mean_usable_cached_fraction":
+        summary.get("mean_usable_cached_fraction"),
         "token_reused_fraction":
         summary.get("token_reused_fraction"),
+        "requests_with_hits_after_miss":
+        summary.get("requests_with_hits_after_miss"),
         "evictions":
         summary.get("evictions"),
         "eviction_rate_per_1k_lookups":

@@ -111,10 +111,18 @@ as PR #10.
   16, 32 × 5 capacities from 16,384 to 2,097,152 tokens, on Task 2's
   1,000-conversation sample), in the Task 3 note with five figures
   (`figures/task3/`) and the best configuration per capacity. Reuse climbs
-  from 2% to 95% between 16,384 and 262,144 tokens and stays there; LRU and
-  FIFO are within 0.01; plain LFU collapses whenever the cache evicts,
-  because it evicts each conversation's newest blocks first; block size 8
-  is slightly best.
+  from 2% to 95% between 16,384 and 262,144 tokens and stays there; LRU is
+  best; FIFO matches LRU's hit rate but, under pressure, half its hits sit
+  behind a miss and cannot be used (0.38 against 0.76 of prompt tokens at
+  65,536); plain LFU collapses whenever the cache evicts, because it
+  evicts each conversation's newest blocks first; block size 8 is
+  slightly best.
+- **Added:** the usable reused fraction (spec 004's metric table): reuse
+  counted from the contiguous cached prefix in the event log
+  (`metrics.prefix_hits`, `metrics.add_usable_fractions`), reported by
+  `analyze_run` and ranked on by `run_m2_task3`. vLLM's `cached_tokens`
+  overcounts under FIFO because `find_cached_blocks_prefix` assumes
+  cached blocks form a prefix; found in review. 3 tests.
 - **Added:** `run_m2_task3` draws spec 005's figures and writes
   `best_by_capacity.csv`/`.md`; `analysis/plots.py` gains the policies'
   colours and a small-multiples plot. 4 tests.

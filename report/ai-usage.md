@@ -89,3 +89,9 @@ Entry format:
   Task 3 note and the document updates. Jasmine chose block sizes 8, 16
   and 32.
 - **Prompts:** "next work on phase 3"; "what's the status now".
+- **Review fix:** Claude Code checked the reviewer's report that vLLM's
+  `cached_tokens` is wrong under FIFO against vLLM's source and the 45
+  event logs, added the usable reused fraction, re-analyzed the runs and
+  rewrote the affected findings. Prompt: "ok so after applying the fix,
+  our result and his should match? if so, yea make the changes and draft
+  a reply response".
