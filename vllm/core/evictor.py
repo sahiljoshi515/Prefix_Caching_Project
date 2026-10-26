@@ -9,6 +9,9 @@ class EvictionPolicy(enum.Enum):
        Evictor subclass.
     """
     LRU = enum.auto()
+    # COMP 536: implemented in vllm/core/eviction_policies.py.
+    FIFO = enum.auto()
+    LFU = enum.auto()
 
 
 class Evictor(ABC):
@@ -51,6 +54,11 @@ class Evictor(ABC):
     @abstractmethod
     def num_blocks(self) -> int:
         pass
+
+    def record_hit(self, block_id: int) -> None:
+        """Called on every prefix-cache lookup hit on the block, in use or
+        not (COMP 536). Only LFU counts hits; the default does nothing."""
+        return
 
 
 class BlockMetaData:
@@ -150,5 +158,9 @@ class LRUEvictor(Evictor):
 def make_evictor(eviction_policy: EvictionPolicy) -> Evictor:
     if eviction_policy == EvictionPolicy.LRU:
         return LRUEvictor()
-    else:
+    # COMP 536: FIFO and LFU (imported here, as that module imports this one).
+    from vllm.core.eviction_policies import make_project_evictor
+    evictor = make_project_evictor(eviction_policy)
+    if evictor is None:
         raise ValueError(f"Unknown cache eviction policy: {eviction_policy}")
+    return evictor
