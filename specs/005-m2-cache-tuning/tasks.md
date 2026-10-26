@@ -4,8 +4,9 @@
 
 ## Phase 0: Research
 
-- [ ] T001 From the `004` multi-turn run, compute the working set (distinct
-  full-block hashes × block size) and choose the capacity points
+- [x] T001 From the `004` multi-turn run, compute the working set (distinct
+  full-block hashes × block size) and choose the capacity points: 114,964
+  blocks × 16 = 1,839,424 tokens (Task 2 note); points in the plan, Sweep
 
 ## Phase 1: User Story 1 — selectable eviction policy (P1)
 
@@ -34,10 +35,10 @@
 
 ## Phase 2: User Story 2 — sweep runner (P1)
 
-- [ ] T008 [P] [US2] Test first: grid expansion, token-capacity to block
+- [x] T008 [P] [US2] Test first: grid expansion, token-capacity to block
   count, resume skips finished runs (`tests/analysis/test_sweep.py`)
-- [ ] T009 [US2] Sweep runner (`analysis/sweep.py`)
-- [ ] T010 [US2] Task 3 grid and summary (`analysis/run_m2_task3.py`)
+- [x] T009 [US2] Sweep runner (`analysis/sweep.py`)
+- [x] T010 [US2] Task 3 grid and summary (`analysis/run_m2_task3.py`)
 
 ## Phase 3: User Story 3 — results (P2)
 

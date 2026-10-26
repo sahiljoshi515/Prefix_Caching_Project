@@ -105,7 +105,18 @@ branch `milestone2-marcus-prefix-sharing-analysis` (marcus), with the
 done on branch `milestone2-jasmine-eviction-policies` (Jasmine Lu); in review
 as PR #10.
 
-### Unreleased: 2026-10-23 (Task 3 branch)
+### Unreleased: 2026-10-23 (Phase 2, PR #11)
+
+- **Added:** the sweep runner, `python -m analysis.run_m2_task3`: one fresh
+  server per configuration of policy, block size and capacity (in tokens),
+  resumable, with a `smoke` grid (6 runs, 2 minutes) and the `full` grid
+  (45 runs). Each run is analyzed with Task 2's metrics and summarized in
+  one row of `summary.csv`. Eviction count and rate (spec 005, FR-007) are
+  in `analysis/metrics.py`, and Task 2's `analyze_run` reports them;
+  `run_setting` takes extra server arguments, an environment and manifest
+  fields. 22 tests.
+
+### Unreleased: 2026-10-23 (Phase 1, PR #10)
 
 - **Added:** FIFO and LFU evictors next to vLLM's LRU
   (`vllm/core/eviction_policies.py`), chosen for the GPU prefix cache with
@@ -175,7 +186,7 @@ as PR #10.
   mismatch, exit non-zero only on failures, unit tests, and PR #6's entry in
   [`ai-usage.md`](../ai-usage.md), and the likely keep-alive race (T015).
 - Task 2: review and merge PR #9; its checks run once PR #8 merges.
-- Task 3: Phase 1 (evictors) in review; Phase 2 (sweep runner) and Phase 3
-  (the 45-run grid and write-up) next.
+- Task 3: Phase 1 (evictors) in review as PR #10; Phase 2 (sweep runner)
+  in review as PR #11, after #10; Phase 3 (the 45-run grid and write-up) next.
 - The branch protection ruleset targets no branch, so nothing stops a direct
   push to `main` (spec 001, T014; repository settings, owner only).

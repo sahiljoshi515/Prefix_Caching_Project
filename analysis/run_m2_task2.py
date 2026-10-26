@@ -88,13 +88,24 @@ def write_sample(conversations: Path, responses: Path, limit: int,
     }
 
 
-def run_setting(setting: str, args: argparse.Namespace, sample: Dict[str, Any],
-                run_dir: Path) -> Dict[str, Any]:
+def run_setting(
+        setting: str,
+        args: argparse.Namespace,
+        sample: Dict[str, Any],
+        run_dir: Path,
+        extra_server_args: Sequence[str] = (),
+        env: Optional[Dict[str, str]] = None,
+        manifest_updates: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Replay one setting on a fresh server into `run_dir`.
+
+    `extra_server_args`, `env` and `manifest_updates` let other experiments
+    (Task 3's sweep) change the cache configuration and record it.
+    """
     run_dir.mkdir(parents=True)
     server_args = [
         "--enable-prefix-caching", "--enable-prompt-tokens-details",
         "--max-model-len",
-        str(args.max_model_len)
+        str(args.max_model_len), *extra_server_args
     ]
     client_output = run_dir / "client.jsonl"
     manifest: Dict[str, Any] = {
@@ -114,12 +125,14 @@ def run_setting(setting: str, args: argparse.Namespace, sample: Dict[str, Any],
             "seed": args.seed,
             "max_concurrency": args.max_concurrency,
         },
+        **(manifest_updates or {}),
     }
     with SimulatorServer(args.model,
                          Path(sample["responses_file"]),
                          log_path=run_dir / "server.log",
                          event_log=run_dir / "events.jsonl",
                          args=server_args,
+                         env=env,
                          port=args.port) as server:
         manifest["kv_cache"] = server.kv_cache_blocks()
         client = subprocess.run([
@@ -237,6 +250,10 @@ def analyze_run(run_dir: Path, window_s: float) -> Dict[str, Any]:
         logged_rate,
         "block_hit_rate_metric":
         metric_rate,
+        "evictions":
+        m.eviction_count(events),
+        "eviction_rate_per_1k_lookups":
+        m.eviction_rate(events),
         "sc003_pass":
         logged_rate is not None and metric_rate is not None
         and abs(logged_rate - metric_rate) < SC003_TOLERANCE,
