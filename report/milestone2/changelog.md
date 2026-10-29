@@ -101,9 +101,9 @@ branch `milestone2-marcus-prefix-sharing-analysis` (marcus), with the
 
 ## Task 3: cache size, block size and eviction policy
 
-[Spec 005](../../specs/005-m2-cache-tuning/spec.md), drafted in PR #7. Phase 1
-done on branch `milestone2-jasmine-eviction-policies` (Jasmine Lu); in review
-as PR #10.
+[Spec 005](../../specs/005-m2-cache-tuning/spec.md), drafted in PR #7
+(Jasmine Lu). Phases 1 and 2 are merged into `milestone-2`; Phase 3 is in
+review as PR #12.
 
 ### Unreleased: 2026-10-24 (Phase 3, PR #12)
 
@@ -127,7 +127,7 @@ as PR #10.
   `best_by_capacity.csv`/`.md`; `analysis/plots.py` gains the policies'
   colours and a small-multiples plot. 4 tests.
 
-### Unreleased: 2026-10-23 (Phase 2, PR #11)
+### 2026-10-26: Phase 2, PR #11 re-landed as PR #14, merged into `milestone-2` by ChiaXinLiang
 
 - **Added:** the sweep runner, `python -m analysis.run_m2_task3`: one fresh
   server per configuration of policy, block size and capacity (in tokens),
@@ -138,7 +138,7 @@ as PR #10.
   `run_setting` takes extra server arguments, an environment and manifest
   fields. 22 tests.
 
-### Unreleased: 2026-10-23 (Phase 1, PR #10)
+### 2026-10-26: Phase 1, PR #10 merged into `milestone-2` by ChiaXinLiang
 
 - **Added:** FIFO and LFU evictors next to vLLM's LRU
   (`vllm/core/eviction_policies.py`), chosen for the GPU prefix cache with
@@ -174,6 +174,12 @@ as PR #10.
 - **Changed:** task notes are named after their specs
   (`task<K>-<name>.md`), every task has a note or a placeholder, and
   Milestone 3 has its folder and changelog (`b79d7be3`).
+
+### PR #13, open (sahiljoshi515)
+
+- **Fixed:** the `codespell` check, failing on `milestone-2` since PR #9's
+  PDF figures were committed: `*.pdf` and `*.png` are skipped
+  (`521ed9e6`, 2026-10-24). Unblocks PR #10.
 
 ### PR #8, open (ChiaXinLiang, commits by marcus)
 
