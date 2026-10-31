@@ -45,9 +45,11 @@ def replay_plan(plan_dir: Path,
     plan = json.loads((plan_dir / "manifest.json").read_text())
     run_dir.mkdir(parents=True)
     num_blocks = capacity_tokens // block_size
+    # --disable-log-requests: vLLM would log every token-id prompt (about
+    # 100 MB per run); it does not change what the cache does.
     server_args = [
         "--enable-prefix-caching", "--enable-prompt-tokens-details",
-        "--max-model-len",
+        "--disable-log-requests", "--max-model-len",
         str(max_model_len), "--block-size",
         str(block_size), "--num-gpu-blocks-override",
         str(num_blocks)
