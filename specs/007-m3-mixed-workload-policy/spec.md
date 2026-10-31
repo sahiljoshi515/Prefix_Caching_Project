@@ -26,6 +26,45 @@ cache reusing portion? How do I know a request belongs to which workload
 type? Please compare the effectiveness of your designed eviction policy
 against the baselines (e.g., LRU and LFE for all requests.)"
 
+## Why this task
+
+Prefix caching saves work only while a later request still finds its blocks
+cached. The cache is small, so the eviction policy decides which saved work
+survives. Milestone 2 studied one workload, ShareGPT chat. A real server sees
+chat, coding agents and tool-using agents at once, and they compete for one
+cache. LRU, LFU and FIFO apply one rule to every block, whatever workload it
+belongs to. This task asks whether knowing whose block it is lets a policy
+keep the right ones.
+
+**Example** (to illustrate; User Story 2 measures whether it happens). A
+chat user gets an answer, and the conversation's history goes to the free
+pool; the user's next turn arrives about 5 s later and needs that history
+again. Meanwhile agent requests run and finish. Suppose most of their blocks
+are never reused. Their freed blocks are now more recent than the chat
+history, so when the next agent requests need room, LRU evicts the chat
+history first. The chat turn then recomputes its whole history, while the
+agent blocks LRU kept are never used again. LRU cannot tell "recent but
+never reused" from "older but about to return". A policy that has learned
+"this agent workload's blocks rarely return, chat blocks return within
+about 5 s" would evict the agent blocks first. Milestone 2 has already shown
+the cost of ignoring how a workload reuses its blocks: LFU evicted freshly
+freed chat blocks, which have no hits yet, just before their conversations
+returned (Background 3).
+
+Each step of the charter has a reason, and they build one argument: observe
+(1 and 2), propose (3 and 4), build (5), test fairly (6 and 7), explain (8).
+
+| Charter step | Why it is needed | Where in this spec |
+|---|---|---|
+| 1. Create mixed-workload traces | Workloads compete for the cache only when they run together; running each alone (`006`) cannot show it | User Story 1, FR-001 |
+| 2. Analyze reuse patterns, reuse intervals and cache pressure | A rule can only use differences that were measured: how soon each workload returns, how much of each prompt it reuses, which one fills the cache (the course's first two questions) | User Story 2 |
+| 3. Design a workload-aware policy | Turns the measured differences into a rule, for example protecting a workload's freed blocks for about its typical reuse interval and evicting first the blocks of workloads that rarely return | User Story 3, FR-004, FR-005, FR-010 |
+| 4. Identify workload types, and whether that helps | A real server is not told a request's workload (the course's third question). The no-label mode shows whether the label itself helps; if it does not, that is a finding too | User Story 3 (scenarios 1 to 3), FR-002 |
+| 5. Implement the policy in the simulator | Results must be measured, not argued; the simulator runs vLLM's own scheduler and allocator on a laptop | FR-003, `plan.md` |
+| 6. Compare against LRU, LFU and FIFO with identical cache and trace | Only the policy may change; otherwise a win could come from the setup or from noise (identical runs differ by about 0.01, Background 5) | User Story 3 (scenario 4), FR-006, FR-007 |
+| 7. Evaluate across heterogeneous workloads | A policy can raise the total by starving one workload; the question is who gains and who pays | User Story 4, SC-003 |
+| 8. Plots, benefits, limitations and trade-offs | The report must show and explain the result, including its costs: more complexity, labels a real server may not have, and parameters that may fit only our simulated timing | FR-011, User Story 4, SC-004 |
+
 ## Background: what Milestone 2 established
 
 Each finding below shapes a requirement of this spec.

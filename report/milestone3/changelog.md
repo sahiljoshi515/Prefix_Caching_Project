@@ -33,7 +33,9 @@ Joshi and Xin Liang Chia. Spec revised; implementation not started.
 ### Unreleased (branch `milestone3-marcus-mixed-workload-spec`)
 
 - **Changed:** spec 007 revised from Milestone 2's findings (marcus). The
-  spec now names its owners and gains a Background section. New
+  spec now names its owners and gains two sections: why each step of the
+  task is needed, with an example of LRU evicting the wrong workload's
+  blocks, and a Background of what Milestone 2 found. New
   requirements: the policy keeps cached blocks prefix-closed, because vLLM
   v0 overcounts `cached_tokens` otherwise (FR-005). The usable reused
   fraction is the primary metric (FR-008). The comparison capacity must
