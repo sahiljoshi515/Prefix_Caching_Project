@@ -17,7 +17,7 @@ design and test notes are in
 | 1 | Simulator that replaces model execution | Done | `vllm/simulator.py`, `tests/simulator/` |
 | 2, Task 1 | Client simulator and ShareGPT preprocessing | Done | `client_simulator/` |
 | 2, Task 2 | Cache event log, prefix-sharing metrics, single- vs multi-turn replay | In progress | `vllm/core/block/cache_events.py`, `analysis/`, `specs/004-*` |
-| 2, Task 3 | Cache size, block size and eviction policies | Done: 45-run grid, [findings](report/milestone2/task3-cache-tuning.md) | `vllm/core/eviction_policies.py`, `analysis/sweep.py`, `analysis/run_m2_task3.py`, `specs/005-*` |
+| 2, Task 3 | Cache size, block size and eviction policies | Done: 54-run grid, [findings](report/milestone2/task3-cache-tuning.md) | `vllm/core/eviction_policies.py`, `analysis/sweep.py`, `analysis/run_m2_task3.py`, `specs/005-*` |
 | 3 | Eviction policies across workloads; a workload-aware policy | Planned | `specs/006-*`, `specs/007-*` |
 
 How the team works (branches, pull requests, tests, CI, documentation) is

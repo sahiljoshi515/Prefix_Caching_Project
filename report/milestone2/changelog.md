@@ -107,11 +107,11 @@ review as PR #12.
 
 ### Unreleased: 2026-10-24 (Phase 3, PR #12)
 
-- **Added:** the results of the 45-run grid (3 policies × block sizes 8,
-  16, 32 × 5 capacities from 16,384 to 2,097,152 tokens, on Task 2's
+- **Added:** the results of the 54-run grid (3 policies × block sizes 8,
+  16, 32 × 6 capacities from 16,384 to 2,097,152 tokens, on Task 2's
   1,000-conversation sample), in the Task 3 note with five figures
   (`figures/task3/`) and the best configuration per capacity. Reuse climbs
-  from 2% to 95% between 16,384 and 262,144 tokens and stays there; LRU is
+  from 2% to 95% between 16,384 and 131,072 tokens and stays there; LRU is
   best; FIFO matches LRU's hit rate but, under pressure, half its hits sit
   behind a miss and cannot be used (0.38 against 0.76 of prompt tokens at
   65,536); plain LFU collapses whenever the cache evicts, because it
@@ -130,6 +130,11 @@ review as PR #12.
   folders present; axis options fill the other axes from the folder's
   grid, not the full preset; `sweep.json` is replaced atomically and only
   when it changes; the sweep tests no longer need matplotlib. 5 tests.
+- **Added** (review of #12): nine runs at 131,072 tokens (54 in all), which
+  show that LRU's plateau starts there (0.949 of prompt tokens, 7% of the
+  working set) while FIFO is at 0.726; the note's capacity recommendation
+  moves from 262,144 to 131,072 tokens and Figure 4 to 131,072 tokens. At
+  65,536 tokens block sizes 8 and 16 tie within run-to-run spread.
 - **Added:** `run_m2_task3` draws spec 005's figures and writes
   `best_by_capacity.csv`/`.md`; `analysis/plots.py` gains the policies'
   colours and a small-multiples plot. 4 tests.

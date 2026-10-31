@@ -95,6 +95,11 @@ Entry format:
   rewrote the affected findings. Prompt: "ok so after applying the fix,
   our result and his should match? if so, yea make the changes and draft
   a reply response".
+- **Second review:** Claude Code ran the nine 131,072-token runs, updated
+  the note, qualified spec 004's metric definition and fixed the sweep
+  tooling issues the reviewer listed, in this PR as Jasmine chose.
+  Prompts: "think i got some comments on pr 12, can you address the";
+  "keep them in PR 12".
 
 ### PR #13: Skip PDF and PNG figures in codespell
 
