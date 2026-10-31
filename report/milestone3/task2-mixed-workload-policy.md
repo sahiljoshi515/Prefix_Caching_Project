@@ -1,7 +1,7 @@
 # Milestone 3, Task 2: an eviction policy for the mixed workload
 
-> **Placeholder: not started.** Owner: to be assigned at the Milestone 3
-> kickoff (see the [spec index](../../specs/README.md)). Fill in each
+> **Placeholder: not started.** Owners: Sahil Joshi and Xin Liang Chia
+> (see the [spec index](../../specs/README.md)). Fill in each
 > section in the task's PR once the results are final, in the shape
 > [`report/README.md`](../README.md#notes) describes.
 
