@@ -19,13 +19,17 @@ Per workload, the builder targets ``share x rate x duration`` requests:
   CC-Bench keeps at most one model's run per task.
 - **Bailian traces**: one seeded window of ``duration`` seconds per trace.
   Sessions whose root arrives in it keep their recorded times (open loop),
-  shifted to the window's start, and are subsampled to the target.
+  shifted to the window's start, and are subsampled to the target. Real
+  users return minutes later (median turn gap 30 s to 2 min, p90 4 to 16
+  min), so a session can last hours; to bound a run, turns that arrive more
+  than ``--tail`` seconds (default half the window) after the window's end
+  are dropped.
 
-Sessions are never split. A session is taken while it brings the workload's
-count closer to its target. Turns that exceed ``--max-model-len`` are
-dropped with the rest of their session (Bailian: only that request). The
-manifest records each workload's request and prompt-token shares, its
-pacing, and what was dropped.
+Sessions are otherwise never split. A session is taken while it brings the
+workload's count closer to its target. Turns that exceed
+``--max-model-len`` are dropped with the rest of their session (Bailian:
+only that request). The manifest records each workload's request and
+prompt-token shares, its pacing, and what was dropped.
 """
 import argparse
 import json
@@ -88,6 +92,15 @@ class MixSpec:
     # task, so it must not be.
     pool: Dict[str, Optional[int]] = field(
         default_factory=lambda: {"sharegpt": 20000})
+    # Bailian turns later than the window's end plus this are dropped
+    # (None: half the window).
+    tail_s: Optional[float] = None
+
+    @property
+    def cutoff_s(self) -> float:
+        """Latest Bailian arrival kept, relative to the window's start."""
+        tail = self.duration_s / 2 if self.tail_s is None else self.tail_s
+        return self.duration_s + tail
 
     def target(self, workload: str) -> int:
         return round(self.shares[workload] * self.rate * self.duration_s)
@@ -169,10 +182,14 @@ def sample_bailian(
     end = max(s[-1]["timestamp"] for s in trace_sessions)
     # Rounded once, so the manifest's start is the one the times use.
     start = round(rng.uniform(0, max(0.0, end - spec.duration_s)), 3)
-    window = [
-        s for s in trace_sessions
-        if start <= s[0]["timestamp"] < start + spec.duration_s
-    ]
+    window, late = [], 0
+    for session in trace_sessions:
+        if not start <= session[0]["timestamp"] < start + spec.duration_s:
+            continue
+        # Time order, so cutting the late turns keeps every parent.
+        kept = [r for r in session if r["timestamp"] < start + spec.cutoff_s]
+        late += len(session) - len(kept)
+        window.append(kept)
     order = list(range(len(window)))
     rng.shuffle(order)
     target = spec.target(workload)
@@ -208,6 +225,10 @@ def sample_bailian(
         sum(len(s) for s in window),
         "kept_session_fraction":
         round(len(chosen) / len(window), 4) if window else None,
+        "cutoff_s":
+        spec.cutoff_s,
+        "window_turns_after_cutoff":
+        late,
         "skipped_requests_context":
         dropped,
     }
@@ -314,6 +335,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         type=float,
                         default=3.0,
                         help="Target requests per second over the window")
+    parser.add_argument("--tail",
+                        type=float,
+                        help="Keep Bailian turns up to this many seconds "
+                        "after the window (default: half the window)")
     parser.add_argument("--think-scale",
                         type=float,
                         default=1.0,
@@ -340,7 +365,8 @@ def mix_spec(args: argparse.Namespace) -> MixSpec:
         rate=args.rate,
         think_s={w: s * args.think_scale
                  for w, s in THINK_S.items()},
-        max_model_len=args.max_model_len)
+        max_model_len=args.max_model_len,
+        tail_s=args.tail)
 
 
 def main(argv: Optional[List[str]] = None) -> None:

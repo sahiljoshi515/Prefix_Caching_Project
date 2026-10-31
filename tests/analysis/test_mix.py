@@ -212,3 +212,23 @@ def test_main_writes_plan_responses_and_manifest(tmp_path, monkeypatch):
     assert [a["request_id"] for a in answers] == [r.request_id for r in plan]
     manifest = json.loads((out / "manifest.json").read_text())
     assert manifest["mix"] == "only-sharegpt" and manifest["seed"] == 1
+
+
+def test_bailian_turns_after_the_tail_are_dropped():
+    # Sessions every 10 s with a child 3 s after the root. A 0 s tail keeps
+    # only turns inside the window; the window holds 10 roots, and only a
+    # root in the window's last 3 s loses its child.
+    spec = mix.MixSpec(name="t",
+                       shares={"bailian-chat": 1.0},
+                       duration_s=100.0,
+                       rate=1.0,
+                       tail_s=0.0)
+    requests, manifest = mix.build(spec, 1, {},
+                                   {"bailian-chat": bailian_sessions(100)},
+                                   FakeTokenizer())
+    info = manifest["workloads"]["bailian-chat"]
+    assert info["cutoff_s"] == 100.0
+    assert all(r.arrival_s < 100.0 for r in requests)
+    late = info["window_turns_after_cutoff"]
+    assert late in (0, 1)
+    assert info["window_requests"] == 20 - late

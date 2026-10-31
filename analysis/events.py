@@ -8,6 +8,7 @@ from typing import (Any, Dict, Iterator, List, NamedTuple, Optional, Tuple,
 PathLike = Union[str, Path]
 
 ENGINE_CHAT_PREFIX = "chatcmpl-"
+ENGINE_COMPLETION_PREFIX = "cmpl-"
 
 
 class Event(NamedTuple):
@@ -63,13 +64,13 @@ def load_results(path: PathLike) -> List[Dict[str, Any]]:
 def parse_request_id(request_id: Optional[str]) -> Optional[Tuple[str, int]]:
     """``chatcmpl-<conversation_id>:<turn>`` -> (conversation_id, turn).
 
-    The client sends ``<conversation_id>:<turn>`` as X-Request-Id and the
-    chat endpoint adds the prefix. Returns None for other ids.
+    The client sends ``<conversation_id>:<turn>`` as X-Request-Id; the chat
+    endpoint adds ``chatcmpl-``, the completions endpoint ``cmpl-`` and a
+    ``-<prompt index>`` suffix. Returns None for other ids.
     """
     if request_id is None:
         return None
-    if request_id.startswith(ENGINE_CHAT_PREFIX):
-        request_id = request_id[len(ENGINE_CHAT_PREFIX):]
+    request_id = client_request_id(request_id)
     conversation, _, turn = request_id.rpartition(":")
     if not conversation or not turn.isdigit():
         return None
@@ -80,7 +81,18 @@ def client_request_id(engine_request_id: str) -> str:
     """Engine request id -> the id the client sent."""
     if engine_request_id.startswith(ENGINE_CHAT_PREFIX):
         return engine_request_id[len(ENGINE_CHAT_PREFIX):]
+    if engine_request_id.startswith(ENGINE_COMPLETION_PREFIX):
+        base, dash, index = engine_request_id[len(ENGINE_COMPLETION_PREFIX
+                                                  ):].rpartition("-")
+        if dash and index.isdigit():
+            return base
     return engine_request_id
+
+
+def workload_of(engine_or_client_request_id: str) -> str:
+    """The workload tag of a request (`006` FR-002): the client id's text
+    before its first colon."""
+    return client_request_id(engine_or_client_request_id).split(":", 1)[0]
 
 
 def read_metric(path: PathLike, name: str) -> Optional[float]:
