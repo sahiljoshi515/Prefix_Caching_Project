@@ -191,7 +191,7 @@ def quantiles(values: Sequence[float]) -> Optional[Dict[str, float]]:
 
 def analyze_run(run_dir: Path, window_s: float) -> Dict[str, Any]:
     """Write the metrics CSVs and summary.json of one run folder."""
-    log = ev.load_events(run_dir / "events.jsonl")
+    log = ev.load_events(ev.log_path(run_dir))
     events = log.events
     block_size = log.header["block_size"]
     rows, excluded = m.cached_fractions(
@@ -291,7 +291,7 @@ def make_figures(out: Path, figures: Path, settings: Sequence[str],
     by_turn = None
     for setting in settings:
         run_dir = out / setting
-        events = ev.load_events(run_dir / "events.jsonl").events
+        events = ev.load_events(ev.log_path(run_dir)).events
         rows, _ = m.cached_fractions(ev.load_results(run_dir / "client.jsonl"))
         intervals = m.reuse_intervals(events)
         cached[setting] = [r["cached_fraction"] for r in rows]

@@ -76,7 +76,7 @@ def replay_plan(plan_dir: Path,
                          plan_dir / "responses.jsonl",
                          log_path=run_dir / "server.log",
                          event_log=run_dir /
-                         "events.jsonl" if event_log else None,
+                         "events.jsonl.gz" if event_log else None,
                          args=server_args,
                          env=env,
                          port=port) as server:

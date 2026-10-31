@@ -12,14 +12,19 @@ decode already existed), ``free`` (the last user released a cached block,
 which enters the evictor), ``revive`` (a freed block is used again) or
 ``evict``. ``op`` is the block-manager call the event happened in:
 ``allocate`` (prompt), ``append_slots`` (decode), ``free``, ``swap_in`` or
-``swap_out``. The first line is a header with ``time.time()`` and
-``time.monotonic()``; ``close()`` writes a final ``{"ev": "end"}`` line.
+``swap_out``. A ``free`` line also has ``"la"``, the block's last-access
+time as the evictor sees it (the scheduler's ``time.time()``), so the
+evictor's order can be replayed from the log. The first line is a header
+with ``time.time()`` and ``time.monotonic()``; ``close()`` writes a final
+``{"ev": "end"}`` line.
 
-Unset (the default), no recorder exists and every hook is a single ``is
+A path ending in ``.gz`` is written gzipped. Unset (the default), no
+recorder exists and every hook is a single ``is
 None`` check. See ``specs/004-m2-prefix-sharing-analysis``.
 """
 import atexit
 import functools
+import gzip
 import json
 import os
 import time
@@ -34,7 +39,7 @@ FLUSH_EVENTS = 4096
 FLUSH_SECONDS = 1.0
 
 _Event = Tuple[float, str, Optional[int], Optional[int], Optional[str],
-               Optional[str]]
+               Optional[str], Optional[float]]
 _F = TypeVar("_F", bound=Callable)
 
 
@@ -43,8 +48,10 @@ class CacheEventRecorder:
 
     def __init__(self, path: str, block_size: int) -> None:
         self.path = path
-        # Stays open for the engine's lifetime; close() releases it.
-        self._file = open(path, "w", encoding="utf-8")  # noqa: SIM115
+        # Stays open for the engine's lifetime; close() releases it. A path
+        # ending in .gz is written gzipped (long runs log hundreds of MB).
+        opener = gzip.open if path.endswith(".gz") else open
+        self._file = opener(path, "wt", encoding="utf-8")  # noqa: SIM115
         self._buffer: List[_Event] = []
         self._last_flush = time.monotonic()
         # Set by the block manager around each call (see `attributed`).
@@ -64,11 +71,14 @@ class CacheEventRecorder:
         self._file.flush()
         atexit.register(self.close)
 
-    def log(self, ev: str, content_hash: Optional[int],
-            block_id: Optional[int]) -> None:
+    def log(self,
+            ev: str,
+            content_hash: Optional[int],
+            block_id: Optional[int],
+            la: Optional[float] = None) -> None:
         now = time.monotonic()
         self._buffer.append(
-            (now, ev, content_hash, block_id, self.request_id, self.op))
+            (now, ev, content_hash, block_id, self.request_id, self.op, la))
         if (len(self._buffer) >= FLUSH_EVENTS
                 or now - self._last_flush >= FLUSH_SECONDS):
             self.flush()
@@ -84,8 +94,11 @@ class CacheEventRecorder:
                 "block": block_id,
                 "req": req,
                 "op": op,
+                **({} if la is None else {
+                       "la": la
+                   }),
             }) + "\n"
-            for t, ev, content_hash, block_id, req, op in self._buffer)
+            for t, ev, content_hash, block_id, req, op, la in self._buffer)
         self._file.flush()
         self._buffer.clear()
         self._last_flush = time.monotonic()

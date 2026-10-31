@@ -36,6 +36,15 @@ def _lines(path: PathLike) -> Iterator[str]:
         yield from f
 
 
+def log_path(run_dir: PathLike) -> Path:
+    """A run folder's event log: ``events.jsonl`` or ``events.jsonl.gz``."""
+    for name in ("events.jsonl", "events.jsonl.gz"):
+        path = Path(run_dir) / name
+        if path.exists():
+            return path
+    raise FileNotFoundError(f"No events.jsonl(.gz) in {run_dir}")
+
+
 def load_events(path: PathLike) -> EventLog:
     header: Dict[str, Any] = {}
     events: List[Event] = []
