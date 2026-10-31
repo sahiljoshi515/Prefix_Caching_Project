@@ -56,8 +56,10 @@ the share of prompt tokens served from a contiguous cached prefix (block
 size × the hits before a request's first miss, summed, over the summed
 prompt tokens), the tokens vLLM can skip computing. vLLM's own
 `cached_tokens` overcounts this under FIFO (finding 2), so its share is
-listed next to it; under LRU and LFU the two agree. Mean usable fraction
-is the per-request mean. Spec 004 defines all three.
+listed next to it. Under LRU and LFU the two agree in these runs; that
+holds at this pacing, not in general (spec 004: under burst load they can
+differ in both directions). Mean usable fraction is the per-request mean.
+Spec 004 defines all three.
 
 | Capacity (tokens) | Policy | Block hit rate | Usable reused fraction | vLLM `cached_tokens` share | Mean usable fraction | Evictions | Preemptions |
 |---|---|---|---|---|---|---|---|
@@ -188,17 +190,18 @@ nothing; at 2,097,152 nothing is evicted and the policies tie.
 5. **Recommendation for this workload:** size the cache for the active
    conversations' histories (here about 262,144 tokens), use LRU, and use
    the smallest block size the attention kernels run efficiently with.
-   FIFO is worse under pressure and, on vLLM v0, unsafe on a GPU. Plain LFU should not be used for multi-turn chat; Milestone 3's
+   FIFO is worse under pressure and, on vLLM v0, unsafe on a GPU. Plain
+   LFU should not be used for multi-turn chat; Milestone 3's
    workload-aware policy (spec 007) should give recently freed blocks a
    grace period or age its frequencies.
 
 ## Limitations
 
-- **One sample, one seed.** Hit-rate differences of 0.01, such as between
-  LRU and FIFO, are within what a different seed or a rerun could move
-  (an independent rerun of LRU at 65,536 tokens gave 0.752 against our
-  0.764); FIFO's usable-reuse gap, the LFU gap and the capacity cliff are
-  far larger.
+- **One sample, one seed.** Differences of about 0.01 are within what a
+  rerun can move, most of all inside the cliff: four runs of LRU at
+  65,536 tokens, block size 16 (ours and three of the reviewer's) span
+  0.749 to 0.765 in usable reuse. FIFO's usable-reuse gap, the LFU gap and
+  the capacity cliff are far larger.
 - **Pacing is fixed.** Every turn comes back after exactly 5 s, so Figure
   4b is one step. LFU's failure depends on that: blocks are evicted 1.5 s
   after being freed, before the 5 s return. With longer think times or

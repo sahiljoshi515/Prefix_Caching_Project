@@ -233,10 +233,12 @@ def data(tmp_path):
         "request_id": f"{cid}:{t}",
         "response": "x"
     } for cid, n in (("s:A", 2), ("s:B", 1)) for t in range(n)])
+    # No figures: these tests drive the sweep, and must not need
+    # matplotlib; the figure tests use importorskip.
     return [
         "--conversations",
         str(conversations), "--responses",
-        str(responses)
+        str(responses), "--no-figures"
     ]
 
 

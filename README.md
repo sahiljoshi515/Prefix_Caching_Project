@@ -38,7 +38,7 @@ into the technical report under [`report/`](report/README.md).
 | `vllm/entrypoints/launcher.py`, `vllm/entrypoints/openai/api_server.py`, `vllm/utils.py` | macOS fixes: hand the already-bound port to uvicorn instead of binding it twice, and skip a root-only port lookup during shutdown. |
 | `constraints-simulator.txt` (new) | Dependency pins contemporary with this vLLM commit. |
 | `tests/simulator/` (new) | 87 tests: unit, in-process engine, a real `vllm serve`, the cache event log, and the eviction-policy variable. |
-| `tests/analysis/` (new) | Milestone 2: 61 tests of the metrics, the Task 2 and Task 3 experiment commands and the server launcher, without a server. |
+| `tests/analysis/` (new) | Milestone 2: 64 tests of the metrics, the Task 2 and Task 3 experiment commands and the server launcher, without a server. |
 | `tests/eviction/` (new) | Milestone 2, Task 3: 41 tests of the FIFO and LFU evictors with hand-derived victims, and a randomized check against each policy's definition. |
 | `examples/simulator/` (new) | Example trace and a client that replays it. |
 | `client_simulator/` (new) | Milestone 2: ShareGPT download and preprocessing, and the replay client (Poisson arrivals, single- and multi-turn, chat template). |
@@ -348,7 +348,7 @@ Milestone 1 (`make test-m1`, 67 tests):
 | `tests/simulator/test_engine.py` | In-process `LLMEngine` with gpt2's tokenizer: KV-cache sizing, stop rules, batching, prefix-cache hits, preemption, chunked prefill. | ~6 s |
 | `tests/simulator/test_online.py` | A real `vllm serve` (both front-ends) through the OpenAI client: completions, chat, streaming, concurrency, `/metrics`. | ~20 s |
 
-Milestone 2 (`make test-m2`, 122 tests):
+Milestone 2 (`make test-m2`, 125 tests):
 
 | File | What it covers | Time |
 |---|---|---|
