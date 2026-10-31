@@ -318,6 +318,53 @@ def classify(table: Dict[int, str],
     }
 
 
+def trace_reuse(records: Iterable[Dict[str, Any]],
+                block_size: int = 16) -> Dict[str, Any]:
+    """Reuse in a raw Bailian trace at its full rate, before any sampling:
+    with a cache that never evicts, the share of each request's prompt that
+    repeats an earlier request's prefix (whole blocks, prefix-closed), and
+    for each such block the time since its prefix was last used.
+
+    A block's key is its whole prefix of hash ids, as vLLM's chained hash
+    is, so a repeated block counts only after a repeated prefix.
+    """
+    last_seen: Dict[int, float] = {}
+    gaps: List[float] = []
+    reused_tokens = prompt_tokens = 0
+    fractions: List[float] = []
+    for r in sorted(records, key=lambda r: (r["timestamp"], r["chat_id"])):
+        t = r["timestamp"]
+        full = r["input_length"] // block_size
+        key = 0
+        keys = []
+        for h in r["hash_ids"][:full]:
+            key = hash((key, h))
+            keys.append(key)
+        reused = 0
+        for key in keys:
+            if key not in last_seen:
+                break
+            gaps.append(t - last_seen[key])
+            reused += 1
+        for key in keys:
+            last_seen[key] = t
+        tokens = min(reused * block_size, r["input_length"])
+        reused_tokens += tokens
+        prompt_tokens += r["input_length"]
+        fractions.append(tokens /
+                         r["input_length"] if r["input_length"] else 0)
+    return {
+        "requests":
+        len(fractions),
+        "reusable_token_fraction":
+        reused_tokens / prompt_tokens if prompt_tokens else None,
+        "mean_reusable_fraction":
+        statistics.fmean(fractions) if fractions else None,
+        "reuse_gap_s":
+        quantiles(gaps),
+    }
+
+
 def characterize(run_dir: Path) -> Dict[str, Any]:
     from analysis import run_m2_task2 as task2
     log = ev.load_events(ev.log_path(run_dir))
