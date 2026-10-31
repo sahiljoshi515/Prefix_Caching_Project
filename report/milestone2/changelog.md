@@ -101,11 +101,45 @@ branch `milestone2-marcus-prefix-sharing-analysis` (marcus), with the
 
 ## Task 3: cache size, block size and eviction policy
 
-[Spec 005](../../specs/005-m2-cache-tuning/spec.md), drafted in PR #7. Phase 1
-done on branch `milestone2-jasmine-eviction-policies` (Jasmine Lu); in review
-as PR #10.
+[Spec 005](../../specs/005-m2-cache-tuning/spec.md), drafted in PR #7
+(Jasmine Lu). Phases 1 and 2 are merged into `milestone-2`; Phase 3 is in
+review as PR #12.
 
-### Unreleased: 2026-10-23 (Phase 2, PR #11)
+### Unreleased: 2026-10-24 (Phase 3, PR #12)
+
+- **Added:** the results of the 54-run grid (3 policies × block sizes 8,
+  16, 32 × 6 capacities from 16,384 to 2,097,152 tokens, on Task 2's
+  1,000-conversation sample), in the Task 3 note with five figures
+  (`figures/task3/`) and the best configuration per capacity. Reuse climbs
+  from 2% to 95% between 16,384 and 131,072 tokens and stays there; LRU is
+  best; FIFO matches LRU's hit rate but, under pressure, half its hits sit
+  behind a miss and cannot be used (0.38 against 0.76 of prompt tokens at
+  65,536); plain LFU collapses whenever the cache evicts, because it
+  evicts each conversation's newest blocks first; block size 8 is
+  slightly best.
+- **Added:** the usable reused fraction (spec 004's metric table): reuse
+  counted from the contiguous cached prefix in the event log
+  (`metrics.prefix_hits`, `metrics.add_usable_fractions`), reported by
+  `analyze_run` and ranked on by `run_m2_task3`. vLLM's `cached_tokens`
+  overcounts under FIFO because `find_cached_blocks_prefix` assumes
+  cached blocks form a prefix; found in review. 3 tests.
+- **Fixed** (review of #12): a cached `summary.json` from before the usable
+  reused fraction is analyzed again instead of leaving the run unranked; no
+  stale `best_by_capacity` table is left behind; a folder whose
+  `sweep.json` lists no grid resumes its preset's grid, not only the run
+  folders present; axis options fill the other axes from the folder's
+  grid, not the full preset; `sweep.json` is replaced atomically and only
+  when it changes; the sweep tests no longer need matplotlib. 5 tests.
+- **Added** (review of #12): nine runs at 131,072 tokens (54 in all), which
+  show that LRU's plateau starts there (0.949 of prompt tokens, 7% of the
+  working set) while FIFO is at 0.726; the note's capacity recommendation
+  moves from 262,144 to 131,072 tokens and Figure 4 to 131,072 tokens. At
+  65,536 tokens block sizes 8 and 16 tie within run-to-run spread.
+- **Added:** `run_m2_task3` draws spec 005's figures and writes
+  `best_by_capacity.csv`/`.md`; `analysis/plots.py` gains the policies'
+  colours and a small-multiples plot. 4 tests.
+
+### 2026-10-26: Phase 2, PR #11 re-landed as PR #14, merged into `milestone-2` by ChiaXinLiang
 
 - **Added:** the sweep runner, `python -m analysis.run_m2_task3`: one fresh
   server per configuration of policy, block size and capacity (in tokens),
@@ -116,7 +150,7 @@ as PR #10.
   `run_setting` takes extra server arguments, an environment and manifest
   fields. 22 tests.
 
-### Unreleased: 2026-10-23 (Phase 1, PR #10)
+### 2026-10-26: Phase 1, PR #10 merged into `milestone-2` by ChiaXinLiang
 
 - **Added:** FIFO and LFU evictors next to vLLM's LRU
   (`vllm/core/eviction_policies.py`), chosen for the GPU prefix cache with
@@ -186,7 +220,8 @@ as PR #10.
   mismatch, exit non-zero only on failures, unit tests, and PR #6's entry in
   [`ai-usage.md`](../ai-usage.md), and the likely keep-alive race (T015).
 - Task 2: review and merge PR #9; its checks run once PR #8 merges.
-- Task 3: Phase 1 (evictors) in review as PR #10; Phase 2 (sweep runner)
-  in review as PR #11, after #10; Phase 3 (the 45-run grid and write-up) next.
+- Task 3: Phase 1 (evictors) in review as PR #10, Phase 2 (sweep runner)
+  as PR #11 after #10, Phase 3 (the grid's results and the note) as PR #12
+  after #11.
 - The branch protection ruleset targets no branch, so nothing stops a direct
   push to `main` (spec 001, T014; repository settings, owner only).

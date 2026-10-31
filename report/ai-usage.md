@@ -79,6 +79,28 @@ Entry format:
   the memory check, and the document updates. Jasmine asked for one PR per
   phase.
 - **Prompts:** "now work on the next phase".
+
+### PR #12: Milestone 2 Task 3, Phase 3: cache-tuning results
+
+- **Tools:** Claude Code (Claude Opus 5.5).
+- **Used for:** running the 45-run grid and checking every run, the
+  figures and the best-configuration table, the analyses behind the note's
+  interpretation (what LFU evicts and when, LRU against FIFO by turn), the
+  Task 3 note and the document updates. Jasmine chose block sizes 8, 16
+  and 32.
+- **Prompts:** "next work on phase 3"; "what's the status now".
+- **Review fix:** Claude Code checked the reviewer's report that vLLM's
+  `cached_tokens` is wrong under FIFO against vLLM's source and the 45
+  event logs, added the usable reused fraction, re-analyzed the runs and
+  rewrote the affected findings. Prompt: "ok so after applying the fix,
+  our result and his should match? if so, yea make the changes and draft
+  a reply response".
+- **Second review:** Claude Code ran the nine 131,072-token runs, updated
+  the note, qualified spec 004's metric definition and fixed the sweep
+  tooling issues the reviewer listed, in this PR as Jasmine chose.
+  Prompts: "think i got some comments on pr 12, can you address the";
+  "keep them in PR 12".
+
 ### PR #13: Skip PDF and PNG figures in codespell
 
 - **Tools:** Claude Code (Claude Fable 5.1).

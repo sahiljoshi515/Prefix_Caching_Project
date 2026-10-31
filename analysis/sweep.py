@@ -27,6 +27,11 @@ POLICIES = ("lru", "fifo", "lfu")
 # What `vllm serve --block-size` accepts in this vLLM version.
 BLOCK_SIZES = (8, 16, 32, 64, 128)
 PREEMPTIONS_METRIC = "vllm:num_preemptions_total"
+# Fields of a run's summary.json that analyses before the usable reused
+# fraction did not write; a cached summary without them is analyzed again.
+CURRENT_SUMMARY_FIELDS = ("usable_reused_fraction",
+                          "mean_usable_cached_fraction",
+                          "requests_with_hits_after_miss")
 
 
 @dataclass(frozen=True)
@@ -90,6 +95,14 @@ def expand_grid(policies: Iterable[str], block_sizes: Iterable[int],
     ]
 
 
+def grid_order(configs: Iterable[Config]) -> List[Config]:
+    """Unique configurations in `expand_grid`'s order: capacity, then
+    block size, then policy in `POLICIES` order."""
+    return sorted(set(configs),
+                  key=lambda c:
+                  (c.capacity_tokens, c.block_size, POLICIES.index(c.policy)))
+
+
 def feasible(config: Config, max_model_len: int) -> bool:
     """vLLM only starts if the cache holds one max_model_len request."""
     return config.capacity_tokens >= max_model_len
@@ -139,8 +152,14 @@ def summary_row(config: Config, run_dir: Optional[Path],
         summary.get("block_hit_rate_log"),
         "mean_cached_fraction":
         summary.get("mean_cached_fraction"),
+        "usable_reused_fraction":
+        summary.get("usable_reused_fraction"),
+        "mean_usable_cached_fraction":
+        summary.get("mean_usable_cached_fraction"),
         "token_reused_fraction":
         summary.get("token_reused_fraction"),
+        "requests_with_hits_after_miss":
+        summary.get("requests_with_hits_after_miss"),
         "evictions":
         summary.get("evictions"),
         "eviction_rate_per_1k_lookups":
@@ -171,14 +190,15 @@ def run_sweep(configs: Sequence[Config],
               analyze: Callable[[Path], Dict[str, Any]],
               max_model_len: int,
               reanalyze: bool = False,
-              replay_missing: bool = True,
+              replay_if: Callable[[Config], bool] = lambda config: True,
               log: Callable[[str], None] = print) -> List[Dict[str, Any]]:
     """Run every configuration not already finished; return summary rows.
 
     `replay(config, run_dir)` must create `run_dir` and write its manifest
     with `finished_at_utc` last; `analyze(run_dir)` returns its summary,
-    which is cached as `summary.json` unless `reanalyze` is set. With
-    `replay_missing` False, configurations that have not finished are
+    which is cached as `summary.json` unless `reanalyze` is set or the
+    cached one lacks a `CURRENT_SUMMARY_FIELDS` field.
+    Unfinished configurations for which `replay_if(config)` is False are
     reported as "missing" instead of being replayed.
     """
     rows = []
@@ -192,7 +212,7 @@ def run_sweep(configs: Sequence[Config],
             continue
         if is_finished(run_dir):
             log(f"{prefix}: finished earlier, analyzing")
-        elif not replay_missing:
+        elif not replay_if(config):
             log(f"{prefix}: missing, not replayed")
             row = summary_row(config, None, None)
             row["status"] = "missing"
@@ -205,9 +225,14 @@ def run_sweep(configs: Sequence[Config],
             log(f"{prefix}: replaying")
             replay(config, run_dir)
         summary_path = run_dir / "summary.json"
+        summary = None
         if summary_path.exists() and not reanalyze:
             summary = json.loads(summary_path.read_text())
-        else:
+            if any(f not in summary for f in CURRENT_SUMMARY_FIELDS):
+                log(f"{prefix}: summary.json is from an older analysis, "
+                    "analyzing again")
+                summary = None
+        if summary is None:
             summary = analyze(run_dir)
         rows.append(summary_row(config, run_dir, summary))
     return rows

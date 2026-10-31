@@ -48,10 +48,29 @@ def cached_fractions(results: Iterable[Row]) -> Tuple[List[Row], Counter]:
     return rows, excluded
 
 
-def token_reused_fraction(rows: Sequence[Row]) -> Optional[float]:
+def token_reused_fraction(rows: Sequence[Row],
+                          key: str = "cached_tokens") -> Optional[float]:
     """Sum of cached tokens over sum of prompt tokens."""
     prompt = sum(r["prompt_tokens"] for r in rows)
-    return sum(r["cached_tokens"] for r in rows) / prompt if prompt else None
+    return sum(r[key] for r in rows) / prompt if prompt else None
+
+
+def add_usable_fractions(rows: List[Row], prefixes: Dict[str, Row],
+                         block_size: int) -> None:
+    """Add each request's usable cached tokens and fraction to its row.
+
+    Usable is the contiguous cached prefix of the first prefill
+    (`prefix_hits`), the tokens vLLM can skip. vLLM's own `cached_tokens`
+    comes from a binary search that assumes cached blocks form a prefix;
+    LRU keeps that true, FIFO does not, and then it overcounts.
+    """
+    for r in rows:
+        prefix = prefixes.get(r["request_id"], {})
+        usable = min(block_size * prefix.get("prefix_hits", 0),
+                     r["prompt_tokens"])
+        r["usable_cached_tokens"] = usable
+        r["usable_cached_fraction"] = usable / r["prompt_tokens"]
+        r["hits_after_miss"] = prefix.get("hits_after_miss", 0)
 
 
 def mean_by_turn(rows: Sequence[Row],
@@ -132,6 +151,39 @@ def reuse_intervals(events: Sequence[Event]) -> List[Row]:
             "kind": e.ev,
         })
     return rows
+
+
+def prefix_hits(events: Iterable[Event]) -> Dict[str, Row]:
+    """Per client request id, the lookups of its first prefill: hits before
+    the first miss (``prefix_hits``) and hits after it
+    (``hits_after_miss``).
+
+    The first prefill is the request's `allocate` events up to its first
+    event of another op; a re-prefill after preemption is not counted.
+    Only the prefix can be skipped: the scheduler computes everything from
+    the first uncached block on, so hits behind a miss save no compute.
+    """
+    counts: Dict[str, Row] = {}
+    missed, closed = set(), set()
+    for e in events:
+        if e.req is None or e.req in closed:
+            continue
+        if e.op != "allocate":
+            closed.add(e.req)
+            continue
+        if e.ev not in LOOKUPS:
+            continue
+        row = counts.setdefault(client_request_id(e.req), {
+            "prefix_hits": 0,
+            "hits_after_miss": 0
+        })
+        if e.ev == "miss":
+            missed.add(e.req)
+        elif e.req in missed:
+            row["hits_after_miss"] += 1
+        else:
+            row["prefix_hits"] += 1
+    return counts
 
 
 def block_hit_rate(events: Iterable[Event]) -> Optional[float]:
