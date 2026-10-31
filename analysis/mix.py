@@ -202,7 +202,7 @@ def sample_bailian(
             chosen.append(window[index])
             count += len(window[index])
     chosen.sort(key=lambda s: (s[0]["timestamp"], s[0]["chat_id"]))
-    sessions, dropped = [], 0
+    sessions, dropped, emptied = [], 0, 0
     for records in chosen:
         kept = []
         for request in bailian.synthesize(workload, records):
@@ -214,6 +214,8 @@ def sample_bailian(
             kept.append(request)
         if kept:
             sessions.append(kept)
+        else:
+            emptied += 1
     info = {
         "arrivals":
         "open loop, recorded timestamps",
@@ -229,8 +231,12 @@ def sample_bailian(
         spec.cutoff_s,
         "window_turns_after_cutoff":
         late,
+        # Over the chosen sessions; a session left with no request
+        # (all its requests too long) is also counted on its own.
         "skipped_requests_context":
         dropped,
+        "skipped_sessions_context":
+        emptied,
     }
     return sessions, info
 
@@ -377,7 +383,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     conversations, traces = load_inputs(spec, args.data)
     requests, manifest = build(spec, args.seed, conversations, traces,
                                tokenizer)
-    manifest["model"] = args.model
+    from analysis.run_m2_task2 import git_state
+    manifest.update(model=args.model, **git_state())
     args.out.mkdir(parents=True, exist_ok=True)
     write_plan(requests, args.out / "plan.jsonl.gz",
                args.out / "responses.jsonl")

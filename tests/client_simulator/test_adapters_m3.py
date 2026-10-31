@@ -168,6 +168,43 @@ def test_ccbench_serializes_tools_and_drops_side_events():
     }
 
 
+def test_ccbench_drops_compaction_errors_and_thinking_only_events():
+    summary = event("user", "This session is being continued...")
+    summary["isCompactSummary"] = True
+    error = event("assistant", [{"type": "text", "text": "API Error: x"}])
+    error["isApiErrorMessage"] = True
+    meta = event("user", "Caveat: local command output")
+    meta["isMeta"] = True
+    events = [
+        event("user", "Fix the bug"),
+        event("assistant", [{
+            "type": "thinking",
+            "thinking": "hmm"
+        }]),
+        event("assistant", [{
+            "type": "text",
+            "text": "One"
+        }, {
+            "type": "text",
+            "text": "Two"
+        }]),
+        error,
+        summary,
+        meta,
+        event("assistant", "Done."),
+    ]
+    counts = Counter()
+    conversation = ccbench.to_conversation(ccbench_row(events), counts)
+    assert conversation.messages == [
+        Message("user", "Fix the bug"),
+        Message("assistant", "One\nTwo"),  # parts of one event: a newline
+        Message("user", "Caveat: local command output"),
+        Message("assistant", "Done."),
+    ]
+    assert counts["dropped_compaction_or_error_events"] == 2
+    assert counts["dropped_empty_events"] == 1
+
+
 def test_ccbench_skips_a_trajectory_that_starts_with_the_assistant():
     counts = Counter()
     row = ccbench_row([event("assistant", "hi"), event("user", "x")])

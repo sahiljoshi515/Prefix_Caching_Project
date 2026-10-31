@@ -5,9 +5,12 @@ the agent's Claude Code session log as a JSON list in ``trajectory``.
 
 Role mapping (spec 006 FR-005):
 
-- Only main-thread ``user`` and ``assistant`` events count. ``summary`` and
-  ``system`` events (context compaction, API errors) and side-chain events
-  (sub-agents, ``isSidechain``) are dropped.
+- Only main-thread ``user`` and ``assistant`` events count. Dropped:
+  ``summary`` and ``system`` events, side-chain events (sub-agents,
+  ``isSidechain``), context-compaction summaries (``isCompactSummary``,
+  since compaction is not replayed) and API-error messages
+  (``isApiErrorMessage``). Claude Code's ``isMeta`` notes are kept: the
+  model sees them.
 - ``user`` content becomes the ``user`` message. A ``tool_result`` part is
   written as ``<tool_result>\\n...\\n</tool_result>``, an image as
   ``[image]``.
@@ -15,9 +18,11 @@ Role mapping (spec 006 FR-005):
   is kept, a ``tool_use`` part is written as ``<tool_use name="...">`` +
   its JSON input + ``</tool_use>``, and a ``thinking`` part is dropped
   (hidden reasoning is not sent back as context).
-- Consecutive messages with the same role are joined with a blank line, so
-  the conversation alternates user/assistant. A trailing ``user`` message is
-  dropped; a trajectory that starts with ``assistant`` is skipped.
+- The parts of one event are joined with a newline; an event with no text
+  left (only ``thinking``) is dropped. Consecutive messages with the same
+  role are joined with a blank line, so the conversation alternates
+  user/assistant. A trailing ``user`` message is dropped; a trajectory that
+  starts with ``assistant`` is skipped.
 - Context compaction is not replayed: the conversation keeps growing, and
   the turns beyond the server's context are skipped at replay time.
 
@@ -95,8 +100,14 @@ def to_conversation(row: dict, counts: Counter) -> Optional[Conversation]:
         if event.get("isSidechain"):
             counts["dropped_sidechain_events"] += 1
             continue
+        if event.get("isCompactSummary") or event.get("isApiErrorMessage"):
+            counts["dropped_compaction_or_error_events"] += 1
+            continue
         role = event["type"]
         text = message_text((event.get("message") or {}).get("content"))
+        if not text:
+            counts["dropped_empty_events"] += 1
+            continue
         if messages and messages[-1].role == role:
             messages[-1] = Message(role, messages[-1].content + "\n\n" + text)
             counts["merged_messages"] += 1
