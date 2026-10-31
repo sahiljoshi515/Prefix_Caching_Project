@@ -6,12 +6,17 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
 
-from client_simulator.adapters import sharegpt
+from client_simulator.adapters import agentbank, bailian, ccbench, sharegpt
 from client_simulator.schema import Conversation, request_id
+from client_simulator.token_plan import write_plan
 
+# Text datasets provide `load_conversations`; the Bailian traces, which have
+# no text, provide `load_token_requests` and become token-level plans.
 ADAPTERS = {
     "sharegpt": sharegpt,
-    # later agentbank, ccbench, quen
+    "agentbank": agentbank,
+    "ccbench": ccbench,
+    **bailian.ADAPTERS,
 }
 
 
@@ -71,18 +76,26 @@ def main() -> None:
     parser.add_argument(
         "--client-output",
         type=Path,
-        help="Client JSONL; defaults to OUTPUT_STEM.conversations.jsonl.")
+        help="Client JSONL; defaults to OUTPUT_STEM.conversations.jsonl "
+        "(OUTPUT_STEM.plan.jsonl for token-level datasets).")
     args = parser.parse_args()
+    adapter = ADAPTERS[args.dataset]
+    token_level = hasattr(adapter, "load_token_requests")
+    suffix = ".plan.jsonl" if token_level else ".conversations.jsonl"
     client_path = args.client_output or args.output.with_name(
-        args.output.stem + ".conversations.jsonl")
+        args.output.stem + suffix)
     paths = [args.raw.resolve(), args.output.resolve(), client_path.resolve()]
     if len(set(paths)) != len(paths):
         parser.error("Raw, client, and server paths must all be different")
 
-    adapter = ADAPTERS[args.dataset]
     adapter.check_download(args.raw)
-    write_traces(adapter.load_conversations(args.raw), client_path,
-                 args.output)
+    if token_level:
+        count = write_plan(adapter.load_token_requests(args.raw), client_path,
+                           args.output)
+        print(f"Wrote {count} token-level requests to {client_path}")
+    else:
+        write_traces(adapter.load_conversations(args.raw), client_path,
+                     args.output)
 
 
 if __name__ == "__main__":
