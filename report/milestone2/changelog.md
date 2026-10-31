@@ -123,6 +123,13 @@ review as PR #12.
   `analyze_run` and ranked on by `run_m2_task3`. vLLM's `cached_tokens`
   overcounts under FIFO because `find_cached_blocks_prefix` assumes
   cached blocks form a prefix; found in review. 3 tests.
+- **Fixed** (review of #12): a cached `summary.json` from before the usable
+  reused fraction is analyzed again instead of leaving the run unranked; no
+  stale `best_by_capacity` table is left behind; a folder whose
+  `sweep.json` lists no grid resumes its preset's grid, not only the run
+  folders present; axis options fill the other axes from the folder's
+  grid, not the full preset; `sweep.json` is replaced atomically and only
+  when it changes; the sweep tests no longer need matplotlib. 5 tests.
 - **Added:** `run_m2_task3` draws spec 005's figures and writes
   `best_by_capacity.csv`/`.md`; `analysis/plots.py` gains the policies'
   colours and a small-multiples plot. 4 tests.

@@ -17,7 +17,9 @@ each run with Task 2's metrics, writes one row per configuration to
 ``sweep.json`` records the sample, the pacing and every configuration the
 folder has been asked to run. Without ``--grid`` or axis options, an
 existing folder is resumed or analyzed with its recorded grid; with them,
-the new configurations are added. ``summary.csv`` always covers every
+the new configurations are added, and an axis not given takes the
+folder's values (``--capacities 131072`` adds that capacity for every
+recorded policy and block size). ``summary.csv`` always covers every
 recorded configuration.
 
 Capacities are in tokens, so the block count is capacity / block size and
@@ -25,6 +27,7 @@ block sizes compare at equal cache size. See ``specs/005-m2-cache-tuning``.
 """
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -63,8 +66,15 @@ LABELS = {
 }
 # A run folder's name, `sweep.Config.name`.
 RUN_NAME = re.compile(r"([a-z]+)-bs(\d+)-cap(\d+)")
-# What `task2.write_sample` leaves in a folder before `sweep.json` exists.
-SAMPLE_FILES = {"sample.conversations.jsonl", "sample.responses.jsonl"}
+# What `task2.write_sample` leaves in a folder before `sweep.json` exists,
+# and what an interrupted first write of `sweep.json` leaves.
+SAMPLE_FILES = {
+    "sample.conversations.jsonl", "sample.responses.jsonl", "sweep.json.tmp"
+}
+# A grid preset's sample and pacing, with the defaults of presets that do
+# not set them.
+PACING_DEFAULTS = (("limit", 1000), ("conversation_rate", 1.0), ("think_time",
+                                                                 5.0))
 # Fields of the sweep that every run of one output folder must share.
 SWEEP_FIELDS = ("model", "limit", "seed", "conversation_rate", "think_time",
                 "max_concurrency", "max_model_len")
@@ -132,31 +142,68 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     axes_given = (args.grid is not None or args.policies is not None
                   or args.block_sizes is not None
                   or args.capacities is not None)
-    # A folder's recorded sample and pacing come before the presets'.
+    # Folders from before sweep.json listed its configurations.
+    listed = recorded is not None and "configs" in recorded
+    preset_name = args.grid or "full"
     if recorded is not None and args.grid is None:
-        for name in ("limit", "conversation_rate", "think_time"):
+        # A folder's recorded sample and pacing come before the presets'.
+        for name, _ in PACING_DEFAULTS:
             if getattr(args, name) is None:
                 setattr(args, name, recorded["settings"][name])
-    preset = GRIDS[args.grid or "full"]
-    for name, default in (("limit", 1000), ("conversation_rate", 1.0),
-                          ("think_time", 5.0)):
+        if not listed:
+            matched = preset_for(recorded["settings"])
+            if matched is None:
+                parser.error(f"{args.out} records no grid and its sample "
+                             "matches no preset; pass --grid")
+            preset_name = matched
+    preset = GRIDS[preset_name]
+    for name, default in PACING_DEFAULTS:
         if getattr(args, name) is None:
             setattr(args, name, preset.get(name, default))
     if args.limit <= 0:
         parser.error("--limit must be positive")
     recorded_configs = recorded_grid(recorded, args.out)
-    if recorded_configs and not axes_given:
+    if listed and not axes_given:
         args.configs = recorded_configs
     else:
+        # Axes not given come from the folder's grid, or from the preset
+        # for a new folder, with --grid, or for a folder that lists none.
+        base = (grid_axes(recorded_configs)
+                if listed and args.grid is None else preset)
         for name in ("policies", "block_sizes", "capacities"):
             if getattr(args, name) is None:
-                setattr(args, name, preset[name])
+                setattr(args, name, base[name])
         try:
             args.configs = sweep.expand_grid(args.policies, args.block_sizes,
                                              args.capacities)
         except ValueError as exc:
             parser.error(str(exc))
     return args
+
+
+def preset_for(settings: Dict[str, Any]) -> Optional[str]:
+    """The grid preset whose pacing a folder was run with (presets differ
+    in pacing; the sample size is often overridden)."""
+    for name, grid in GRIDS.items():
+        if all(
+                settings.get(field) == grid.get(field, default)
+                for field, default in PACING_DEFAULTS if field != "limit"):
+            return name
+    return None
+
+
+def grid_axes(configs: Sequence[sweep.Config]) -> Dict[str, List[Any]]:
+    """The policies, block sizes and capacities a grid uses."""
+    return {
+        "policies":
+        [p for p in sweep.POLICIES if any(c.policy == p for c in configs)],
+        "block_sizes":
+        sorted({c.block_size
+                for c in configs}),
+        "capacities":
+        sorted({c.capacity_tokens
+                for c in configs}),
+    }
 
 
 def read_sweep_file(out: Path) -> Optional[Dict[str, Any]]:
@@ -168,7 +215,8 @@ def recorded_grid(recorded: Optional[Dict[str, Any]],
                   out: Path) -> List[sweep.Config]:
     """The configurations a folder has been asked to run so far.
 
-    Folders from before `sweep.json` listed them: the run folders present.
+    Folders from before `sweep.json` listed them: the run folders present,
+    which `parse_args` completes with the matching preset's grid.
     """
     if recorded is None:
         return []
@@ -217,7 +265,8 @@ def prepare_out(
     configs = sweep.grid_order(
         recorded_grid(recorded, args.out) + list(args.configs))
     if not args.analyze_only:
-        sweep_file.write_text(
+        write_atomically(
+            sweep_file,
             json.dumps(
                 {
                     "settings":
@@ -229,6 +278,16 @@ def prepare_out(
                 },
                 indent=2))
     return sample, configs
+
+
+def write_atomically(path: Path, text: str) -> None:
+    """Write `path` only if it changes, through a rename, so an
+    interruption never leaves it half written."""
+    if path.exists() and path.read_text() == text:
+        return
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
 
 
 def finished(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -406,6 +465,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if best:
         task2.write_csv(args.out / "best_by_capacity.csv", best)
         (args.out / "best_by_capacity.md").write_text(markdown_table(best))
+    else:  # Nothing to rank: do not leave an earlier table behind.
+        for name in ("best_by_capacity.csv", "best_by_capacity.md"):
+            (args.out / name).unlink(missing_ok=True)
     if args.no_figures:
         return
     capacity = args.pressure_capacity or pressure_capacity(

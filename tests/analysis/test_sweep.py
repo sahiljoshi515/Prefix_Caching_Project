@@ -180,10 +180,21 @@ def test_interrupted_run_is_removed_and_replayed(tmp_path):
 def test_summary_is_cached_unless_reanalyzed(tmp_path):
     run(GRID, tmp_path, FakeReplay())
     summary = tmp_path / "lru-bs16-cap2048" / "summary.json"
-    summary.write_text(json.dumps({"evictions": 99}))
+    cached = dict.fromkeys(sweep.CURRENT_SUMMARY_FIELDS, 0.5)
+    summary.write_text(json.dumps({**cached, "evictions": 99}))
     assert run(GRID, tmp_path, FakeReplay())[2]["evictions"] == 99
     rows = run(GRID, tmp_path, FakeReplay(), reanalyze=True)
     assert rows[2]["evictions"] == 1
+
+
+def test_a_summary_from_an_older_analysis_is_redone(tmp_path):
+    """One written before the usable reused fraction existed."""
+    run(GRID, tmp_path, FakeReplay())
+    summary = tmp_path / "lru-bs16-cap2048" / "summary.json"
+    summary.write_text(json.dumps({"evictions": 99}))
+    row = run(GRID, tmp_path, FakeReplay())[2]
+    assert row["evictions"] == 1
+    assert row["usable_reused_fraction"] is not None
 
 
 def test_missing_runs_are_reported_without_replay(tmp_path):
@@ -488,6 +499,80 @@ def test_an_interrupted_sample_is_written_again(tmp_path, data, monkeypatch):
     ])
     assert json.loads((out / "sweep.json").read_text())["sample"]["turns"] == 3
     assert (out / "sample.conversations.jsonl").read_text() != "partial"
+
+
+def test_axes_not_given_come_from_the_folders_grid(tmp_path, data,
+                                                   monkeypatch):
+    """--capacities on a smoke folder adds that capacity at the folder's
+    block size, not at the full preset's 8, 16 and 32."""
+    monkeypatch.setattr(task3.task2, "run_setting", fake_run_setting)
+    out = tmp_path / "sweep"
+    task3.main(data + [
+        "--grid", "smoke", "--limit", "2", "--policies", "lru", "fifo",
+        "--capacities", "8192", "--out",
+        str(out)
+    ])
+    args = task3.parse_args(
+        data +
+        ["--capacities", "16384", "--policies", "lru", "--out",
+         str(out)])
+    assert [c.name for c in args.configs] == ["lru-bs16-cap16384"]
+    args = task3.parse_args(data +
+                            ["--capacities", "16384", "--out",
+                             str(out)])
+    assert [c.name for c in args.configs
+            ] == ["lru-bs16-cap16384", "fifo-bs16-cap16384"]
+
+
+def test_a_folder_without_a_listed_grid_resumes_its_presets_grid(
+        tmp_path, data, monkeypatch):
+    """An interrupted full sweep from before sweep.json listed its grid
+    resumes all 45 configurations, not only the run folders present."""
+    monkeypatch.setattr(task3.task2, "run_setting", fake_run_setting)
+    out = tmp_path / "sweep"
+    task3.main(data + [
+        "--grid", "full", "--limit", "2", "--policies", "lru", "--block-sizes",
+        "16", "--capacities", "16384", "--out",
+        str(out)
+    ])
+    recorded = json.loads((out / "sweep.json").read_text())
+    del recorded["configs"]
+    (out / "sweep.json").write_text(json.dumps(recorded))
+    args = task3.parse_args(data + ["--out", str(out)])
+    assert len(args.configs) == 45
+    # A sample no preset uses needs --grid.
+    recorded["settings"]["think_time"] = 1.5
+    (out / "sweep.json").write_text(json.dumps(recorded))
+    with pytest.raises(SystemExit):
+        task3.parse_args(data + ["--out", str(out)])
+
+
+def test_sweep_file_is_replaced_whole_and_only_when_it_changes(tmp_path):
+    path = tmp_path / "sweep.json"
+    task3.write_atomically(path, "a")
+    before = path.stat().st_mtime_ns
+    task3.write_atomically(path, "a")
+    assert path.stat().st_mtime_ns == before
+    task3.write_atomically(path, "b")
+    assert path.read_text() == "b"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["sweep.json"]
+
+
+def test_no_best_table_is_left_from_an_earlier_command(tmp_path, data,
+                                                       monkeypatch):
+    monkeypatch.setattr(task3.task2, "run_setting", fake_run_setting)
+    out = tmp_path / "sweep"
+    task3.main(data + [
+        "--grid", "smoke", "--limit", "2", "--policies", "lru", "--capacities",
+        "8192", "--out",
+        str(out)
+    ])
+    assert (out / "best_by_capacity.md").exists()
+    # Nothing to rank this time.
+    monkeypatch.setattr(task3, "best_by_capacity", lambda rows: [])
+    task3.main(data + ["--analyze-only", "--out", str(out)])
+    assert not (out / "best_by_capacity.md").exists()
+    assert not (out / "best_by_capacity.csv").exists()
 
 
 def test_folders_without_a_recorded_grid_use_their_run_folders(tmp_path):

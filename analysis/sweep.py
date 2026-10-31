@@ -27,6 +27,11 @@ POLICIES = ("lru", "fifo", "lfu")
 # What `vllm serve --block-size` accepts in this vLLM version.
 BLOCK_SIZES = (8, 16, 32, 64, 128)
 PREEMPTIONS_METRIC = "vllm:num_preemptions_total"
+# Fields of a run's summary.json that analyses before the usable reused
+# fraction did not write; a cached summary without them is analyzed again.
+CURRENT_SUMMARY_FIELDS = ("usable_reused_fraction",
+                          "mean_usable_cached_fraction",
+                          "requests_with_hits_after_miss")
 
 
 @dataclass(frozen=True)
@@ -191,7 +196,8 @@ def run_sweep(configs: Sequence[Config],
 
     `replay(config, run_dir)` must create `run_dir` and write its manifest
     with `finished_at_utc` last; `analyze(run_dir)` returns its summary,
-    which is cached as `summary.json` unless `reanalyze` is set.
+    which is cached as `summary.json` unless `reanalyze` is set or the
+    cached one lacks a `CURRENT_SUMMARY_FIELDS` field.
     Unfinished configurations for which `replay_if(config)` is False are
     reported as "missing" instead of being replayed.
     """
@@ -219,9 +225,14 @@ def run_sweep(configs: Sequence[Config],
             log(f"{prefix}: replaying")
             replay(config, run_dir)
         summary_path = run_dir / "summary.json"
+        summary = None
         if summary_path.exists() and not reanalyze:
             summary = json.loads(summary_path.read_text())
-        else:
+            if any(f not in summary for f in CURRENT_SUMMARY_FIELDS):
+                log(f"{prefix}: summary.json is from an older analysis, "
+                    "analyzing again")
+                summary = None
+        if summary is None:
             summary = analyze(run_dir)
         rows.append(summary_row(config, run_dir, summary))
     return rows
