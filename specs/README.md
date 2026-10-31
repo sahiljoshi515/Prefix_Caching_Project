@@ -25,7 +25,7 @@ Each folder holds:
 | [004-m2-prefix-sharing-analysis](004-m2-prefix-sharing-analysis/spec.md) | M2 Task 2: replay and analyze | Xin Liang Chia | In progress | 003 |
 | [005-m2-cache-tuning](005-m2-cache-tuning/spec.md) | M2 Task 3: cache parameters, LRU/LFU/FIFO | Jasmine Lu | In progress | 003, 004 |
 | [006-m3-workload-eviction](006-m3-workload-eviction/spec.md) | M3 Task 1: policies per workload | TBD | Draft | 003, 004, 005 |
-| [007-m3-mixed-workload-policy](007-m3-mixed-workload-policy/spec.md) | M3 Task 2: workload-aware policy | TBD | Draft | 004, 005, 006 |
+| [007-m3-mixed-workload-policy](007-m3-mixed-workload-policy/spec.md) | M3 Task 2: workload-aware policy | Sahil Joshi, Xin Liang Chia | Specified; not started | 004, 005, 006 |
 
 ## Dependency order
 
