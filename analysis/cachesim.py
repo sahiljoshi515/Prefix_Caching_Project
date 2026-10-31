@@ -241,9 +241,10 @@ class CacheSim:
             self._cache_events.time = saved
 
     def _attribute(self, request: TokenRequest, op: str) -> None:
-        if self.recorder is not None:
-            self.recorder.request_id = ENGINE_ID.format(request.request_id)
-            self.recorder.op = op
+        # As the block manager's `attributed` methods do, for the event log
+        # and for evictors that read the request's workload.
+        self._cache_events.set_current_request(
+            ENGINE_ID.format(request.request_id), op)
 
     def _hashes(self, tokens: List[int]) -> List[int]:
         from vllm.core.block.prefix_caching_block import PrefixCachingBlock

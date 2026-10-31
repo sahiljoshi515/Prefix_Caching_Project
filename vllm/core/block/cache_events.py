@@ -54,11 +54,9 @@ class CacheEventRecorder:
         self._file = opener(path, "wt", encoding="utf-8")  # noqa: SIM115
         self._buffer: List[_Event] = []
         self._last_flush = time.monotonic()
-        # Set by the block manager around each call (see `attributed`).
-        self.request_id: Optional[str] = None
-        self.op: Optional[str] = None
-        # Sequences carry no request id, so `allocate` records it here.
-        self._seq_requests: Dict[int, str] = {}
+        # The block manager names the running request in the module's
+        # request context (see `attributed`); the recorder reads it.
+        enable_request_context()
         self.closed = False
         header = {
             "ev": "header",
@@ -77,8 +75,8 @@ class CacheEventRecorder:
             block_id: Optional[int],
             la: Optional[float] = None) -> None:
         now = time.monotonic()
-        self._buffer.append(
-            (now, ev, content_hash, block_id, self.request_id, self.op, la))
+        self._buffer.append((now, ev, content_hash, block_id,
+                             _context.request_id, _context.op, la))
         if (len(self._buffer) >= FLUSH_EVENTS
                 or now - self._last_flush >= FLUSH_SECONDS):
             self.flush()
@@ -113,9 +111,44 @@ class CacheEventRecorder:
         if _recorders.get(self.path) is self:
             del _recorders[self.path]
 
+    # The request context's fields, kept here for code that sets them on
+    # the recorder (the cache simulator).
+    @property
+    def request_id(self) -> Optional[str]:
+        return _context.request_id
+
+    @request_id.setter
+    def request_id(self, value: Optional[str]) -> None:
+        _context.request_id = value
+
+    @property
+    def op(self) -> Optional[str]:
+        return _context.op
+
+    @op.setter
+    def op(self, value: Optional[str]) -> None:
+        _context.op = value
+
+
+class RequestContext:
+    """The request the block manager is serving and the call it is in.
+
+    The event log names each event's request from it, and an evictor that
+    labels blocks by workload (spec 007 FR-002) reads it when a block is
+    freed. It is off until a recorder or such an evictor enables it, so
+    vLLM does nothing extra by default.
+    """
+
+    def __init__(self) -> None:
+        self.enabled = False
+        self.request_id: Optional[str] = None
+        self.op: Optional[str] = None
+        # Sequences carry no request id, so `allocate` records it here.
+        self._seq_requests: Dict[int, str] = {}
+
     @contextmanager
     def attribute(self, target, op: str) -> Iterator[None]:
-        """Attribute events to `target`'s request while `op` runs.
+        """Name `target`'s request while `op` runs.
 
         `target` is a SequenceGroup (``allocate``, ``swap_in``,
         ``swap_out``) or a Sequence (``append_slots``, ``free``).
@@ -134,6 +167,43 @@ class CacheEventRecorder:
             self.request_id, self.op = previous
             if op == "free":
                 self._seq_requests.pop(target.seq_id, None)
+
+
+_context = RequestContext()
+
+
+def enable_request_context() -> None:
+    _context.enabled = True
+
+
+def current_request() -> Optional[str]:
+    """The engine id of the request being served, or None outside a block
+    manager call or while the context is off."""
+    return _context.request_id
+
+
+def set_current_request(request_id: Optional[str],
+                        op: Optional[str] = None) -> None:
+    """Name the running request without a block manager (simulators,
+    tests)."""
+    _context.enabled = True
+    _context.request_id, _context.op = request_id, op
+
+
+ENGINE_PREFIXES = ("chatcmpl-", "cmpl-")
+
+
+def workload_label(engine_request_id: Optional[str]) -> Optional[str]:
+    """A request's workload tag: the client id's text before its first
+    colon (spec 006 FR-002), after the server's ``chatcmpl-``/``cmpl-``
+    prefix. None for None."""
+    if engine_request_id is None:
+        return None
+    for prefix in ENGINE_PREFIXES:
+        if engine_request_id.startswith(prefix):
+            engine_request_id = engine_request_id[len(prefix):]
+            break
+    return engine_request_id.split(":", 1)[0]
 
 
 # One recorder per path and process: the block manager and its GPU
@@ -157,20 +227,21 @@ def close_all() -> None:
 
 
 def attributed(op: str) -> Callable[[_F], _F]:
-    """Decorate a block-manager method so its cache events name a request.
+    """Decorate a block-manager method so the request context names its
+    request while it runs (for the event log and for label-reading
+    evictors).
 
-    The method's first argument is the SequenceGroup or Sequence; the
-    manager's recorder is ``self._events`` (None when logging is off).
+    The method's first argument is the SequenceGroup or Sequence. With the
+    context off (no recorder, no such evictor) the method runs unchanged.
     """
 
     def decorate(method: _F) -> _F:
 
         @functools.wraps(method)
         def wrapper(manager, target, *args, **kwargs):
-            events = manager._events
-            if events is None:
+            if not _context.enabled:
                 return method(manager, target, *args, **kwargs)
-            with events.attribute(target, op):
+            with _context.attribute(target, op):
                 return method(manager, target, *args, **kwargs)
 
         return wrapper  # type: ignore[return-value]
