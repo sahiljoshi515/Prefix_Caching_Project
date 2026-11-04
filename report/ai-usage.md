@@ -109,3 +109,25 @@ Entry format:
   description and this entry. Sahil asked for the fix and reviewed it.
 - **Prompts:** "Can you fix the CI for codespell/codecheck and make a
   commit, and then tell me if we can merge it?"
+
+### PR pending (branch `milestone3_task2`): Milestone 3 Task 2, Phase 1
+
+- **Tools:** Claude Code (Claude Opus 5.5), with parallel subagents for the
+  runner, the tables, the Belady oracle, identification and signals, the
+  paper checks, and an independent code review.
+- **Used for:** designing the study (the design was stress-tested by a
+  review agent before any run), porting the earlier local work, the
+  pacing and window changes, the grid runner, every analysis module and
+  its tests, the 21 engine runs and the simulator sweep, the results page
+  and figures, and these documents. Sahil chose the workloads, the model,
+  the branch and the plan's direction.
+- **Prompts:** "I need your help with Milestone 3 Task 2 [...] We need a
+  systematic study using the Qwen2.5-0.5B-Instruct Model that
+  specifically plots these 3 things for LRU, LFU, and FIFO [...] create
+  this mixed workload generator, and then run the baselines, see how these
+  baselines and metrics that are asked look like in plots, and then based
+  on that we can get some signals to focus and design the smart eviction
+  policy [...] read the following paper [...] write neat code on a new
+  branch called milestone3_task2 [...] commit and push code to this new
+  branch. Create a good, interpretable, coherent artifact".
+

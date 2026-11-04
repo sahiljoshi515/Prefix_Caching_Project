@@ -28,7 +28,34 @@ here.
 ## Task 2: a workload-aware policy for mixed workloads
 
 [Spec 007](../../specs/007-m3-mixed-workload-policy/spec.md). Owners: Sahil
-Joshi and Xin Liang Chia. Spec revised; implementation not started.
+Joshi and Xin Liang Chia. Phase 1 (the reuse study and the baselines) done
+on branch `milestone3_task2`; the policy itself is Phase 2.
+
+### Unreleased (branch `milestone3_task2`, PR pending): Phase 1
+
+- **Added:** the M3 workload adapters (AgentBank, CC-Bench, four Bailian
+  traces), the mixed-workload plan builder, token-level plan replay, the
+  cache simulator and its validation, and the FR-002 request context,
+  merged from the earlier local branch `milestone3-sahil-mixed-workload`
+  (`2310990f`).
+- **Changed:** plans pace text workloads with real pauses borrowed from
+  recorded loops (ShareGPT from Bailian chat's turn gaps, CC-Bench from its
+  own recorded tool latencies, AgentBank from CC-Bench's), stop at the
+  1,800 s window so every policy replays the same requests, and give seed k
+  each Bailian trace's k-th window (`01a81876`). Spec 007 amended to match
+  (`4264d3bd`).
+- **Added:** the grid runner (`plans`, `grid`, `sim`; `5e7e4558`,
+  `f94f8e58`), a Belady reference in the simulator (`993bab02`), per-run
+  lookup, residency and request tables with one 004 reuse-interval
+  implementation (`cf0395df`), label-free workload identification and a
+  ranking of reuse signals (`975efbe9`), the ATC'25 paper checks
+  (`1f1fe61c`), and the Phase 1 study, results page and figures
+  (`de3b08d4`).
+- **Ran:** 21 engine runs (balanced mix; seeds 2–4 reported, seed 1 for
+  training, seed 2 with Phase 0's fast pacing, one LRU replicate), at
+  131,072 tokens and 16-token blocks, plus a simulator sweep of cache size
+  for LRU, LFU, FIFO and Belady. Results:
+  [`task2-mixed-workload-policy.md`](task2-mixed-workload-policy.md).
 
 ### Unreleased (branch `milestone3-marcus-mixed-workload-spec`)
 

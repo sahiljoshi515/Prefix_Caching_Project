@@ -209,6 +209,48 @@ least two mixes at the FR-007 capacity, it beats LRU by more than the seed
 spread without lowering any workload by more than 2 points. Otherwise the
 alternative is tried, and a negative result is reported (SC-003).
 
+## Phase 1 study (2026-11-04, branch `milestone3_task2`)
+
+Phase 1 measured the course's three questions on engine runs before any
+policy code, with a design reviewed for confounds first. What changed from
+Phase 0, and why:
+
+- **Pacing.** Phase 0's constant pauses (5/1/2 s) set ShareGPT's and the
+  agents' reuse intervals by fiat, and they decide who LRU serves. Plans
+  now default to `--pacing human`: ShareGPT borrows bailian-chat's text
+  turn gaps (by turn, less 0.03 s per parent output token, at least 1 s);
+  CC-Bench uses its own recorded tool latencies (p50 0.13 s, p90 22 s);
+  AgentBank samples those. The old constants are `--pacing fast`, run as
+  the sensitivity case. ShareGPT's and AgentBank's intervals stay inputs.
+- **Window.** Plans are 1,800 s and stop at the window (`--tail 0`), so
+  every policy replays the same requests (identical lookup counts per seed
+  are checked). Metrics cover requests planned in [600, 1800) s
+  (`analysis/m3t2_config.json`).
+- **Seeds.** Seed k replays each Bailian trace's k-th half hour, so no
+  session repeats across seeds; seed 1 trains (the identification ladder,
+  the signal models), seeds 2 to 4 are reported.
+- **Properties from the ceiling.** How soon and how much a workload reuses
+  comes from the no-eviction run, never from an LRU run, whose statistics
+  see only the blocks LRU kept. `characterize.reuse_profile` had such a bias
+  (its access gaps forgot the last access at an eviction); it now uses
+  `metrics.reuse_intervals`.
+- **Capacity.** 131,072 tokens (T013): in the simulator pre-flight LRU's
+  usable reuse (0.527) is 0.22 below the ceiling (0.746), four times the
+  seed spread (0.05).
+- **Runs.** 21 engine runs at about 31 minutes each, 6 at a time. Batch 2
+  ran while analysis jobs loaded the machine (request latency doubled), so
+  its six runs were replayed on a quiet machine; the contended copies are
+  kept in `results/m3-task2-contended/` as a timing-sensitivity check.
+
+The results, figures and design signals are in
+[`task2-mixed-workload-policy.md`](../../report/milestone3/task2-mixed-workload-policy.md)
+and its results page. They revise the proposed design above in two ways:
+past hits predict reuse strongly (so frequency belongs in the score, with
+protection for blocks too young to have been reused), and per-category
+reuse times are not exponential (shared prompts return within seconds,
+history within minutes), so the score should be learned per prompt family
+or class from observed returns rather than fitted to one curve.
+
 ## Phases
 
 Target dates are proposals for the owners to confirm; the project is due
@@ -231,7 +273,7 @@ Target dates are proposals for the owners to confirm; the project is due
 ```bash
 tools/run_project_tests.sh m3 -v      # test modules carry pytestmark = pytest.mark.m3
 python -m pytest tests/core --ignore=tests/core/block/e2e --ignore=tests/core/test_num_computed_tokens_update.py
-python -m analysis.run_m3_task2 --grid smoke --out results/smoke-m3t2
+python -m analysis.run_m3_task2 plans --grid smoke && python -m analysis.run_m3_task2 grid --grid smoke --allow-dirty
 ```
 
 ## Risks
