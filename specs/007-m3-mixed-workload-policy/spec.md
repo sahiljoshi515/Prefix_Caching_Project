@@ -94,6 +94,11 @@ Each finding below shapes a requirement of this spec.
    interval is the client's 5 s think time plus a few milliseconds (Task 2):
    a property of our pacing, not of the dataset. A policy tuned to it could
    learn that constant instead of the workload (FR-010, User Story 4).
+   Phase 1 therefore paces workloads without timestamps with real pauses
+   borrowed from the closest recorded loop ("human" pacing, User Story 1):
+   ShareGPT from bailian-chat's turn gaps, AgentBank from CC-Bench's
+   recorded tool latencies. Their reuse intervals stay inputs, not
+   findings; only Bailian's and CC-Bench's are measured.
 5. **Runs differ by about 0.01 near the pressure cliff.** Two independent
    runs of LRU at 65,536 tokens gave 0.764 and 0.752 (Task 3). Margins
    below the seed spread are ties (SC-003).
@@ -132,25 +137,47 @@ with the same seed.
    their request share.
 2. **Given** the mix, **Then** each workload keeps its own arrival process
    on one shared timeline. Bailian requests keep their recorded times,
-   relative to the window's start. The other workloads start sessions as
-   Poisson processes, at rates that give the target shares over the window.
-3. **Given** the mixed trace, **Then** every request id keeps its workload
+   relative to the window's start; seed k replays each trace's k-th window,
+   so seeds never share a session. The other workloads start sessions as
+   Poisson processes over the window, and each later turn is sent its
+   pause after the previous one completes. "Human" pacing (the default)
+   borrows real pauses: ShareGPT samples bailian-chat's text turn gaps by
+   turn number, less the production answer time; CC-Bench uses its own
+   recorded tool latencies; AgentBank samples those pooled. "Fast" pacing
+   keeps Phase 0's 5/1/2 s constants as the sensitivity case.
+3. **Given** the window, **Then** the plan stops at its end: a turn planned
+   at or after the stop (by zero-latency send time) is dropped with the
+   rest of its session, and shares count only kept turns. Every policy
+   then replays the same requests, and each request records its planned
+   send time so the analysis can skip a warm-up.
+4. **Given** the mixed trace, **Then** every request id keeps its workload
    prefix (`006` FR-002). The trace's manifest records the mix, the seed,
-   and each workload's pacing (session rate, think time).
+   each workload's pacing source and pause quantiles, the turns dropped at
+   the stop, each Bailian trace's thinning (the share of the window's
+   sessions kept) and every input file's sha256.
 
 ---
 
 ### User Story 2 - Characterize the mix (Priority: P1)
 
-From an LRU run of each mix, with `004`'s event log on, per-workload
-statistics answer the course's three questions with numbers. They also
-measure how much a better policy could gain.
+Per-workload statistics answer the course's three questions with numbers,
+and measure how much a better policy could gain. A workload's own
+properties (how soon and how much it reuses) come from the ceiling run
+(scenario 4), never from an LRU run, whose statistics only see the blocks
+LRU kept. Each policy's run gives that policy's outcome. Requests planned
+in the first 600 s (the warm-up) are not measured, and block statistics
+are right-censored at the end of the run.
 
 **Acceptance Scenarios**:
 
 1. **Reuse interval:** per-workload CDFs of the reuse interval, in seconds
-   and in requests started in between (`004`). The second does not depend
-   on the client's pacing or the simulator's speed.
+   and in requests started in between (`004`), split by whether the
+   previous access was the same session, another session of the workload,
+   or another workload. Requests in between scale with the pacing too, so
+   neither is a property of a dataset whose pacing is borrowed. Next to it,
+   the **idle age**: the time from a block's free to the next lookup of its
+   hash, which is what an evictor sees; hits on blocks still held by a
+   running request are excluded from it.
 2. **Reuse portion:** per workload, the usable reused fraction (FR-008),
    hits per block, and the shares of hits within the same session, across
    sessions, and across workloads.
