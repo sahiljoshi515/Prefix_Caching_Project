@@ -273,7 +273,8 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         self.evictor.add(block_id, block.content_hash, block.num_tokens_total,
                          self._block_tracker[block_id].last_accessed)
         if self._events is not None:
-            self._events.log("free", block.content_hash, block_id)
+            self._events.log("free", block.content_hash, block_id,
+                             self._block_tracker[block_id].last_accessed)
 
         # Stop tracking the block
         self._untrack_block_id(block_id)
