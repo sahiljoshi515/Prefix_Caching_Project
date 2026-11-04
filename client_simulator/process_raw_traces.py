@@ -44,6 +44,8 @@ def write_traces(conversations: Iterable[Conversation], client_path: Path,
                     "conversation_id": conversation.conversation_id,
                     "messages": [asdict(m) for m in conversation.messages],
                 }
+                if conversation.turn_gaps_s is not None:
+                    record["turn_gaps_s"] = conversation.turn_gaps_s
                 client_file.write(
                     json.dumps(record, ensure_ascii=False) + "\n")
                 # History slices are only needed at replay time.

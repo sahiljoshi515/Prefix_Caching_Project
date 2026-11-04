@@ -21,6 +21,11 @@ class Message:
 class Conversation:
     conversation_id: str
     messages: list[Message]
+    # Recorded pause before each turn, in seconds: from the end of the
+    # previous answer to this turn's message, for sources with timestamps
+    # (CC-Bench's tool runs). Index = turn; turn 0 and unknown gaps are None.
+    # None when the source has no timestamps (ShareGPT, AgentBank).
+    turn_gaps_s: Optional[list] = None
 
 
 @dataclass

@@ -9,7 +9,7 @@ import gzip
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Iterable, Iterator, List, Optional, Tuple
+from typing import Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 from client_simulator.schema import Conversation, TokenRequest, request_id
 
@@ -50,11 +50,15 @@ def read_plan(path: Path) -> Iterator[TokenRequest]:
 
 
 def tokenize_conversation(
-        conversation: Conversation,
-        tokenizer,
-        max_model_len: int,
-        after_s: Optional[float] = None) -> Tuple[List[TokenRequest], int]:
+    conversation: Conversation,
+    tokenizer,
+    max_model_len: int,
+    after_s: Union[None, float, Sequence[Optional[float]]] = None
+) -> Tuple[List[TokenRequest], int]:
     """One request per assistant turn, as the chat client would send it.
+
+    `after_s` is the closed-loop pause before every later turn: one number
+    for all of them, or one entry per turn (index = turn; entry 0 unused).
 
     The prompt is the chat template over the history with the generation
     prompt added (what the server's ``/tokenize`` returns for the chat
@@ -84,5 +88,12 @@ def tokenize_conversation(
                          turn_index=turn,
                          prompt_token_ids=list(prompt),
                          output_token_ids=list(output),
-                         after_s=None if turn == 0 else after_s))
+                         after_s=None if turn == 0 else _pause(after_s, turn)))
     return requests, 0
+
+
+def _pause(after_s: Union[None, float, Sequence[Optional[float]]],
+           turn: int) -> Optional[float]:
+    if after_s is None or isinstance(after_s, (int, float)):
+        return after_s
+    return after_s[turn]

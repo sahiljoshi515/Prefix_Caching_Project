@@ -98,8 +98,8 @@ def ccbench_row(events, task_id=12, model="GLM-4.5"):
     }
 
 
-def event(kind, content, sidechain=False):
-    return {
+def event(kind, content, sidechain=False, timestamp=None):
+    out = {
         "type": kind,
         "isSidechain": sidechain,
         "message": {
@@ -107,6 +107,9 @@ def event(kind, content, sidechain=False):
             "content": content
         }
     }
+    if timestamp is not None:
+        out["timestamp"] = timestamp
+    return out
 
 
 def test_ccbench_serializes_tools_and_drops_side_events():
@@ -165,7 +168,10 @@ def test_ccbench_serializes_tools_and_drops_side_events():
         "dropped_sidechain_events": 1,
         "merged_messages": 1,
         "unanswered_final_users_removed": 1,
+        # No timestamps in these events: turn 1's pause is unknown.
+        "turn_gaps_missing": 1,
     }
+    assert conversation.turn_gaps_s == [None, None]
 
 
 def test_ccbench_drops_compaction_errors_and_thinking_only_events():
@@ -203,6 +209,77 @@ def test_ccbench_drops_compaction_errors_and_thinking_only_events():
     ]
     assert counts["dropped_compaction_or_error_events"] == 2
     assert counts["dropped_empty_events"] == 1
+
+
+def text(value):
+    return [{"type": "text", "text": value}]
+
+
+def test_ccbench_records_the_pause_before_each_turn():
+    # Turn 1's pause runs from the end of answer 0 (its last event, 10.5 s)
+    # to the start of message 1 (its first event, 12.0 s): 1.5 s. Message 2
+    # starts before answer 1 ends (clock skew), so its pause is 0. Message 3
+    # has no timestamp, so its pause is unknown.
+    t = "2025-09-25T00:00:{:04.1f}Z".format
+    events = [
+        event("user", "Build it", timestamp=t(0)),
+        event("assistant", [{
+            "type": "text",
+            "text": "Plan"
+        }], timestamp=t(4)),
+        event("assistant", [{
+            "type": "tool_use",
+            "name": "Bash",
+            "input": {}
+        }],
+              timestamp=t(10.5)),
+        event("user", [{
+            "type": "tool_result",
+            "content": "ok"
+        }],
+              timestamp=t(12)),
+        event("user", "note", timestamp=t(13)),
+        event("assistant", [{
+            "type": "text",
+            "text": "Next"
+        }], timestamp=t(20)),
+        event("user", [{
+            "type": "tool_result",
+            "content": "ok"
+        }],
+              timestamp=t(19)),
+        event("assistant", [{
+            "type": "text",
+            "text": "Again"
+        }],
+              timestamp=t(25)),
+        event("user", "no time"),
+        event("assistant", [{
+            "type": "text",
+            "text": "Done"
+        }], timestamp=t(30)),
+    ]
+    counts = Counter()
+    conversation = ccbench.to_conversation(ccbench_row(events), counts)
+    assert [m.role for m in conversation.messages] == ["user", "assistant"] * 4
+    assert conversation.turn_gaps_s == [None, 1.5, 0.0, None]
+    assert counts["turn_gaps_recorded"] == 2
+    assert counts["turn_gaps_negative_set_to_0"] == 1
+    assert counts["turn_gaps_missing"] == 1
+
+
+def test_ccbench_turn_gaps_reach_the_processed_file(tmp_path):
+    conversation = ccbench.to_conversation(
+        ccbench_row([
+            event("user", "a", timestamp="2025-09-25T00:00:00Z"),
+            event("assistant", "b", timestamp="2025-09-25T00:00:01Z"),
+            event("user", "c", timestamp="2025-09-25T00:00:03Z"),
+            event("assistant", "d", timestamp="2025-09-25T00:00:04Z"),
+        ]), Counter())
+    client, server = tmp_path / "c.jsonl", tmp_path / "s.jsonl"
+    process_raw_traces.write_traces([conversation], client, server)
+    row = json.loads(client.read_text())
+    assert row["turn_gaps_s"] == [None, 2.0]
 
 
 def test_ccbench_skips_a_trajectory_that_starts_with_the_assistant():

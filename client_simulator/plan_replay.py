@@ -18,8 +18,15 @@ order:
   parent wrote. The wait is recorded as ``dispatch_delay_s``.
 
 A request that fails or exceeds the context ends a closed-loop session (as
-the chat client does); an open-loop session goes on. A request completes if
-it finishes with ``stop`` after exactly its recorded output. Results have the
+the chat client does); an open-loop session goes on. With ``--stop-at``, a
+request still waiting to be sent that many seconds after the start is not
+sent (status ``stopped``), nor is the rest of its session: a guard against a
+replay running far past its plan, which already ends its sessions at the
+plan's stop. ``planned_s`` in the results is the request's planned send time
+(``arrival_s``, or for a closed-loop turn the plan's ``meta.planned_s``).
+
+A request completes if it finishes with ``stop`` after exactly its recorded
+output. Results have the
 chat client's fields, so ``analysis/`` reads them unchanged, plus
 ``workload``. The ShareGPT chat client (``client_sim.py``) is unchanged.
 """
@@ -38,6 +45,14 @@ import httpx
 from client_simulator.client_sim import server_urls
 from client_simulator.schema import TokenRequest
 from client_simulator.token_plan import read_plan
+
+
+def planned_s(request: TokenRequest):
+    """When the plan sends `request`: its arrival time, or for a closed-loop
+    turn the plan's zero-latency estimate (``meta["planned_s"]``)."""
+    if request.arrival_s is not None:
+        return request.arrival_s
+    return request.meta.get("planned_s")
 
 
 def group_sessions(requests: List[TokenRequest]) -> List[List[TokenRequest]]:
@@ -62,10 +77,17 @@ def group_sessions(requests: List[TokenRequest]) -> List[List[TokenRequest]]:
 
 class PlanReplay:
 
-    def __init__(self, http, base_url, model, results, max_concurrency=64):
+    def __init__(self,
+                 http,
+                 base_url,
+                 model,
+                 results,
+                 max_concurrency=64,
+                 stop_at=None):
         self.http, self.model, self.results = http, model, results
         self.root, self.api = server_urls(base_url)
         self.slots = asyncio.Semaphore(max_concurrency)
+        self.stop_at = stop_at
         self.counts: Counter = Counter()
         self.started = 0.0
         self.max_model_len = None
@@ -138,12 +160,15 @@ class PlanReplay:
                     max(0.0, request.arrival_s - self.elapsed()))
             else:
                 await asyncio.sleep(request.after_s)
+            if self.stop_at is not None and self.elapsed() > self.stop_at:
+                self.stop_session(session[index:])
+                return
             result = {
                 "request_id": request.request_id,
                 "conversation_id": request.session_id,
                 "turn_index": request.turn_index,
                 "workload": request.workload,
-                "planned_s": request.arrival_s,
+                "planned_s": planned_s(request),
                 "after_s": request.after_s,
                 "ready_s": self.elapsed(),
                 "sent_s": None,
@@ -173,6 +198,26 @@ class PlanReplay:
             if result["status"] != "completed" and closed_loop:
                 self.counts["abandoned_turns"] += len(session) - index - 1
                 return
+
+    def stop_session(self, requests: List[TokenRequest]):
+        """Record `requests` as not sent because the replay passed its stop."""
+        for request in requests:
+            self.results.write(
+                json.dumps({
+                    "request_id": request.request_id,
+                    "conversation_id": request.session_id,
+                    "turn_index": request.turn_index,
+                    "workload": request.workload,
+                    "planned_s": planned_s(request),
+                    "after_s": request.after_s,
+                    "ready_s": self.elapsed(),
+                    "sent_s": None,
+                    "latency_s": None,
+                    "status": "stopped",
+                    "error": None,
+                }) + "\n")
+            self.counts["stopped"] += 1
+        self.results.flush()
 
     async def run(self, sessions: List[List[TokenRequest]], time_scale=1.0):
         await self.check_server()
@@ -214,6 +259,11 @@ def parse_args(argv=None):
                         type=Path,
                         default=Path("results/plan-replay.jsonl"))
     parser.add_argument("--capture-metrics", action="store_true")
+    parser.add_argument("--stop-at",
+                        type=float,
+                        help="Do not send requests that are not ready this "
+                        "many seconds after the start (a guard; status "
+                        "'stopped')")
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout must be finite and positive")
@@ -221,6 +271,9 @@ def parse_args(argv=None):
         parser.error("--time-scale must be finite and positive")
     if args.max_concurrency <= 0:
         parser.error("--max-concurrency must be positive")
+    if args.stop_at is not None and (not math.isfinite(args.stop_at)
+                                     or args.stop_at <= 0):
+        parser.error("--stop-at must be finite and positive")
     try:
         server_urls(args.base_url)
     except ValueError as exc:
@@ -254,7 +307,7 @@ async def run_cli(args):
     async with httpx.AsyncClient(timeout=args.timeout, limits=limits) as http:
         with args.output.open("x", encoding="utf-8") as output:
             replay = PlanReplay(http, args.base_url, args.model, output,
-                                args.max_concurrency)
+                                args.max_concurrency, args.stop_at)
             manifest.write_text(json.dumps(metadata, indent=2),
                                 encoding="utf-8")
             try:

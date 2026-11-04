@@ -72,13 +72,17 @@ class FakeServer:
                               })
 
 
-def replay(sessions, server):
+def replay(sessions, server, stop_at=None):
     out = io.StringIO()
 
     async def go():
         async with httpx.AsyncClient(
                 transport=httpx.MockTransport(server.handler)) as http:
-            client = PlanReplay(http, "http://test/v1", MODEL, out)
+            client = PlanReplay(http,
+                                "http://test/v1",
+                                MODEL,
+                                out,
+                                stop_at=stop_at)
             server.clock = client.elapsed
             return await client.run(sessions)
 
@@ -132,6 +136,36 @@ def test_open_loop_turn_goes_at_its_time_but_after_its_parent():
     assert [rid for rid, _, _ in server.calls
             ] == ["bailian-chat:1:0", "bailian-api:9:0", "bailian-chat:1:1"]
     assert rows["bailian-chat:1:1"]["planned_s"] == 0.2
+
+
+def test_closed_loop_rows_carry_the_plans_send_time():
+    first = req("sharegpt:a:0", 0, [1], [2], arrival=0.0)
+    second = req("sharegpt:a:1", 1, [1, 2], [3], after=0.05)
+    second.meta["planned_s"] = 0.05
+    _, rows = replay(group_sessions([first, second]), FakeServer())
+    assert rows["sharegpt:a:0"]["planned_s"] == 0.0
+    assert rows["sharegpt:a:1"]["planned_s"] == 0.05
+
+
+def test_requests_not_ready_by_the_stop_are_not_sent():
+    # The guard stops at 0.1 s: the second session's first request (0.2 s)
+    # and both of its later turns are recorded as stopped, never sent; the
+    # first session is untouched.
+    sessions = group_sessions([
+        req("sharegpt:a:0", 0, [1], [2], arrival=0.0),
+        req("sharegpt:a:1", 1, [1, 2], [3], after=0.01),
+        req("sharegpt:b:0", 0, [4], [5], arrival=0.2),
+        req("sharegpt:b:1", 1, [4, 5], [6], after=0.01),
+        req("bailian-chat:9:0", 0, [7], [8], arrival=0.3),
+    ])
+    server = FakeServer()
+    summary, rows = replay(sessions, server, stop_at=0.1)
+    assert [rid
+            for rid, _, _ in server.calls] == ["sharegpt:a:0", "sharegpt:a:1"]
+    assert summary["completed"] == 2 and summary["stopped"] == 3
+    for rid in ("sharegpt:b:0", "sharegpt:b:1", "bailian-chat:9:0"):
+        assert rows[rid]["status"] == "stopped"
+        assert rows[rid]["sent_s"] is None
 
 
 def test_wrong_output_length_fails_and_ends_a_closed_loop_session():

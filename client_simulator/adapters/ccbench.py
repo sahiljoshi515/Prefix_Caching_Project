@@ -25,6 +25,12 @@ Role mapping (spec 006 FR-005):
   starts with ``assistant`` is skipped.
 - Context compaction is not replayed: the conversation keeps growing, and
   the turns beyond the server's context are skipped at replay time.
+- Every event has an ISO ``timestamp``. A message keeps its first and last
+  event's times, and ``turn_gaps_s[k]`` is the pause from the end of answer
+  ``k - 1`` to the start of message ``k``: the tool run (or, rarely, the
+  person) the agent waited for, which the replay uses as the pause before
+  turn ``k`` (spec 007 pacing). Negative gaps (clock skew) become 0, and a
+  gap with a missing timestamp is None.
 
 Conversation ids are ``ccbench:<task_id>-<model>``, for example
 ``ccbench:12-glm-4-5``. The five models' runs of one task start with the same
@@ -35,8 +41,9 @@ import re
 import shutil
 import urllib.request
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, List, Optional
 
 from client_simulator.schema import Conversation, Message
 
@@ -91,8 +98,42 @@ def message_text(content) -> str:
     return "\n".join(text for text in texts if text is not None)
 
 
+def event_time(event: dict) -> Optional[float]:
+    """An event's ISO timestamp in seconds, or None if missing or invalid."""
+    value = event.get("timestamp")
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def turn_gaps(spans: List[List[Optional[float]]],
+              counts: Counter) -> List[Optional[float]]:
+    """The recorded pause before each turn, from each message's [first, last]
+    event time (messages alternate user, assistant, user, ...)."""
+    gaps: List[Optional[float]] = [None]
+    for turn in range(1, len(spans) // 2):
+        answer_end = spans[2 * turn - 1][1]
+        message_start = spans[2 * turn][0]
+        if answer_end is None or message_start is None:
+            counts["turn_gaps_missing"] += 1
+            gaps.append(None)
+            continue
+        gap = message_start - answer_end
+        if gap < 0:
+            counts["turn_gaps_negative_set_to_0"] += 1
+            gap = 0.0
+        counts["turn_gaps_recorded"] += 1
+        gaps.append(round(gap, 3))
+    return gaps
+
+
 def to_conversation(row: dict, counts: Counter) -> Optional[Conversation]:
     messages: list[Message] = []
+    # [first, last] event time of each message, in step with `messages`.
+    spans: List[List[Optional[float]]] = []
     for event in json.loads(row["trajectory"]):
         if event.get("type") not in ("user", "assistant"):
             counts["dropped_other_events"] += 1
@@ -108,13 +149,21 @@ def to_conversation(row: dict, counts: Counter) -> Optional[Conversation]:
         if not text:
             counts["dropped_empty_events"] += 1
             continue
+        time = event_time(event)
         if messages and messages[-1].role == role:
             messages[-1] = Message(role, messages[-1].content + "\n\n" + text)
             counts["merged_messages"] += 1
+            span = spans[-1]
+            if span[0] is None:
+                span[0] = time
+            if time is not None:
+                span[1] = time
         else:
             messages.append(Message(role, text))
+            spans.append([time, time])
     if messages and messages[-1].role == "user":
         messages.pop()
+        spans.pop()
         counts["unanswered_final_users_removed"] += 1
     if not messages:
         counts["skipped_no_exchange"] += 1
@@ -123,7 +172,7 @@ def to_conversation(row: dict, counts: Counter) -> Optional[Conversation]:
         counts["skipped_assistant_first"] += 1
         return None
     cid = f"ccbench:{row['task_id']}-{model_slug(row['model_name'])}"
-    return Conversation(cid, messages)
+    return Conversation(cid, messages, turn_gaps(spans, counts))
 
 
 def load_conversations(raw_path: Path) -> Iterator[Conversation]:
