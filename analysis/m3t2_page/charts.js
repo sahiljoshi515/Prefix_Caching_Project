@@ -95,7 +95,7 @@
         dx: r.anchor === "end" ? -4 : 4 })),
       ...o.series.map((s) => Plot.line(rows.filter((r) => r.sid === s.id), {
         x: "x", y: "y", stroke: s.color, strokeWidth: 2,
-        curve: o.curve || "monotone-x" })),
+        curve: o.curve || "linear" })),
       ...o.series.filter((s) => s.dots).map((s) => Plot.dot(
         rows.filter((r) => r.sid === s.id), { x: "x", y: "y", r: 3.5,
         fill: s.color, stroke: tok("--surface"), strokeWidth: 1.5 })),
@@ -139,9 +139,10 @@
       y: { domain: order, label: null },
       marks: [
         Plot.link(gaps, { x1: "x1", x2: "x2", y1: "row", y2: "row",
-          stroke: tok("--rule"), strokeWidth: 6, strokeLinecap: "round" }),
+          stroke: tok("--muted"), strokeOpacity: 0.28, strokeWidth: 7,
+          strokeLinecap: "round" }),
         Plot.ruleY(rows, { y: "row", x1: "lo", x2: "hi", stroke: "color",
-          strokeWidth: 1.5, dy: (d) => 0 }),
+          strokeOpacity: 0.55, strokeWidth: 1.5 }),
         Plot.dot(rows.filter((r) => r.hollow), { x: "x", y: "row", r: 6,
           stroke: "color", strokeWidth: 2, fill: tok("--surface"),
           symbol: "shape" }),
@@ -208,13 +209,15 @@
         Plot.cell(rows, { x: "c", y: "r", fill: "v", inset: 1, rx: 3 }),
         Plot.text(rows.filter((d) => d.v >= (o.labelMin ?? 0.05)), {
           x: "c", y: "r", text: (d) => o.fmt(d.v), fontSize: 11,
-          fill: (d) => d.v > 0.55 * (o.max ?? 1) ? "#ffffff" : tok("--ink") }),
+          fill: (d) => d.v > 0.55 * (o.max ?? 1) ? tok("--seq-1") :
+            tok("--ink") }),
         Plot.tip(rows, Plot.pointer({ x: "c", y: "r", title: "title" })),
       ],
     }));
   }
 
   const W = D.workloads;
+  const LADDER = ["--seq-4", "--seq-3", "--seq-2", "--bad"];
   const wlRows = W.map((w) => ({ id: w, label: LABEL[w] }));
   const wlLegend = (node) => legend(node, W.map((w) => ({
     label: LABEL[w], color: wl(w) })));
@@ -408,7 +411,7 @@
         rowsLabels: lab, colsLabels: lab, values: vals, marginLeft: 120,
         width: Math.max(280, (node.clientWidth || 900) / 3 - 14),
         max: Math.max(...vals.flat()), labelMin: 0.04,
-        xLabel: "Victim's workload →", yLabel: "Evicting workload",
+        xLabel: "Workload evicted →", yLabel: null,
         fmt: (v) => pct(v), title: (i, j) => lab[i] + " evicted " + lab[j] +
           ": " + pct(vals[i][j], 1) + " of all evictions",
       });
@@ -423,11 +426,11 @@
       rows: L.rows.map((r) => ({ id: r.id, label: LABEL[r.id] || r.label })),
       xDomain: [0, 1], xLabel: "Share of test requests →",
       segments: L.segments.map((s, i) => ({ id: s.id, label: s.label,
-        color: tok(["--seq-5", "--seq-4", "--seq-3", "--seq-2", "--rule"][i]) })),
+        color: tok(LADDER[i]) })),
       value: (rid, sid) => L.values[rid][sid],
     });
     legend(node, L.segments.map((s, i) => ({ label: s.label, kind: "rect",
-      color: tok(["--seq-5", "--seq-4", "--seq-3", "--seq-2", "--rule"][i]) })));
+      color: tok(LADDER[i]) })));
   };
 
   draw["fig-confusion"] = (node) => {
@@ -437,7 +440,7 @@
     cells(node, {
       rowsLabels: lab, colsLabels: C.predicted.map((w) => LABEL[w] || w),
       values: C.share, max: 1, labelMin: 0.03, fmt: (v) => pct(v),
-      xLabel: "Predicted workload →", yLabel: "True workload",
+      xLabel: "Predicted workload →", yLabel: null,
       title: (i, j) => lab[i] + " predicted as " + (LABEL[C.predicted[j]] ||
         C.predicted[j]) + ": " + pct(C.share[i][j], 1),
     });
@@ -512,11 +515,11 @@
       pct(D.headline[p][w].usable.mean, 1)), ...["lfu", "fifo"].map((p) => {
         const v = D.headline[p][w].vs_lru; return v ? (v.mean >= 0 ? "+" : "") +
           (100 * v.mean).toFixed(1) + " pts" : "–"; })])],
-    "fig-comeback": () => [["Workload", "15 s", "1 min", "5 min", "20 min",
+    "fig-comeback": () => [["Workload", "15 s", "1 min", "5 min", "10 min",
       "Interval p50", "Interval p90"], W.map((w) => {
         const g = D.comeBack.grid, s = D.comeBack.series[w];
         const at = (t) => pct(s[g.indexOf(t)], 0);
-        return [LABEL[w], at(15), at(60), at(300), at(1200),
+        return [LABEL[w], at(15), at(60), at(300), at(600),
           secs(D.intervals[w].p50), secs(D.intervals[w].p90)]; })],
     "fig-hitinterval": () => [["Workload", "Policy", ...D.hitByInterval.edges
       .slice(0, -1).map((e, i) => secs(e) + "–" + secs(D.hitByInterval.edges[i + 1]))],
@@ -541,6 +544,17 @@
     "fig-evictions": () => [["Evicting → victim", ...W.map((w) => LABEL[w])],
       ["lru", "lfu", "fifo"].flatMap((p) => W.map((w, i) =>
         [POLICY[p] + ": " + LABEL[w], ...D.evictions[p].counts[i].map(num)]))],
+    "fig-ladder": () => D.identify ? [["Workload", "First block",
+      "First two blocks", "Decision tree", "Wrong"], D.identify.ladder.rows
+      .map((r) => [LABEL[r.id] || r.label, ...["b1", "f2", "tree", "wrong"]
+        .map((k) => pct(D.identify.ladder.values[r.id][k], 1))])] : null,
+    "fig-confusion": () => D.identify ? [["True \\ predicted", ...W.map((w) =>
+      LABEL[w])], W.map((w, i) => [LABEL[w], ...D.identify.confusion.share[i]
+        .map((v) => pct(v, 1))])] : null,
+    "fig-signals": () => D.signals ? [["Signals", ...D.signals.horizons.map(
+      (h) => "AUC, back within " + secs(h))], D.signals.rows.map((r) =>
+      [r.label, ...D.signals.horizons.map((h) =>
+        D.signals.auc[r.id][String(h)].toFixed(3))])] : null,
     "fig-capacity": () => D.capacity ? [["Cache (tokens)", "Belady", "LRU",
       "LFU", "FIFO"], D.capacity.capacities.map((c, i) => [num(c),
       ...["belady", "lru", "lfu", "fifo"].map((p) =>

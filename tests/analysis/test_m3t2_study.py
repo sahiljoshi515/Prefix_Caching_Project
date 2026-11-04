@@ -200,3 +200,33 @@ def test_run_names_follow_the_grid():
         "balanced-human-s2-ceiling"
     assert st.run_name("balanced", "human", 2, "lru", 131072, 1) == \
         "balanced-human-s2-lru-cap131072-r1"
+
+
+def test_come_back_stops_where_few_stays_are_still_observed():
+    # 200 stays: 199 revived after 1 s, one censored at 50 s. At 50 s only
+    # 1 of 200 (0.5%) is still observed, below the 1% floor: no value.
+    rs = {
+        "owner_workload": arr(["chat"] * 200, OBJ),
+        "owner_planned_s": arr([20.0] * 200),
+        "end": arr(["revive"] * 199 + ["censored"], OBJ),
+        "idle_s": arr([1.0] * 199 + [50.0]),
+    }
+    out = st.come_back(rs, ["chat", "agent"], [1.0, 50.0], 10.0, 100.0)
+    assert out["chat"]["came_back"] == [pytest.approx(199 / 200), None]
+    # A workload with no stays is present, with no values.
+    assert out["agent"]["came_back"] == [None, None]
+
+
+def test_merge_seeds_gives_none_when_a_seed_lacks_a_value():
+    assert st.merge_seeds([{"q": {"p50": 1.0}}, {"q": None}]) == {"q": None}
+    assert st.merge_seeds([{"q": None}, {"q": {"p50": 1.0}}]) == {"q": None}
+    assert st.merge_seeds([{"n": 2.0}, {"n": None}]) == {"n": None}
+
+
+def test_usable_counts_only_completed_requests():
+    req = requests()
+    req["status"] = arr(["completed", "failed", "completed", "completed"], OBJ)
+    out = st.usable_by_workload(req, W, 10.0, 100.0, 16)
+    # The failed request (c:1:1) is left out: chat is 0 of 40 tokens.
+    assert out["chat"]["fraction"] == 0.0
+    assert out["chat"]["requests"] == 1

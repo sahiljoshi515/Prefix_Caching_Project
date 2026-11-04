@@ -112,8 +112,14 @@ def build_data(s: Row) -> Row:
             f"{int(a)}–{int(b) - 1}" if b - a > 1 else f"{int(a)}"
             for a, b in zip(edges[:-1], edges[1:])
         ],
-        "ceiling": {w: pos[w]["ceiling_share"]
-                    for w in W},
+        # A bin with few blocks is noise; leave it out of the lines.
+        "ceiling": {
+            w: [
+                v if n >= 300 else None
+                for v, n in zip(pos[w]["ceiling_share"], pos[w]["blocks"])
+            ]
+            for w in W
+        },
     }
     density = {
         p: {

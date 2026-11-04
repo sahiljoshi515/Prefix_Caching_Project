@@ -109,6 +109,10 @@ def usable_by_workload(req: Columns, workloads: Sequence[str], w0: float,
     """004's usable reused fraction per workload, token-weighted overall,
     and the macro mean (each workload counts once)."""
     m = window(req["planned_s"], w0, stop)
+    if "status" in req:
+        # A request that did not complete has no usable prefix to measure;
+        # every Phase 1 run completes all of them (`integrity`).
+        m = m & (req["status"] == "completed")
     usable = np.minimum(req["prompt_tokens"].astype(np.int64),
                         block_size * req["usable_hits"].astype(np.int64))
     out: Row = {}
@@ -282,11 +286,20 @@ def residency_window(rs: Columns, w0: float, stop: float) -> np.ndarray:
     return window(rs["owner_planned_s"], w0, stop)
 
 
+MIN_AT_RISK = 0.01
+
+
 def come_back(rs: Columns, workloads: Sequence[str], grid: Sequence[float],
               w0: float, stop: float) -> Row:
     """Ceiling run: per workload, the Kaplan-Meier share of freed blocks
     looked up again within each idle age of `grid` (a never-evicting cache:
-    every stay ends with its revive or the end of the run)."""
+    every stay ends with its revive or the end of the run).
+
+    A stay can only be followed until the run ends, so at long ages few
+    stays are still observed; the curve is None where fewer than
+    MIN_AT_RISK of a workload's stays lasted that long without a reuse or
+    the end of the log (the estimate there would only repeat its last
+    value)."""
     m = residency_window(rs, w0, stop)
     out: Row = {"grid": list(grid)}
     for w in workloads:
@@ -294,13 +307,24 @@ def come_back(rs: Columns, workloads: Sequence[str], grid: Sequence[float],
         d = rs["idle_s"][k]
         e = rs["end"][k] == "revive"
         if not len(d):
+            out[w] = {
+                "stays": 0,
+                "came_back": [None] * len(grid),
+                "revived_share": None
+            }
             continue
         times, surv = survival.kaplan_meier(d, e)
+        values = survival.survival_at(times, surv, grid)
+        at_risk = [float(np.mean(d >= t)) for t in grid]
         out[w] = {
             "stays":
             int(len(d)),
-            "came_back":
-            [float(1 - s) for s in survival.survival_at(times, surv, grid)],
+            "came_back": [
+                float(1 - v) if r >= MIN_AT_RISK else None
+                for v, r in zip(values, at_risk)
+            ],
+            "at_risk":
+            at_risk,
             "revived_share":
             float(e.mean()),
         }
@@ -560,12 +584,21 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
     come_backs: List[Row] = []
     distances: Dict[str, List[np.ndarray]] = defaultdict(list)
     example: Row = {}
+    integrity: Row = {}
     for seed in seeds:
         cdir = runs / run_name(mix, pacing, seed, "ceiling", cap)
         creq = load_requests(cdir)
         clk = read(cdir, "lookups", LOOKUP_COLUMNS)
         crs = read(cdir, "residencies", RESIDENCY_COLUMNS)
         headline["ceiling"][seed] = usable_by_workload(creq, wl, w0, stop, bs)
+        # Every policy must replay the same lookups, and the ceiling must
+        # never evict.
+        integrity[str(seed)] = {
+            "ceiling_lookups": int(len(clk["req"])),
+            "ceiling_evictions": int((crs["end"] == "evict").sum()),
+            "ceiling_not_completed": int(
+                (creq["status"] != "completed").sum()),
+        }
         for key, vals in intervals(clk, w0, stop).items():
             interval_pool[key].append(vals)
         sources.append(source_shares(clk, wl, w0, stop))
@@ -589,6 +622,10 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
             position_inputs[policy].append(
                 np.array([pus.get(x, 0) for x in creq["req"][mwin]]))
             q1_hits[policy].append(r["hit_by_interval"])
+            integrity[str(seed)][f"{policy}_lookups"] = int(
+                len(r["_lk"]["req"]))
+            integrity[str(seed)][f"{policy}_not_completed"] = int(
+                (r["_req"]["status"] != "completed").sum())
             if seed == seeds[0]:
                 if policy == policies[0]:
                     pick = pick_example(creq, pus, "sharegpt", w0, stop)
@@ -624,6 +661,7 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
     summary["headline"] = headline_summary(headline, wl, policies, seeds)
     summary["lost"] = lost
     summary["example"] = example
+    summary["integrity"] = integrity
     summary["q1"] = {
         "intervals": {
             w: {
@@ -685,10 +723,15 @@ def merge_seeds(rows: Sequence[Row]) -> Row:
     numbers are averaged elementwise, other values come from seed 1."""
     if not rows:
         return {}
+    if any(r is None for r in rows):
+        # A value missing in any seed has no seed mean.
+        return None
     first = rows[0]
     if isinstance(first, dict):
+        if not all(isinstance(r, dict) for r in rows):
+            return None
         keys = first.keys()
-        return {k: merge_seeds([r[k] for r in rows if k in r]) for k in keys}
+        return {k: merge_seeds([r.get(k) for r in rows]) for k in keys}
     if isinstance(first, list):
         if all(isinstance(r, list) and len(r) == len(first) for r in rows):
             if all(x is None or isinstance(x, (int, float)) for r in rows
@@ -867,7 +910,7 @@ def sim_summary(path: Path, cfg: Row) -> Row:
                 is_ceiling = str(r.get("capacity")) == "ceiling"
                 if (policy == "ceiling") != is_ceiling:
                     continue
-                if policy != "ceiling" and r["policy"] != policy:
+                if r["policy"] != ("lru" if policy == "ceiling" else policy):
                     continue
                 key = "ceiling" if is_ceiling else str(r["capacity_tokens"])
                 s = r["summary"]

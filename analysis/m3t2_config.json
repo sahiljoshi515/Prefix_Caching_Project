@@ -41,8 +41,8 @@
   "workload_labels": {
     "sharegpt": "ShareGPT chat",
     "bailian-chat": "Bailian chat",
-    "agentbank": "AgentBank agents",
-    "ccbench": "CC-Bench coding agent",
+    "agentbank": "AgentBank",
+    "ccbench": "CC-Bench",
     "bailian-thinking": "Bailian thinking",
     "bailian-coder": "Bailian coder",
     "bailian-api": "Bailian API"
