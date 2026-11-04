@@ -112,6 +112,27 @@ def test_a_prompt_that_does_not_fit_waits_for_a_free():
     assert summary["requests"] == 2
 
 
+def test_output_appended_at_the_free_is_its_requests_decode(tmp_path):
+    """Three blocks. R2's prompt fills a block and its two output tokens
+    fill no decode block, so they are appended when R2 is freed. That needs
+    a new block, and the only one left is R1's cached [1-4]: its eviction is
+    R2's append_slots, although R3 allocated in between."""
+    log = tmp_path / "events.jsonl"
+    sim = CacheSim(3, BS, "lru", event_log=log)
+    requests = [
+        req("w:r1:0", range(1, 5)),
+        req("w:r2:0", range(11, 15), output=[21, 22]),
+        req("w:r3:0", range(31, 35)),
+    ]
+    times = {"w:r1:0": (0.0, 0.1), "w:r2:0": (1.0, 1.5), "w:r3:0": (1.2, 2.0)}
+    sim.run(requests, {r: Timing(s, f, la=f) for r, (s, f) in times.items()})
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    evicts = [(e["hash"], e["req"], e["op"], e["t"]) for e in events
+              if e["ev"] == "evict"]
+    r1_block = sim._hashes(list(range(1, 5)))[0]
+    assert evicts == [(r1_block, "cmpl-w:r2:0-0", "append_slots", 1.5)]
+
+
 def test_engine_timing_reads_starts_frees_and_last_access(tmp_path):
     events = [
         {

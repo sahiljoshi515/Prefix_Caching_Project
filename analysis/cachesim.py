@@ -31,24 +31,51 @@ Not modelled: the scheduler's batching and its free-block watermark, and
 preemption (a decode block that finds no free block is counted and the
 request stops growing). A request whose prompt does not fit waits until a
 block is freed, like ``AllocStatus.LATER``; such waits are counted.
+
+The policy is one of vLLM's (``lru``, ``lfu``, ``fifo``, set through
+``VLLM_EVICTION_POLICY``) or ``belady``, the offline optimum of
+``analysis/oracle.py``, which reads every future prompt lookup. Belady
+bounds what any policy could reuse at a capacity. It is a reference that
+only the simulator can run, never a vLLM policy, and its summary says so
+(``offline_oracle``).
 """
 import argparse
 import contextlib
 import gzip
 import heapq
 import json
+import logging
 import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
 
 from client_simulator.plan_replay import group_sessions
 from client_simulator.schema import TokenRequest
 from client_simulator.token_plan import read_plan
 
+if TYPE_CHECKING:
+    from analysis.oracle import BeladyEvictor
+
 # The engine's request id for a completions request (`analysis/events.py`).
 ENGINE_ID = "cmpl-{}-0"
+
+# The offline optimum (`analysis/oracle.py`); not a vLLM policy.
+BELADY = "belady"
+
+
+def block_hashes(tokens: List[int], block_size: int) -> List[int]:
+    """The content hash of each full block of `tokens`, chained as vLLM's
+    prefix-caching allocator chains them (no extra hash)."""
+    from vllm.core.block.prefix_caching_block import PrefixCachingBlock
+    out: List[int] = []
+    prev = None
+    for i in range(len(tokens) // block_size):
+        prev = PrefixCachingBlock.hash_block_tokens(
+            i == 0, prev, tokens[i * block_size:(i + 1) * block_size])
+        out.append(prev)
+    return out
 
 
 @dataclass
@@ -188,6 +215,18 @@ def _env(values: Dict[str, Optional[str]]):
                 os.environ[k] = v
 
 
+@contextlib.contextmanager
+def _quiet(logger_name: str):
+    """Hide a logger's info lines while the block runs."""
+    logger = logging.getLogger(logger_name)
+    level = logger.level
+    logger.setLevel(logging.WARNING)
+    try:
+        yield
+    finally:
+        logger.setLevel(level)
+
+
 class CacheSim:
     """One replay of one plan at one configuration."""
 
@@ -204,17 +243,28 @@ class CacheSim:
         self.block_size = block_size
         self.clock = _SimClock()
         self._cache_events = cache_events
+        # Belady is not a vLLM policy: the allocator is built with LRU (not
+        # logged, as it is not the policy) and the oracle's evictor replaces
+        # LRU's before anything is cached. `run` hands it the lookups.
+        belady = policy.strip().lower() == BELADY
         settings: Dict[str, Optional[str]] = {
-            "VLLM_EVICTION_POLICY": policy,
+            "VLLM_EVICTION_POLICY": "lru" if belady else policy,
             "VLLM_CACHE_EVENT_LOG": str(event_log) if event_log else None,
             **(env or {}),
         }
-        with _env(settings), self._sim_time():
+        quiet = (_quiet("vllm.core.eviction_policies")
+                 if belady else contextlib.nullcontext())
+        with _env(settings), self._sim_time(), quiet:
             self.alloc = CpuGpuBlockAllocator.create("prefix_caching",
                                                      num_gpu_blocks=num_blocks,
                                                      num_cpu_blocks=0,
                                                      block_size=block_size)
         self.gpu = self.alloc._allocators[Device.GPU]
+        self.belady: Optional[BeladyEvictor] = None
+        if belady:
+            from analysis import oracle
+            self.belady = oracle.BeladyEvictor()
+            self.gpu.evictor = self.belady
         self.recorder = self.gpu._events
         self.counts: Counter = Counter()
         self._hits = 0
@@ -247,15 +297,7 @@ class CacheSim:
             ENGINE_ID.format(request.request_id), op)
 
     def _hashes(self, tokens: List[int]) -> List[int]:
-        from vllm.core.block.prefix_caching_block import PrefixCachingBlock
-        out: List[int] = []
-        prev = None
-        for i in range(len(tokens) // self.block_size):
-            prev = PrefixCachingBlock.hash_block_tokens(
-                i == 0, prev,
-                tokens[i * self.block_size:(i + 1) * self.block_size])
-            out.append(prev)
-        return out
+        return block_hashes(tokens, self.block_size)
 
     def _decode_chunks(self, request: TokenRequest) -> List[int]:
         """Output tokens appended at each decode-block fill: the first chunk
@@ -294,6 +336,14 @@ class CacheSim:
         waiting: List[str] = []  # prompts that did not fit, in order
         rows: List[Dict[str, Any]] = []
         per: Dict[str, Counter] = defaultdict(Counter)
+        lookups = None
+        if self.belady is not None:
+            # Read before `schedule_decodes` shifts the times of a request
+            # that waited (the oracle keys on allocation order, which waits
+            # do not change).
+            from analysis.oracle import future_lookups
+            lookups = future_lookups(requests, timing, self.block_size)
+            self.belady.lookups = lookups
 
         def schedule_decodes(rid: str, start: float) -> None:
             """Queue a request's decode fills and free. A request that waited
@@ -342,6 +392,8 @@ class CacheSim:
             self._attribute(r, "allocate")
             hits_before = self._hits
             table.allocate(r.prompt_token_ids, device=Device.GPU)
+            if lookups is not None:
+                lookups.allocated(rid)  # raises if out of the oracle's order
             self.alloc.mark_blocks_as_computed([])
             hits = self._hits - hits_before
             workload = r.workload
@@ -404,6 +456,10 @@ class CacheSim:
                 if state.appended >= 0:
                     rest = r.output_token_ids[state.appended:]
                     if rest:
+                        # Output that fills no block is still this request's
+                        # decode: name it, or a new block's eviction would be
+                        # logged under whichever request ran last.
+                        self._attribute(r, "append_slots")
                         try:
                             state.table.append_token_ids(rest)
                         except BlockAllocator.NoFreeBlocksError:
@@ -443,6 +499,10 @@ class CacheSim:
             "hit_rate_metric":
             self.gpu.get_prefix_cache_hit_rate(),
             **dict(self.counts),
+            # Belady reads the future: a bound, not a deployable policy.
+            **({
+                "offline_oracle": True
+            } if self.belady is not None else {}),
             "workloads": {w: fractions(c)
                           for w, c in sorted(per.items())},
         }
@@ -499,7 +559,10 @@ def main(argv=None) -> None:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--plan", type=Path, required=True)
-    parser.add_argument("--policy", default="lru")
+    parser.add_argument("--policy",
+                        default="lru",
+                        help="lru, lfu or fifo (vLLM's evictors), or belady "
+                        "(the offline optimum; simulator only)")
     parser.add_argument("--capacity", type=int, required=True)
     parser.add_argument("--block-size", type=int, default=16)
     parser.add_argument("--timing",
