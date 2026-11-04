@@ -19,6 +19,10 @@ class Event(NamedTuple):
     block: Optional[int]
     req: Optional[str]
     op: Optional[str]
+    # A free's last access as the evictor sees it, in WALL time
+    # (`time.time()`: ``la - header["time"] + header["t"]`` is on the log's
+    # clock). None for other events and for logs from before spec 007.
+    la: Optional[float] = None
 
 
 class EventLog(NamedTuple):
@@ -61,7 +65,7 @@ def load_events(path: PathLike) -> EventLog:
         else:
             events.append(
                 Event(row["t"], kind, row["hash"], row["block"], row["req"],
-                      row["op"]))
+                      row["op"], row.get("la")))
     return EventLog(header, events, complete)
 
 

@@ -105,10 +105,17 @@ def test_evictions_count_against_the_blocks_last_holder():
 def test_access_gaps_since_the_previous_access():
     p = ch.reuse_profile(LOG)
     # Block 1: inserted 0, hit 3 (wb, 3 s), hit 5 (wa, 2 s); block 2:
-    # 0 -> 5; block 3: 1 -> 5. Block 9's eviction forgets its last access.
+    # 0 -> 5; block 3: 1 -> 5.
     assert p["wa"]["access_gap_s"]["n"] == 3
     assert p["wa"]["access_gap_s"]["mean"] == pytest.approx(11 / 3)
-    assert p["wb"]["access_gap_s"]["mean"] == 3
+
+
+def test_access_gaps_span_an_eviction():
+    # Regression: block 9 is inserted by B0 at 3, evicted at 6 and inserted
+    # again by B1 at 9, a 6 s gap (004's interval). The gap used to be lost
+    # with the eviction, leaving wb only block 1's 3 s.
+    gaps = ch.reuse_profile(LOG)["wb"]["access_gap_s"]
+    assert (gaps["n"], gaps["mean"], gaps["p99"]) == (2, 4.5, 6)
 
 
 def test_blocks_per_workload_and_their_hits():
@@ -135,6 +142,20 @@ def test_prefix_families_and_their_purity():
     two = ch.family_purity(families["2"])
     assert (two["families"], two["purity"],
             two["singleton_families"]) == (3, 1.0, 1)
+
+
+def test_family_purity_without_singletons():
+    # Depth 1: family 1 holds wa:s1:0, wa:s1:1 and wb:s2:0 (majority wa);
+    # families 5 (C0) and 9 (B1) have one request each.
+    one = ch.family_purity(ch.prefix_families(LOG, depths=(1, ))["1"])
+    assert one["singleton_families"] == 2
+    assert one["singleton_family_share"] == pytest.approx(2 / 3)
+    assert one["singleton_request_share"] == pytest.approx(2 / 5)
+    assert one["purity_without_singletons"] == pytest.approx(2 / 3)
+    # Only singletons: nothing is left to score.
+    alone = ch.family_purity({"wa:x:0": 1, "wb:y:0": 2})
+    assert (alone["purity"], alone["purity_without_singletons"]) == (1.0, None)
+    assert alone["singleton_family_share"] == 1.0
 
 
 def test_family_classifier_learned_on_one_run_scored_on_another():

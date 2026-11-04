@@ -7,8 +7,8 @@ client simulator's result rows. No vLLM import.
 import bisect
 import math
 from collections import Counter, defaultdict
-from typing import (Any, Dict, Iterable, List, Optional, Sequence, Tuple,
-                    TypeVar)
+from typing import (Any, Dict, Iterable, List, NamedTuple, Optional, Sequence,
+                    Tuple, TypeVar)
 
 from analysis.events import Event, client_request_id, parse_request_id
 
@@ -122,35 +122,149 @@ def request_starts(events: Iterable[Event]) -> Dict[str, float]:
     return starts
 
 
-def reuse_intervals(events: Sequence[Event]) -> List[Row]:
+class Access(NamedTuple):
+    """One access of a hash (``004``): an ``insert`` or a ``hit``."""
+    t: float
+    req: Optional[str]  # engine request id, as in the log
+    kind: str
+
+
+class AccessHistory:
+    """The previous access of every hash, fed the log's events in order.
+
+    The one implementation of ``004``'s reuse interval: `reuse_intervals`
+    and ``analysis/tables.py`` both read it. It also keeps each request's
+    start (its first ``allocate`` event, as `request_starts`) for
+    `requests_between`.
+    """
+
+    def __init__(self) -> None:
+        self.last: Dict[int, Access] = {}
+        self.starts: Dict[str, float] = {}
+        self._start_times: List[float] = []
+
+    def step(self, t: float, kind: str, content_hash: int, req: Optional[str],
+             op: Optional[str]) -> Optional[Access]:
+        """Record one event; return the previous access of its hash, or
+        None for the first. An insert or hit becomes the hash's last
+        access."""
+        if op == "allocate" and req is not None and req not in self.starts:
+            self.starts[req] = t
+            bisect.insort(self._start_times, t)
+        previous = self.last.get(content_hash)
+        if kind in ACCESSES:
+            self.last[content_hash] = Access(t, req, kind)
+        return previous
+
+    def requests_between(self, previous: Access, t: float,
+                         req: Optional[str]) -> int:
+        """Requests other than `req` that started strictly between
+        `previous` and `t`: a rate-independent distance."""
+        times = self._start_times
+        between = (bisect.bisect_left(times, t) -
+                   bisect.bisect_right(times, previous.t))
+        start = self.starts.get(req) if req is not None else None
+        if start is not None and previous.t < start < t:
+            between -= 1
+        return between
+
+
+def reuse_intervals(events: Iterable[Event]) -> List[Row]:
     """Gaps between consecutive accesses (insert or hit) of each hash.
 
     ``requests_between`` counts the other requests whose first allocate
-    event falls strictly inside the gap: a rate-independent distance.
+    event falls strictly inside the gap: a rate-independent distance. Each
+    row also names both accesses: ``t``/``req`` and ``prev_t``/``prev_req``
+    /``prev_kind`` (engine request ids, as in the log).
     """
-    starts = request_starts(events)
-    start_times = sorted(starts.values())
-    last: Dict[int, Event] = {}
+    history = AccessHistory()
     rows: List[Row] = []
     for e in events:
-        if e.ev not in ACCESSES:
+        previous = history.step(e.t, e.ev, e.hash, e.req, e.op)
+        if previous is None or e.ev not in ACCESSES:
             continue
-        previous = last.get(e.hash)
-        last[e.hash] = e
-        if previous is None:
-            continue
-        lo = bisect.bisect_right(start_times, previous.t)
-        hi = bisect.bisect_left(start_times, e.t)
-        between = hi - lo
-        if e.req in starts and previous.t < starts[e.req] < e.t:
-            between -= 1
+        between = history.requests_between(previous, e.t, e.req)
         rows.append({
             "hash": e.hash,
             "interval_s": e.t - previous.t,
             "requests_between": between,
             "kind": e.ev,
+            "t": e.t,
+            "prev_t": previous.t,
+            "req": e.req,
+            "prev_req": previous.req,
+            "prev_kind": previous.kind,
         })
     return rows
+
+
+class Lookup(NamedTuple):
+    """Where one lookup falls in its request's prefills."""
+    prefill: int  # 0 for the first prefill, k for the k-th re-prefill
+    index: int  # the block's place in the prefill's chain (0 = first)
+    usable: bool  # a hit with no miss earlier in this prefill
+
+
+class _Prefill:
+    __slots__ = ("number", "lookups", "missed", "first_hash", "open")
+
+    def __init__(self, number: int, is_open: bool) -> None:
+        self.number = number
+        self.lookups = 0
+        self.missed = False
+        self.first_hash: Optional[int] = None
+        self.open = is_open
+
+
+class Prefills:
+    """Each request's prefills, fed the log's events in order.
+
+    A prefill is a run of a request's ``allocate`` events. The next run, a
+    re-prefill after a preemption, starts after any event of another op or
+    when the request looks up its prefill's first block again (a
+    preemption that frees only blocks other requests still hold logs
+    nothing). The one implementation of ``004``'s usable prefix:
+    `prefix_hits` and ``analysis/tables.py`` both read it.
+    """
+
+    def __init__(self) -> None:
+        self._current: Dict[str, _Prefill] = {}
+
+    def count(self, req: str) -> int:
+        """Prefills of `req` so far; a request whose first event is not an
+        ``allocate`` one had a first prefill without events."""
+        prefill = self._current.get(req)
+        return prefill.number + 1 if prefill is not None else 0
+
+    def step(self, kind: str, content_hash: int, req: Optional[str],
+             op: Optional[str]) -> Optional[Lookup]:
+        """Record one event; for a lookup (hit or miss) during
+        ``allocate``, say where it falls."""
+        if req is None:
+            return None
+        prefill = self._current.get(req)
+        if op != "allocate":
+            if prefill is None:
+                self._current[req] = _Prefill(0, is_open=False)
+            else:
+                prefill.open = False
+            return None
+        if prefill is None:
+            prefill = self._current[req] = _Prefill(0, is_open=True)
+        elif not prefill.open:
+            prefill = self._current[req] = _Prefill(prefill.number + 1, True)
+        if kind not in LOOKUPS:
+            return None
+        if prefill.lookups and content_hash == prefill.first_hash:
+            prefill = self._current[req] = _Prefill(prefill.number + 1, True)
+        index = prefill.lookups
+        prefill.lookups += 1
+        if not index:
+            prefill.first_hash = content_hash
+        if kind == "miss":
+            prefill.missed = True
+        return Lookup(prefill.number, index, kind == "hit"
+                      and not prefill.missed)
 
 
 def prefix_hits(events: Iterable[Event]) -> Dict[str, Row]:
@@ -158,31 +272,25 @@ def prefix_hits(events: Iterable[Event]) -> Dict[str, Row]:
     the first miss (``prefix_hits``) and hits after it
     (``hits_after_miss``).
 
-    The first prefill is the request's `allocate` events up to its first
-    event of another op; a re-prefill after preemption is not counted.
-    Only the prefix can be skipped: the scheduler computes everything from
-    the first uncached block on, so hits behind a miss save no compute.
+    The first prefill is the request's first run of `allocate` events
+    (`Prefills`); a re-prefill after preemption is not counted. Only the
+    prefix can be skipped: the scheduler computes everything from the
+    first uncached block on, so hits behind a miss save no compute.
     """
+    prefills = Prefills()
     counts: Dict[str, Row] = {}
-    missed, closed = set(), set()
     for e in events:
-        if e.req is None or e.req in closed:
-            continue
-        if e.op != "allocate":
-            closed.add(e.req)
-            continue
-        if e.ev not in LOOKUPS:
+        lookup = prefills.step(e.ev, e.hash, e.req, e.op)
+        if lookup is None or lookup.prefill:
             continue
         row = counts.setdefault(client_request_id(e.req), {
             "prefix_hits": 0,
             "hits_after_miss": 0
         })
-        if e.ev == "miss":
-            missed.add(e.req)
-        elif e.req in missed:
-            row["hits_after_miss"] += 1
-        else:
+        if lookup.usable:
             row["prefix_hits"] += 1
+        elif e.ev == "hit":
+            row["hits_after_miss"] += 1
     return counts
 
 

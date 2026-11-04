@@ -8,9 +8,9 @@ cache event log (engine or ``analysis/cachesim.py``) and client results::
 - **Reuse interval**: for every revive (a freed block read again), the time
   it spent in the free pool and the number of requests started meanwhile;
   for every access after the first, the gap since the block's previous
-  access (``004``'s reuse interval). A free block that waits longer than the
-  policy keeps it is lost, so the free-pool time is what an eviction policy
-  has to cover.
+  access (``004``'s reuse interval, `metrics.reuse_intervals`; it spans
+  evictions). A free block that waits longer than the policy keeps it is
+  lost, so the free-pool time is what an eviction policy has to cover.
 - **Reuse portion**: usable reused fraction (``004``), hits per block,
   share of blocks ever hit, and how many hits fall on blocks written while
   decoding.
@@ -24,7 +24,9 @@ cache event log (engine or ``analysis/cachesim.py``) and client results::
   fewer). vLLM's hashes are chained, so equal hashes mean equal ``k``-block
   prefixes: the family is a fingerprint of the template, system prompt or
   task a server can compute without any label. Purity is the share of
-  requests whose family's majority workload is their own.
+  requests whose family's majority workload is their own; a family seen in
+  one request only is trivially pure, so purity is also given without
+  those singletons.
 
 A block's workload is that of the request that inserted it, updated to
 the request that last freed it. Every request id carries its workload as
@@ -69,15 +71,11 @@ def _session(req: str) -> str:
 
 def reuse_profile(events: Iterable[ev.Event]) -> Dict[str, Any]:
     """Free-pool times, access gaps, hit sources and eviction costs per
-    workload, in one pass over the log."""
+    workload. An access gap is ``004``'s reuse interval
+    (`metrics.reuse_intervals`), counted for the accessing request's
+    workload."""
     events = list(events)
-    starts: List[float] = []  # first allocate event of each request
-    seen_req = set()
-    for e in events:
-        if e.op == "allocate" and e.req is not None and e.req not in seen_req:
-            seen_req.add(e.req)
-            starts.append(e.t)
-    starts.sort()
+    starts = sorted(m.request_starts(events).values())
 
     def started_between(a: float, b: float) -> int:
         return bisect.bisect_left(starts, b) - bisect.bisect_right(starts, a)
@@ -86,13 +84,15 @@ def reuse_profile(events: Iterable[ev.Event]) -> Dict[str, Any]:
     inserted_by: Dict[int, str] = {}
     decode_block: Dict[int, bool] = {}
     freed_at: Dict[int, float] = {}
-    last_access: Dict[int, float] = {}
     evicted: set = set()
     hits_per_block: Dict[int, int] = Counter()
     block_workload: Dict[int, str] = {}
     pool_s: Dict[str, List[float]] = defaultdict(list)
     pool_requests: Dict[str, List[int]] = defaultdict(list)
     gap_s: Dict[str, List[float]] = defaultdict(list)
+    for row in m.reuse_intervals(events):
+        if row["req"] is not None:
+            gap_s[ev.workload_of(row["req"])].append(row["interval_s"])
     counts: Dict[str, Counter] = defaultdict(Counter)
     for e in events:
         w = ev.workload_of(e.req) if e.req is not None else None
@@ -105,9 +105,6 @@ def reuse_profile(events: Iterable[ev.Event]) -> Dict[str, Any]:
             counts[w]["inserts"] += 1
             counts[w][
                 "decode_inserts" if decode_block[h] else "prompt_inserts"] += 1
-            if h in last_access:
-                gap_s[w].append(e.t - last_access[h])
-            last_access[h] = e.t
         elif e.ev == "hit":
             counts[w]["hits"] += 1
             hits_per_block[h] += 1
@@ -123,9 +120,6 @@ def reuse_profile(events: Iterable[ev.Event]) -> Dict[str, Any]:
                 counts[w]["hits_same_session"] += 1
             else:
                 counts[w]["hits_other_session"] += 1
-            if h in last_access:
-                gap_s[w].append(e.t - last_access[h])
-            last_access[h] = e.t
         elif e.ev == "miss":
             counts[w]["misses"] += 1
             if h in evicted:
@@ -147,7 +141,7 @@ def reuse_profile(events: Iterable[ev.Event]) -> Dict[str, Any]:
             if h in freed_at:
                 pool_s[ow + "#evicted"].append(e.t - freed_at.pop(h))
             evicted.add(h)
-            for table in (holder, inserted_by, decode_block, last_access):
+            for table in (holder, inserted_by, decode_block):
                 table.pop(h, None)
         elif e.ev == "dedupe":
             counts[w]["dedupes"] += 1
@@ -252,16 +246,13 @@ def usable_by_workload(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
 def prefix_families(events: Iterable[ev.Event],
                     depths: Sequence[int] = FAMILY_DEPTHS) -> Dict[str, Any]:
     """Each request's family at each depth: the hash of its k-th prompt
-    block (its last if it has fewer), from its first-prefill lookups."""
+    block (its last if it has fewer), from its first-prefill lookups
+    (`metrics.Prefills`)."""
     lookups: Dict[str, List[int]] = defaultdict(list)
-    closed = set()
+    prefills = m.Prefills()
     for e in events:
-        if e.req is None or e.req in closed:
-            continue
-        if e.op != "allocate":
-            closed.add(e.req)
-            continue
-        if e.ev in ("hit", "miss"):
+        lookup = prefills.step(e.ev, e.hash, e.req, e.op)
+        if lookup is not None and lookup.prefill == 0:
             lookups[e.req].append(e.hash)
     out: Dict[str, Any] = {}
     for k in depths:
@@ -274,7 +265,13 @@ def prefix_families(events: Iterable[ev.Event],
 
 
 def family_purity(families: Dict[str, int]) -> Dict[str, Any]:
-    """How well a family names its workload within one run."""
+    """How well a family names its workload within one run.
+
+    A family seen in one request only (a singleton) is pure by
+    construction, and a classifier trained on another run has not seen it,
+    so purity is also given over the other families' requests, with the
+    singletons' number and share of families and of requests.
+    """
     by_family: Dict[int, Counter] = defaultdict(Counter)
     for rid, family in families.items():
         by_family[family][ev.workload_of(rid)] += 1
@@ -282,12 +279,22 @@ def family_purity(families: Dict[str, int]) -> Dict[str, Any]:
     correct = sum(c[majority[f]] for f, c in by_family.items())
     total = sum(sum(c.values()) for c in by_family.values())
     singletons = sum(1 for c in by_family.values() if sum(c.values()) == 1)
+    shared = total - singletons  # requests in families of two or more
+    # Every singleton's request counts as correct in `purity`.
+    without = (correct - singletons) / shared if shared else None
     return {
         "requests": total,
         "families": len(by_family),
         "singleton_families": singletons,
-        "purity": correct / total if total else None,
+        "singleton_family_share": _share(singletons, len(by_family)),
+        "singleton_request_share": _share(singletons, total),
+        "purity": _share(correct, total),
+        "purity_without_singletons": without,
     }
+
+
+def _share(part: int, whole: int) -> Optional[float]:
+    return part / whole if whole else None
 
 
 def family_classifier(train: Dict[str, int]) -> Dict[int, str]:
