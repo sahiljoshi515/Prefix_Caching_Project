@@ -11,10 +11,11 @@ simulator (spec 007).
     #    Two laptops: add --shard 1/2 on one and --shard 2/2 on the other
     #    (to both commands); each plan's runs stay on one machine.
     # Sweep the fast cache simulator (a design tool; reported numbers come
-    # from the grid):
+    # from the grid), timed by each plan's own no-eviction engine run:
     python -m analysis.run_m3_task2 sim \\
         --plans data/processed/m3/balanced-human-s1 \\
-        --policies lru lfu fifo --capacities 65536 131072 ceiling \\
+        --policies lru lfu fifo --capacities 65536 131072 \\
+        --timing 'engine:results/m3-task2/{plan}-ceiling' \\
         --out results/m3-sim/train.jsonl
     # Replay one plan once:
     python -m analysis.run_m3_task2 replay \\
@@ -33,8 +34,13 @@ A grid run is named ``<mix>-<pacing>-s<seed>-<policy>-cap<tokens>``, or
 ``<mix>-<pacing>-s<seed>-ceiling``, plus ``-r<n>`` for a replicate, and
 lives in that folder under ``--out``. The grid:
 
-- skips runs whose ``run.json`` has ``finished_at_utc``, and deletes and
-  replays the folder of a run that was interrupted;
+- skips runs whose ``run.json`` has ``finished_at_utc``, once it has
+  checked that each holds the configuration its name says (`run_config`;
+  runs made with ``replay`` qualify) and that a ceiling never evicted;
+- deletes and replays an unfinished run's folder once it has stopped: the
+  previous grid saw it fail, or nothing in it changed for ``QUIET_S``. If
+  one changed more recently, something may still be replaying it (another
+  checkout's ``replay``), and the grid refuses to start;
 - refuses to start on a dirty working tree (``--allow-dirty`` overrides),
   since each run records the commit it ran;
 - gives each of its ``--jobs`` workers its own port (``--base-port`` + i);
@@ -42,7 +48,8 @@ lives in that folder under ``--out``. The grid:
   stop (``plan_replay --stop-at``), a guard against a replay that falls far
   behind;
 - replays each ceiling on a cache of ``CEILING_MARGIN`` times the distinct
-  full blocks its plan can ever cache, and fails a ceiling run that evicted;
+  full blocks its plan can ever cache (or ``--ceiling-capacity``, if that is
+  enough), and fails a ceiling run that evicted;
 - keeps a Mac awake while it runs, and writes each run's status to
   ``<out>/grid.json``.
 
@@ -76,6 +83,7 @@ from typing import (IO, Any, Callable, Dict, Iterator, List, Optional,
                     Sequence, Set, Tuple, Union)
 
 from analysis import events as ev
+from analysis.cachesim import block_hashes  # noqa: F401 (re-exported)
 from analysis.run_m2_task2 import git_state
 from analysis.server import SimulatorServer, port_in_use
 from analysis.sweep import is_finished
@@ -432,23 +440,6 @@ def read_plan_manifest(path: Path) -> Dict[str, Any]:
 # --- The no-eviction ceiling -----------------------------------------------
 
 
-def block_hashes(token_ids: Sequence[int], block_size: int) -> List[int]:
-    """The content hashes of the full blocks of `token_ids`.
-
-    Chained exactly as vLLM v0's prefix cache computes them
-    (``PrefixCachingBlock.hash_block_tokens`` with no extra hash), so two
-    blocks have the same hash when vLLM would share them. Not imported from
-    vLLM, so the grid runs without loading it.
-    """
-    hashes: List[int] = []
-    prev: Optional[int] = None
-    for start in range(0, len(token_ids) - block_size + 1, block_size):
-        prev = hash(
-            (prev is None, prev, *token_ids[start:start + block_size], None))
-        hashes.append(prev)
-    return hashes
-
-
 def distinct_full_blocks(plan_dir: Path, block_size: int = 16) -> int:
     """How many distinct full blocks the plan's requests can ever cache.
 
@@ -501,17 +492,21 @@ def count_evictions(log: Path) -> Tuple[int, bool]:
     return evictions, complete
 
 
-def check_ceiling(run_dir: Path) -> None:
+def check_ceiling(run_dir: Path,
+                  log: Optional[Callable[[str], None]] = None) -> None:
     """Record a ceiling run's eviction count in its ``run.json`` (once) and
     raise unless it is 0.
 
     A ceiling that evicted would understate what a policy can reach. The
-    count is also taken for a run finished before it was recorded (an
-    interruption between the two), so it is never missing.
+    count is also taken for a ceiling finished without it (one made with
+    ``replay``, or a grid interrupted between the two), so it is never
+    missing.
     """
     manifest_path = run_dir / "run.json"
     manifest = json.loads(manifest_path.read_text())
     if "ceiling_evictions" not in manifest:
+        if log is not None:
+            log(f"{run_dir.name}: counting the ceiling's evictions")
         evictions, complete = count_evictions(ev.log_path(run_dir))
         manifest.update(ceiling_evictions=evictions,
                         ceiling_log_complete=complete)
@@ -524,6 +519,110 @@ def check_ceiling(run_dir: Path) -> None:
         raise RunnerError(f"{run_dir}: the ceiling run evicted "
                           f"{manifest['ceiling_evictions']} blocks; raise "
                           "CEILING_MARGIN and delete the folder to replay it")
+
+
+# --- Run folders -----------------------------------------------------------
+
+# A grid run's folder name (`MixConfig.name`): <plan>-<policy>-cap<tokens>
+# or <plan>-ceiling, then -r<n> for a replicate.
+RUN_NAME = re.compile(r"(?P<plan>.+?)-(?:(?P<policy>[a-z0-9_]+)-cap"
+                      r"(?P<capacity>\d+)|(?P<ceiling>ceiling))"
+                      r"(?:-r(?P<replicate>\d+))?")
+# What `MixConfig.record` adds to run.json, besides the run's name.
+RECORD_FIELDS = ("mix", "pacing", "seed", "replicate", "ceiling")
+# A replay changes its folder every few seconds (the client records each
+# request, the server logs its throughput), so an unfinished folder that
+# changed more recently than this may still be replaying: another
+# checkout's `replay`, or a grid killed without cleanup whose servers and
+# clients live on.
+QUIET_S = 900.0
+# A run the previous grid saw fail had stopped by then. This short wait
+# only covers a folder that something else has made again since.
+STOPPED_QUIET_S = 60.0
+
+
+def run_config(run_dir: Path) -> MixConfig:
+    """The configuration of the run in `run_dir`, read from its
+    ``run.json``.
+
+    A grid run records it. A run made with ``replay`` does not: its pacing
+    (``pacing.kind``) and seed then come from the plan manifest that
+    ``run.json`` holds, its mix from the plan folder's name (a recipe plan's
+    manifest names the mix it was built from: smoke's says balanced), and
+    whether it is a ceiling and its replicate from the run folder's name.
+    """
+    run = json.loads((run_dir / "run.json").read_text())
+    if all(field in run for field in RECORD_FIELDS):
+        mix, pacing, seed = run["mix"], run["pacing"], run["seed"]
+        ceiling, replicate = run["ceiling"], run["replicate"]
+    else:
+        plan = run["plan"]
+        seed = plan["seed"]
+        pacing = plan.get("pacing")
+        if isinstance(pacing, dict):
+            pacing = pacing.get("kind")
+        if not pacing:
+            raise ValueError(f"{run_dir}: its plan manifest has no pacing")
+        plan_name, suffix = Path(run["plan_dir"]).name, f"-{pacing}-s{seed}"
+        mix = (plan_name[:-len(suffix)]
+               if plan_name.endswith(suffix) else plan["mix"])
+        match = RUN_NAME.fullmatch(run_dir.name)
+        if match is None:
+            raise ValueError(f"{run_dir.name} is not a grid run's name")
+        ceiling = match["ceiling"] is not None
+        replicate = int(match["replicate"] or 0)
+    return MixConfig(mix,
+                     pacing,
+                     int(seed),
+                     run["eviction_policy"],
+                     int(run["capacity_tokens"]),
+                     block_size=int(run["block_size"]),
+                     ceiling=bool(ceiling),
+                     replicate=int(replicate))
+
+
+def check_finished(run_dir: Path,
+                   config: MixConfig,
+                   log: Optional[Callable[[str], None]] = None) -> None:
+    """Raise unless the finished run in `run_dir` is `config`'s, and, for a
+    ceiling, one that never evicted. A ceiling's capacity is not checked:
+    any capacity that never evicts gives the same run."""
+    held = run_config(run_dir)
+    if held.name != config.name or held.block_size != config.block_size:
+        raise RunnerError(f"{run_dir} holds {held.name} at block size "
+                          f"{held.block_size}, not {config.name}")
+    if config.ceiling:
+        check_ceiling(run_dir, log)
+
+
+def last_change(run_dir: Path) -> float:
+    """The newest modification time of a run folder and everything in it
+    (the folder's own time only changes when files are added)."""
+    newest = run_dir.stat().st_mtime
+    for root, dirs, files in os.walk(run_dir):
+        for name in dirs + files:
+            with contextlib.suppress(OSError):  # removed meanwhile
+                path = os.path.join(root, name)
+                newest = max(newest,
+                             os.stat(path, follow_symlinks=False).st_mtime)
+    return newest
+
+
+def _failed_in_previous_grid(out: Path) -> Set[str]:
+    """The runs the previous grid in `out` replayed and saw fail.
+
+    Their servers and clients had stopped when it recorded that, and that
+    grid is gone (this one holds the lock), so they are not replaying.
+    """
+    try:
+        runs = json.loads((out / "grid.json").read_text())["runs"]
+        return {
+            run["name"]
+            for run in runs
+            if run.get("replayed") and run.get("status") == "failed"
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        return set()
 
 
 # --- The engine grid -------------------------------------------------------
@@ -572,13 +671,15 @@ class _Grid:
     """The state of one `run_grid` call, shared by its worker threads."""
 
     def __init__(self, configs: Sequence[MixConfig], out: Path, data: Path,
-                 plans: Dict[str, Dict[str, Any]], stop_slack: float,
-                 meta: Dict[str, Any], replay: Callable[..., Any],
-                 log: Callable[[str], None]):
+                 plans: Dict[str, Dict[str, Any]], meta: Dict[str, Any],
+                 replay: Callable[..., Any], log: Callable[[str], None], *,
+                 stop_slack: float, ceiling_tokens: Optional[int]):
         self.configs = list(configs)
         self.out, self.data, self.plans = out, data, plans
-        self.stop_slack, self.meta = stop_slack, meta
-        self.replay, self.log = replay, log
+        self.meta, self.replay, self.log = meta, replay, log
+        self.stop_slack, self.ceiling_tokens = stop_slack, ceiling_tokens
+        # Read before this grid writes its own grid.json over it.
+        self.failed_earlier = _failed_in_previous_grid(out)
         self.lock = threading.Lock()
         self.ports: queue.Queue[int] = queue.Queue()
         self.counts: Counter = Counter()
@@ -607,36 +708,71 @@ class _Grid:
             self.log(f"[{index}/{len(self.configs)}] {config.name}: "
                      f"{message}")
 
-    def finished_earlier(self, index: int, config: MixConfig) -> bool:
+    def locked_log(self, message: str) -> None:
+        with self.lock:
+            self.log(message)
+
+    def classify(self, config: MixConfig) -> Tuple[str, Optional[str]]:
+        """What to do with a configuration's folder now, and why.
+
+        "skipped": finished earlier, and checked; "failed": finished, but
+        it holds another run, or a ceiling that evicted or whose log was
+        cut short; "busy": unfinished and changed recently, so it may still
+        be replaying; "replay": absent, or unfinished and stopped (to be
+        deleted first).
+        """
         run_dir = self.out / config.name
-        if not is_finished(run_dir):
-            return False
-        entry = self.entries[config.name]
-        try:
-            if config.ceiling:
-                check_ceiling(run_dir)
-        except Exception as exc:  # a bad old run must not stop the grid
-            entry.update(status="failed", error=f"{type(exc).__name__}: {exc}")
-            self.say(index, config, f"finished earlier, but {exc}")
-        else:
-            entry["status"] = "skipped"
-            self.say(index, config, "finished earlier, skipped")
-        return True
+        if is_finished(run_dir):
+            try:
+                check_finished(run_dir, config, self.locked_log)
+            except Exception as exc:  # a bad old run must not stop the grid
+                return "failed", f"{type(exc).__name__}: {exc}"
+            return "skipped", None
+        if not run_dir.exists():
+            return "replay", None
+        quiet = time.time() - last_change(run_dir)
+        failed_earlier = config.name in self.failed_earlier
+        if quiet >= (STOPPED_QUIET_S if failed_earlier else QUIET_S):
+            return "replay", ("the previous grid saw it fail"
+                              if failed_earlier else
+                              f"unfinished, unchanged for {quiet / 60:.0f} "
+                              "min")
+        return "busy", f"unfinished, changed {quiet:.0f} s ago"
 
     def run(self, jobs: int, base_port: int) -> List[Dict[str, Any]]:
-        todo = [(index, config)
-                for index, config in enumerate(self.configs, 1)
-                if not self.finished_earlier(index, config)]
+        todo: List[Tuple[int, MixConfig]] = []
+        busy: List[str] = []
+        for index, config in enumerate(self.configs, 1):
+            status, note = self.classify(config)
+            if status == "replay":
+                todo.append((index, config))
+            elif status == "busy":
+                busy.append(f"{config.name} ({note})")
+            else:
+                self.entries[config.name].update(status=status, error=note)
+                message = ("finished earlier, skipped" if status == "skipped"
+                           else f"finished earlier, but {note}")
+                self.say(index, config, message)
+        # Both refusals come before this grid writes grid.json, which still
+        # tells the next grid which runs the previous one saw fail.
+        if busy:
+            raise RunnerError(f"{len(busy)} unfinished runs changed in the "
+                              f"last {QUIET_S / 60:.0f} minutes, so "
+                              "something may still be replaying them (a "
+                              "`replay` from another checkout, or a grid "
+                              "killed without cleanup): " + "; ".join(busy) +
+                              ". Wait for it to finish, or delete those "
+                              "folders if nothing is running.")
+        ports = [base_port + i for i in range(min(jobs, len(todo)))]
+        taken = [port for port in ports if port_in_use(port)]
+        if taken:
+            raise RunnerError(f"Ports {taken} are in use; stop those programs "
+                              "or choose another --base-port")
         self.todo = len(todo)
         self.write()
         if not todo:
             self.log("Nothing to replay")
             return [self.entries[c.name] for c in self.configs]
-        ports = [base_port + i for i in range(min(jobs, len(todo)))]
-        busy = [port for port in ports if port_in_use(port)]
-        if busy:
-            raise RunnerError(f"Ports {busy} are in use; stop those programs "
-                              "or choose another --base-port")
         for port in ports:
             self.ports.put(port)
         try:
@@ -657,12 +793,19 @@ class _Grid:
         return [self.entries[c.name] for c in self.configs]
 
     def run_one(self, index: int, config: MixConfig) -> None:
+        # Again: the folder may have changed while this run waited.
+        status, note = self.classify(config)
+        if status != "replay":
+            self.done(index, config, status, note)
+            return
         port = self.ports.get()
-        entry = self.entries[config.name]
         with self.lock:
-            entry.update(status="running", port=port, started_at_utc=_now())
+            self.entries[config.name].update(status="running",
+                                             port=port,
+                                             started_at_utc=_now())
             self.write()
-        self.say(index, config, f"started on port {port}")
+        self.say(index, config,
+                 f"started on port {port}" + (f" ({note})" if note else ""))
         start = time.monotonic()
         status, error = "failed", None
         try:
@@ -672,19 +815,45 @@ class _Grid:
             error = f"{type(exc).__name__}: {exc}"
         finally:
             self.ports.put(port)
-        wall = time.monotonic() - start
+        self.done(index, config, status, error, time.monotonic() - start)
+
+    def done(self,
+             index: int,
+             config: MixConfig,
+             status: str,
+             error: Optional[str],
+             wall: Optional[float] = None) -> None:
         with self.lock:
-            entry.update(status=status,
-                         error=error,
-                         wall_s=round(wall, 1),
-                         finished_at_utc=_now())
+            entry = self.entries[config.name]
+            entry.update(status=status, error=error)
+            if wall is not None:
+                entry.update(wall_s=round(wall, 1), finished_at_utc=_now())
             self.counts[status] += 1
             self.write()
-            left = self.todo - self.counts["finished"] - self.counts["failed"]
-            self.log(f"[{index}/{len(self.configs)}] {config.name}: {status} "
-                     f"in {wall:.0f} s{': ' + error if error else ''} "
+            left = self.todo - sum(self.counts.values())
+            took = "" if wall is None else f" in {wall:.0f} s"
+            self.log(f"[{index}/{len(self.configs)}] {config.name}: {status}"
+                     f"{took}{': ' + error if error else ''} "
                      f"({self.counts['finished']} finished, "
                      f"{self.counts['failed']} failed, {left} to go)")
+
+    def ceiling_capacity(self, config: MixConfig, path: Path,
+                         max_model_len: int, updates: Dict[str, Any]) -> int:
+        distinct = distinct_full_blocks(path, config.block_size)
+        # vLLM refuses a cache that cannot hold one longest request.
+        whole_blocks = -(-max_model_len // config.block_size)
+        needed = max(_ceiling_tokens(distinct, config.block_size),
+                     whole_blocks * config.block_size)
+        updates.update(ceiling_distinct_blocks=distinct,
+                       ceiling_margin=CEILING_MARGIN)
+        if self.ceiling_tokens is None:
+            return needed
+        if self.ceiling_tokens < needed:
+            raise RunnerError(f"A ceiling of {self.ceiling_tokens} tokens is "
+                              f"below the {needed} that {config.plan_name} "
+                              f"needs ({CEILING_MARGIN} x its {distinct} "
+                              "distinct blocks)")
+        return self.ceiling_tokens
 
     def replay_one(self, index: int, config: MixConfig, port: int) -> None:
         run_dir = self.out / config.name
@@ -694,18 +863,18 @@ class _Grid:
         if port_in_use(port):
             raise RunnerError(f"Port {port} is in use")
         if run_dir.exists():
-            self.say(index, config, "removing an interrupted run")
+            self.say(index, config, "removing its unfinished folder")
             shutil.rmtree(run_dir)
+        with self.lock:
+            # From here the folder is this grid's: if it fails, the next
+            # grid knows nothing else is replaying it.
+            self.entries[config.name]["replayed"] = True
+            self.write()
         updates = {"grid": self.meta.get("grid"), **config.record()}
         capacity = config.capacity_tokens
         if config.ceiling:
-            distinct = distinct_full_blocks(path, config.block_size)
-            # vLLM refuses a cache that cannot hold one longest request.
-            whole_blocks = -(-max_model_len // config.block_size)
-            capacity = max(_ceiling_tokens(distinct, config.block_size),
-                           whole_blocks * config.block_size)
-            updates.update(ceiling_distinct_blocks=distinct,
-                           ceiling_margin=CEILING_MARGIN)
+            capacity = self.ceiling_capacity(config, path, max_model_len,
+                                             updates)
         self.replay(path,
                     run_dir,
                     policy=config.policy,
@@ -727,6 +896,7 @@ def run_grid(configs: Sequence[MixConfig],
              base_port: int = 8100,
              stop_slack: float = 600.0,
              allow_dirty: bool = False,
+             ceiling_tokens: Optional[int] = None,
              grid: Optional[str] = None,
              shard: Optional[Tuple[int, int]] = None,
              replay: Callable[..., Any] = replay_plan,
@@ -735,9 +905,13 @@ def run_grid(configs: Sequence[MixConfig],
 
     Returns one status entry per configuration (name, status, run_dir,
     wall_s, error), also written to ``<out>/grid.json``: "skipped"
-    (finished earlier), "finished", "failed", or "pending" if interrupted
-    before it started. A failed run does not stop the others. `replay`
-    takes `replay_plan`'s arguments (tests pass a fake).
+    (finished earlier and checked, by `check_finished`), "finished",
+    "failed", "busy" (its folder came alive while it waited), or "pending"
+    if interrupted before it started. A failed run does not stop the
+    others. Refuses to start while an unfinished folder of `configs` may
+    still be replaying (see `QUIET_S`). Ceilings take `ceiling_tokens` if
+    given (refused if a plan needs more), else what their plan needs.
+    `replay` takes `replay_plan`'s arguments (tests pass a fake).
     """
     if jobs < 1:
         raise ValueError("jobs must be at least 1")
@@ -746,6 +920,11 @@ def run_grid(configs: Sequence[MixConfig],
     names = [c.name for c in configs]
     if len(set(names)) != len(names):
         raise ValueError("Two configurations have the same name")
+    if ceiling_tokens is not None:
+        sizes = {c.block_size for c in configs if c.ceiling}
+        if ceiling_tokens <= 0 or any(ceiling_tokens % size for size in sizes):
+            raise ValueError(f"A ceiling of {ceiling_tokens} tokens is not a "
+                             "positive whole number of blocks")
     state = git_state()
     if state["dirty"] and not allow_dirty:
         raise RunnerError("The working tree has uncommitted changes, which "
@@ -771,13 +950,21 @@ def run_grid(configs: Sequence[MixConfig],
         "jobs": jobs,
         "base_port": base_port,
         "stop_slack_s": stop_slack,
+        "ceiling_tokens": ceiling_tokens,
         "data": str(data),
         **state,
         "started_at_utc": _now(),
     }
     with grid_lock(out), keep_awake():
-        return _Grid(configs, out, data, plans, stop_slack, meta, replay,
-                     log).run(jobs, base_port)
+        return _Grid(configs,
+                     out,
+                     data,
+                     plans,
+                     meta,
+                     replay,
+                     log,
+                     stop_slack=stop_slack,
+                     ceiling_tokens=ceiling_tokens).run(jobs, base_port)
 
 
 # --- The cache-simulator sweep ---------------------------------------------
@@ -834,6 +1021,13 @@ def _sim_task(task: Dict[str, Any],
     return row
 
 
+def plan_timing(timing: str, plan: Path) -> str:
+    """`timing` for one plan: ``{plan}`` becomes the plan folder's name, so
+    each plan takes its own engine run's timing
+    (``engine:results/m3-task2/{plan}-ceiling``)."""
+    return timing.replace("{plan}", Path(plan).name)
+
+
 def run_sims(plans: Sequence[Path],
              policies: Sequence[str],
              capacities: Sequence[CapacitySpec],
@@ -842,16 +1036,19 @@ def run_sims(plans: Sequence[Path],
              block_size: int = 16,
              timing: str = "model",
              jobs: int = 8,
+             nice: int = 0,
              simulate: Optional[Callable[..., Any]] = None,
              log: Callable[[str], None] = _say) -> List[Dict[str, Any]]:
     """Simulate every (plan, capacity, policy) not yet in `out`.
 
     Appends one JSON line per run, as it finishes: plan, policy, capacity
-    (as asked: tokens or "ceiling"), capacity_tokens, block_size, timing,
-    summary (``cachesim.simulate``'s), seconds, commit, dirty, and error
-    for a run that failed. Policies are passed through unchanged. With
-    `jobs` > 1 the runs go to a process pool; `simulate` replaces
-    ``cachesim.simulate`` (tests). Returns the new rows.
+    (as asked: tokens or "ceiling"), capacity_tokens, block_size, timing
+    (`plan_timing`), summary (``cachesim.simulate``'s), seconds, commit,
+    dirty, and error for a run that failed. Policies are passed through
+    unchanged. Engine timing must come from finished engine runs. With
+    `jobs` > 1 the runs go to a process pool whose workers lower their CPU
+    priority by `nice`; `simulate` replaces ``cachesim.simulate`` (tests).
+    Returns the new rows.
     """
     if jobs < 1:
         raise ValueError("jobs must be at least 1")
@@ -860,6 +1057,17 @@ def run_sims(plans: Sequence[Path],
                                       capacity <= 0 or capacity % block_size):
             raise ValueError(f"Capacity {capacity!r} is neither 'ceiling' nor "
                              f"a positive multiple of block size {block_size}")
+    # A running engine run's log is cut short: its timing would be too.
+    unfinished = []
+    for plan in plans:
+        resolved = plan_timing(timing, plan)
+        if resolved.startswith("engine:") and not is_finished(
+                Path(resolved[len("engine:"):])):
+            unfinished.append(resolved)
+    if unfinished:
+        raise ValueError("Engine timing needs finished engine runs "
+                         "(run.json with finished_at_utc), not "
+                         f"{', '.join(unfinished)}")
     done, cut = _finished_sims(out)
     tasks = []
     keys = set()
@@ -871,7 +1079,7 @@ def run_sims(plans: Sequence[Path],
                     "policy": policy,
                     "capacity": capacity,
                     "block_size": block_size,
-                    "timing": timing,
+                    "timing": plan_timing(timing, plan),
                 }
                 key = sim_key(task)
                 if key not in keys:  # a value given twice runs once
@@ -889,11 +1097,16 @@ def run_sims(plans: Sequence[Path],
     with contextlib.ExitStack() as stack:
         results: Iterator[Dict[str, Any]]
         if jobs == 1:
+            if nice:
+                os.nice(nice)
             results = map(worker, tasks)
         else:
             # spawn: a forked copy of a parent that loaded torch can hang.
             context = multiprocessing.get_context("spawn")
-            pool = stack.enter_context(context.Pool(min(jobs, len(tasks))))
+            pool = stack.enter_context(
+                context.Pool(min(jobs, len(tasks)),
+                             initializer=os.nice if nice else None,
+                             initargs=(nice, ) if nice else ()))
             results = pool.imap_unordered(worker, tasks)
         output = stack.enter_context(out.open("a", encoding="utf-8"))
         if cut:
@@ -995,6 +1208,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                       default=600.0,
                       help="Stop sending this many seconds after the plan's "
                       "stop_s")
+    grid.add_argument("--ceiling-capacity",
+                      type=int,
+                      help="Cache size in tokens of every ceiling run "
+                      "(default: what its plan needs; refused if smaller)")
 
     sim = sub.add_parser("sim",
                          help="Sweep plans x policies x capacities in the "
@@ -1009,8 +1226,15 @@ def parse_args(argv=None) -> argparse.Namespace:
     sim.add_argument("--block-size", type=int, default=16)
     sim.add_argument("--timing",
                      default="model",
-                     help="model, or engine:<run dir>")
+                     help="model, or engine:<finished run dir>; {plan} in "
+                     "it becomes each plan's name, as in "
+                     "engine:results/m3-task2/{plan}-ceiling")
     sim.add_argument("--jobs", type=int, default=8)
+    sim.add_argument("--nice",
+                     type=int,
+                     default=10,
+                     help="Lower the workers' CPU priority by this much, so "
+                     "engine runs on this machine keep theirs (0: unchanged)")
     sim.add_argument("--out", type=Path, required=True)
 
     args = parser.parse_args(argv)
@@ -1018,6 +1242,8 @@ def parse_args(argv=None) -> argparse.Namespace:
         parser.error("--jobs must be at least 1")
     if getattr(args, "stop_slack", 0) < 0:
         parser.error("--stop-slack must not be negative")
+    if not 0 <= getattr(args, "nice", 0) <= 19:
+        parser.error("--nice must be between 0 and 19")
     return args
 
 
@@ -1053,11 +1279,13 @@ def main(argv=None) -> None:
                                base_port=args.base_port,
                                stop_slack=args.stop_slack,
                                allow_dirty=args.allow_dirty,
+                               ceiling_tokens=args.ceiling_capacity,
                                grid=args.grid,
                                shard=args.shard)
             counts = Counter(e["status"] for e in entries)
             _say(f"Done: {counts['finished']} finished, {counts['skipped']} "
-                 f"finished earlier, {counts['failed']} failed; see "
+                 f"finished earlier, {counts['busy']} left to whatever is "
+                 f"replaying them, {counts['failed']} failed; see "
                  f"{args.out / 'grid.json'}")
             if counts["failed"]:
                 raise SystemExit(1)
@@ -1069,7 +1297,8 @@ def main(argv=None) -> None:
                                 args.out,
                                 block_size=args.block_size,
                                 timing=args.timing,
-                                jobs=args.jobs)
+                                jobs=args.jobs,
+                                nice=args.nice)
             failed = sum("error" in row for row in rows)
             _say(f"Wrote {len(rows)} rows ({failed} with an error) to "
                  f"{args.out}")

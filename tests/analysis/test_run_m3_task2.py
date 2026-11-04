@@ -11,8 +11,11 @@ import gzip
 import json
 import os
 import random
+import re
+import shutil
 import subprocess
 import threading
+import time
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,15 +53,31 @@ def req(rid, prompt, output=()):
                         arrival_s=0.0)
 
 
-def make_plan(data, name, requests=None, stop_s=100.0, max_model_len=16):
+def make_plan(data,
+              name,
+              requests=None,
+              stop_s=100.0,
+              max_model_len=16,
+              **manifest):
+    """A plan folder <mix>-<pacing>-s<seed> whose manifest has the fields
+    the runner reads, as analysis.mix writes them."""
     path = data / "processed" / "m3" / name
     write_plan(requests or [req("w:a:0", range(1, 9))], path / "plan.jsonl.gz",
                path / "responses.jsonl")
+    match = re.fullmatch(r"(.+)-([^-]+)-s(\d+)", name)
+    assert match is not None, f"{name} is not <mix>-<pacing>-s<seed>"
+    mix, pacing, seed = match.groups()
     (path / "manifest.json").write_text(
         json.dumps({
-            "mix": name,
+            "mix": mix,
+            "seed": int(seed),
+            "pacing": {
+                "kind": pacing,
+                "think_scale": 1.0
+            },
             "stop_s": stop_s,
-            "max_model_len": max_model_len
+            "max_model_len": max_model_len,
+            **manifest
         }))
     return path
 
@@ -144,15 +163,56 @@ class FakeReplay:
             # As replay_plan does, which refuses a folder that exists.
             run_dir.mkdir(parents=True)
             write_events(run_dir / "events.jsonl.gz", self.evictions)
-            manifest = {
-                "capacity_tokens": kwargs["capacity_tokens"],
-                **kwargs["manifest_updates"], "finished_at_utc": "now"
-            }
+            manifest = replay_fields(plan_dir, kwargs["policy"],
+                                     kwargs["capacity_tokens"],
+                                     kwargs["block_size"])
+            manifest.update(kwargs["manifest_updates"])
+            manifest["finished_at_utc"] = "now"
             (run_dir / "run.json").write_text(json.dumps(manifest))
             return manifest
         finally:
             with self.lock:
                 self.ports_in_use.discard(port)
+
+
+def replay_fields(plan_dir, policy, capacity_tokens, block_size):
+    """What replay_plan's run.json says about the run, besides the grid's
+    configuration fields."""
+    return {
+        "plan_dir": str(plan_dir),
+        "plan": json.loads((plan_dir / "manifest.json").read_text()),
+        "eviction_policy": policy,
+        "capacity_tokens": capacity_tokens,
+        "block_size": block_size,
+    }
+
+
+def replay_made_run(out,
+                    name,
+                    plan_dir,
+                    policy,
+                    capacity_tokens,
+                    finished=True,
+                    evictions=0):
+    """A run folder as the committed `replay` subcommand leaves it: its
+    run.json has no grid configuration fields."""
+    run_dir = out / name
+    run_dir.mkdir(parents=True)
+    (run_dir / "client.jsonl").write_text('{"request_id": "w:a:0"}\n')
+    write_events(run_dir / "events.jsonl.gz", evictions, end=finished)
+    if finished:
+        run = {"experiment": "m3-task2", **CLEAN}
+        run.update(replay_fields(plan_dir, policy, capacity_tokens, BS))
+        run["finished_at_utc"] = "2026-11-04T21:30:00+00:00"
+        (run_dir / "run.json").write_text(json.dumps(run))
+    return run_dir
+
+
+def age(path, seconds):
+    """Make a folder and everything in it look unchanged for `seconds`."""
+    when = time.time() - seconds
+    for item in [path, *path.rglob("*")]:
+        os.utime(item, (when, when))
 
 
 def run_toy_grid(tmp_path, configs, replay, **kwargs):
@@ -389,24 +449,17 @@ def test_count_evictions_streams_the_log(tmp_path):
 # --- The engine grid -------------------------------------------------------
 
 
-def test_grid_skips_finished_runs_and_replays_interrupted_ones(tmp_path):
+def test_grid_replays_each_configuration_and_records_it(tmp_path):
     make_plan(tmp_path / "data", "toy-human-s1", CEILING_PLAN, stop_s=100.0)
     lru, fifo, ceiling = toy_configs()
     out = tmp_path / "out"
-    (out / lru.name).mkdir(parents=True)
-    (out / lru.name / "run.json").write_text('{"finished_at_utc": "x"}')
-    (out / fifo.name).mkdir(parents=True)  # interrupted: not finished
-    (out / fifo.name / "run.json").write_text('{"started_at_utc": "x"}')
-    (out / fifo.name / "stale.txt").write_text("from the interrupted run")
     replay = FakeReplay()
     entries, logs = run_toy_grid(tmp_path, [lru, fifo, ceiling],
                                  replay,
                                  stop_slack=600.0)
-    statuses = [e["status"] for e in entries]
-    assert statuses == ["skipped", "finished", "finished"]
+    assert [e["status"] for e in entries] == ["finished"] * 3
     calls = {c["run_dir"].name: c for c in replay.calls}
-    assert sorted(calls) == sorted([fifo.name, ceiling.name])
-    assert not (out / fifo.name / "stale.txt").exists()
+    assert sorted(calls) == sorted(c.name for c in (lru, fifo, ceiling))
     # The client stops sending stop_slack after the plan's stop_s.
     assert {c["stop_at"] for c in replay.calls} == {700.0}
     assert calls[fifo.name]["capacity_tokens"] == 64
@@ -435,18 +488,172 @@ def test_grid_skips_finished_runs_and_replays_interrupted_ones(tmp_path):
     assert status["grid"] == "toy" and status["commit"] == "abc123"
     recorded = [(r["name"], r["status"]) for r in status["runs"]]
     assert recorded == [(e["name"], e["status"]) for e in entries]
-    assert status["runs"][1]["wall_s"] is not None
-    assert status["runs"][1]["error"] is None
+    for run in status["runs"]:
+        assert run["wall_s"] is not None and run["error"] is None
+        assert run["replayed"]
     # One line per start and per finish.
-    for name in (fifo.name, ceiling.name):
-        assert sum(name in line and "started" in line for line in logs) == 1
-        assert sum(name in line and "finished in" in line
+    for config in (lru, fifo, ceiling):
+        assert sum(config.name in line and "started" in line
+                   for line in logs) == 1
+        assert sum(config.name in line and "finished in" in line
                    for line in logs) == 1
     # Run again: nothing is replayed.
     again = FakeReplay()
     entries, _ = run_toy_grid(tmp_path, [lru, fifo, ceiling], again)
     assert [e["status"] for e in entries] == ["skipped"] * 3
     assert again.calls == []
+
+
+def test_grid_replays_a_run_interrupted_long_ago(tmp_path):
+    make_plan(tmp_path / "data", "toy-human-s1", CEILING_PLAN)
+    lru, fifo, ceiling = toy_configs()
+    run_toy_grid(tmp_path, [lru, fifo, ceiling], FakeReplay())
+    # FIFO's run is cut short, and nothing has touched it for 20 minutes.
+    run_dir = tmp_path / "out" / fifo.name
+    run = json.loads((run_dir / "run.json").read_text())
+    del run["finished_at_utc"]
+    (run_dir / "run.json").write_text(json.dumps(run))
+    (run_dir / "stale.txt").write_text("from the interrupted run")
+    age(run_dir, 1200)
+    replay = FakeReplay()
+    entries, _ = run_toy_grid(tmp_path, [lru, fifo, ceiling], replay)
+    assert [e["status"] for e in entries] == ["skipped", "finished", "skipped"]
+    assert [c["run_dir"].name for c in replay.calls] == [fifo.name]
+    assert not (run_dir / "stale.txt").exists()
+
+
+def test_grid_never_deletes_a_folder_that_may_still_be_replaying(tmp_path):
+    # As the lead's driver leaves its runs in progress: no run.json yet.
+    plan = make_plan(tmp_path / "data", "toy-human-s1")
+    out = tmp_path / "out"
+    lru, fifo, _ = toy_configs()
+    live = replay_made_run(out, fifo.name, plan, "fifo", 64, finished=False)
+    (out / "grid.json").write_text('{"runs": []}')
+    replay = FakeReplay()
+    with pytest.raises(m3.RunnerError, match="may still be replaying"):
+        run_toy_grid(tmp_path, [lru, fifo], replay)
+    assert replay.calls == []  # nothing started, not even LRU
+    left = sorted(p.name for p in live.iterdir())
+    assert left == ["client.jsonl", "events.jsonl.gz"]
+    # grid.json is the previous grid's, for the next one to read.
+    assert (out / "grid.json").read_text() == '{"runs": []}'
+    # Made long ago, but the client still appends to its results, which
+    # leaves the folder's own time alone.
+    age(live, 1200)
+    with (live / "client.jsonl").open("a") as results:
+        results.write('{"request_id": "w:a:1"}\n')
+    with pytest.raises(m3.RunnerError, match="may still be replaying"):
+        run_toy_grid(tmp_path, [lru, fifo], replay)
+    assert replay.calls == []
+
+
+@pytest.mark.parametrize(
+    "previous, quiet_s, replayed",
+    [
+        ("failed", 120, True),  # the previous grid saw it fail
+        ("failed", 0, False),  # ... but something made it again since
+        ("running", 120, False),  # that grid died: its replay may live on
+        ("running", 1200, True),  # ... and has stopped since
+        (None, 120, False),  # not a grid's: maybe another checkout's
+        (None, 1200, True),
+    ])
+def test_an_unfinished_folder_is_deleted_only_once_it_stopped(
+        tmp_path, previous, quiet_s, replayed):
+    plan = make_plan(tmp_path / "data", "toy-human-s1")
+    out = tmp_path / "out"
+    fifo = toy_configs()[1]
+    run_dir = replay_made_run(out, fifo.name, plan, "fifo", 64, finished=False)
+    if previous is not None:
+        (out / "grid.json").write_text(
+            json.dumps({
+                "runs": [{
+                    "name": fifo.name,
+                    "status": previous,
+                    "replayed": True
+                }]
+            }))
+    age(run_dir, quiet_s)
+    replay = FakeReplay()
+    if replayed:
+        entries, _ = run_toy_grid(tmp_path, [fifo], replay)
+        assert entries[0]["status"] == "finished" and len(replay.calls) == 1
+    else:
+        with pytest.raises(m3.RunnerError, match="may still be replaying"):
+            run_toy_grid(tmp_path, [fifo], replay)
+        assert replay.calls == [] and (run_dir / "client.jsonl").exists()
+
+
+def test_run_config_reads_runs_made_with_replay(tmp_path):
+    data, out = tmp_path / "data", tmp_path / "out"
+    s2 = make_plan(data, "balanced-human-s2")
+    # The smoke plan is built from the balanced mix, and says so.
+    smoke = make_plan(data, "smoke-human-s101", mix="balanced")
+    runs = [
+        (s2, "balanced-human-s2-lru-cap131072", "lru", 131072),
+        (s2, "balanced-human-s2-ceiling", "lru", 16777216),
+        (s2, "balanced-human-s2-lru-cap131072-r1", "lru", 131072),
+        (smoke, "smoke-human-s101-lru-cap131072", "lru", 131072),
+    ]
+    for plan, name, policy, capacity in runs:
+        config = m3.run_config(
+            replay_made_run(out, name, plan, policy, capacity))
+        assert config.name == name
+        assert config.block_size == BS
+    ceiling = m3.run_config(out / "balanced-human-s2-ceiling")
+    assert (ceiling.mix, ceiling.pacing, ceiling.seed, ceiling.ceiling,
+            ceiling.capacity_tokens) == ("balanced", "human", 2, True,
+                                         16777216)
+    assert m3.run_config(out / runs[2][1]).replicate == 1
+    assert m3.run_config(out / runs[3][1]).mix == "smoke"
+    # A grid run's recorded fields win over its plan manifest's.
+    grid_made = out / "toy"
+    grid_made.mkdir()
+    (grid_made / "run.json").write_text(
+        json.dumps({
+            **replay_fields(s2, "fifo", 64, BS),
+            **MixConfig("other", "fast", 9, "fifo", 64, BS).record()
+        }))
+    assert m3.run_config(grid_made).name == "other-fast-s9-fifo-cap64"
+
+
+def test_grid_checks_and_skips_runs_made_with_replay(tmp_path):
+    plan = make_plan(tmp_path / "data", "toy-human-s1", CEILING_PLAN)
+    out = tmp_path / "out"
+    lru, fifo, ceiling = toy_configs()
+    replay_made_run(out, lru.name, plan, "lru", 64)
+    # A capacity of the lead's choosing: any that never evicts will do.
+    replay_made_run(out, ceiling.name, plan, "lru", 1024)
+    # A folder named for FIFO that holds an LFU run.
+    replay_made_run(out, fifo.name, plan, "lfu", 64)
+    before = (out / lru.name / "run.json").read_text()
+    replay = FakeReplay()
+    entries, _ = run_toy_grid(tmp_path, [lru, fifo, ceiling], replay)
+    assert [e["status"] for e in entries] == ["skipped", "failed", "skipped"]
+    assert "holds toy-human-s1-lfu-cap64" in entries[1]["error"]
+    assert replay.calls == []  # neither replayed nor deleted
+    assert (out / fifo.name / "run.json").exists()
+    assert (out / lru.name / "run.json").read_text() == before
+    # The ceiling's evictions are counted once and recorded.
+    run = json.loads((out / ceiling.name / "run.json").read_text())
+    assert (run["ceiling_evictions"], run["ceiling_log_complete"]) == (0, True)
+
+
+def test_ceiling_capacity_can_be_fixed(tmp_path):
+    make_plan(tmp_path / "data", "toy-human-s1", CEILING_PLAN)
+    ceiling = toy_configs()[2]
+    replay = FakeReplay()
+    entries, _ = run_toy_grid(tmp_path, [ceiling], replay, ceiling_tokens=64)
+    assert entries[0]["status"] == "finished"
+    assert replay.calls[0]["capacity_tokens"] == 64
+    # Too small for the plan: refused, not replayed.
+    shutil.rmtree(tmp_path / "out")
+    entries, _ = run_toy_grid(tmp_path, [ceiling],
+                              FakeReplay(),
+                              ceiling_tokens=16)
+    assert entries[0]["status"] == "failed"
+    assert f"below the {CEILING_TOKENS}" in entries[0]["error"]
+    with pytest.raises(ValueError, match="whole number of blocks"):
+        run_toy_grid(tmp_path, [ceiling], FakeReplay(), ceiling_tokens=30)
 
 
 def test_ceiling_is_at_least_max_model_len(tmp_path):
@@ -476,20 +683,16 @@ def test_a_ceiling_that_evicts_fails_and_stays_failed(tmp_path):
     assert entries[0]["status"] == "failed" and again.calls == []
 
 
-def test_ceiling_evictions_are_counted_for_a_run_finished_without_them(
-        tmp_path):
-    # Interrupted after the run finished but before it was checked.
-    make_plan(tmp_path / "data", "toy-human-s1", CEILING_PLAN)
+def test_a_ceiling_whose_log_was_cut_short_fails(tmp_path):
+    # Its log has no end line, so a late eviction may be missing from it.
+    plan = make_plan(tmp_path / "data", "toy-human-s1", CEILING_PLAN)
     ceiling = toy_configs()[2]
-    run_dir = tmp_path / "out" / ceiling.name
-    run_dir.mkdir(parents=True)
-    write_events(run_dir / "events.jsonl.gz")
-    (run_dir / "run.json").write_text('{"finished_at_utc": "x"}')
-    replay = FakeReplay()
-    entries, _ = run_toy_grid(tmp_path, [ceiling], replay)
-    assert entries[0]["status"] == "skipped" and replay.calls == []
-    run = json.loads((run_dir / "run.json").read_text())
-    assert run["ceiling_evictions"] == 0 and run["ceiling_log_complete"]
+    run_dir = replay_made_run(tmp_path / "out", ceiling.name, plan, "lru",
+                              1024)
+    write_events(run_dir / "events.jsonl.gz", end=False)
+    entries, _ = run_toy_grid(tmp_path, [ceiling], FakeReplay())
+    assert entries[0]["status"] == "failed"
+    assert "no end line" in entries[0]["error"]
 
 
 def test_grid_refuses_a_dirty_tree(tmp_path, monkeypatch):
@@ -744,6 +947,46 @@ def test_sim_runs_a_repeated_value_once(tmp_path):
                        simulate=fake_simulate(calls),
                        log=lambda s: None)
     assert len(rows) == len(calls) == 1
+
+
+def test_sim_takes_each_plans_engine_timing(tmp_path):
+    plans = [
+        make_plan(tmp_path / "data", name)
+        for name in ("toy-human-s1", "toy-human-s2")
+    ]
+    runs = tmp_path / "runs"
+    replay_made_run(runs, "toy-human-s1-ceiling", plans[0], "lru", 1024)
+    # Still running: its log, and so its timing, would be cut short.
+    replay_made_run(runs,
+                    "toy-human-s2-ceiling",
+                    plans[1],
+                    "lru",
+                    1024,
+                    finished=False)
+    timing = f"engine:{runs}/{{plan}}-ceiling"
+    out = tmp_path / "rows.jsonl"
+    with pytest.raises(ValueError, match="toy-human-s2-ceiling"):
+        m3.run_sims(plans, ["lru"], [64],
+                    out,
+                    block_size=BS,
+                    timing=timing,
+                    jobs=1,
+                    simulate=fake_simulate([]),
+                    log=lambda s: None)
+    assert not out.exists()
+    finished = runs / "toy-human-s2-ceiling" / "run.json"
+    finished.write_text('{"finished_at_utc": "now"}')
+    calls: List[Tuple] = []
+    rows = m3.run_sims(plans, ["lru"], [64],
+                       out,
+                       block_size=BS,
+                       timing=timing,
+                       jobs=1,
+                       simulate=fake_simulate(calls),
+                       log=lambda s: None)
+    expected = [f"engine:{runs}/toy-human-s{seed}-ceiling" for seed in (1, 2)]
+    assert sorted(c[4] for c in calls) == expected
+    assert sorted(r["timing"] for r in rows) == expected
 
 
 def test_sim_refuses_a_capacity_that_is_not_whole_blocks(tmp_path):
