@@ -477,7 +477,8 @@ def paper_view(r: Row, labels: Dict[str, str]) -> List[Row]:
         rtxt, mtxt = _claim_text(row["claim"],
                                  row.get("raw") or {},
                                  row.get("mix") or {}, labels)
-        verdict = row.get("verdict", "")
+        verdict = row.get("verdict", "").replace("not testable here",
+                                                 "not testable")
         chip = {
             "holds": "holds",
             "partly": "partly",

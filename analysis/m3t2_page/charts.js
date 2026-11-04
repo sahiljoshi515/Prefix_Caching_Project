@@ -87,6 +87,11 @@
         s.label + ": " + (o.yFmt || pct)(s.y[i])).join("\n") }));
     const marks = [
       Plot.ruleY([o.yDomain ? o.yDomain[0] : 0], { stroke: tok("--rule") }),
+      ...(o.hrules || []).map((r) => Plot.ruleY([r.y], {
+        stroke: r.color || tok("--muted"), strokeOpacity: 0.8 })),
+      ...(o.hrules || []).map((r) => Plot.text([r], { y: "y", text: "label",
+        frameAnchor: "left", dy: -8, dx: 4, fill: tok("--ink-2"),
+        fontSize: 11 })),
       ...(o.rules || []).map((r) => Plot.ruleX([r.x], {
         stroke: r.color || tok("--muted"), strokeWidth: 1 })),
       ...(o.rules || []).map((r) => Plot.text([r], { x: "x",
@@ -471,25 +476,28 @@
     lines(node, {
       x: c.capacities, xType: "log", xDomain: [c.capacities[0],
         c.capacities[c.capacities.length - 1]], height: 300,
-      xLabel: "Cache size in tokens (log) →",
+      xLabel: "Cache size in tokens (log; 1K = 1,024) →",
       yLabel: "↑ Usable reuse (simulator)",
-      xFmt: (x) => num(x) + " tokens", xTick: (v) => (v / 1024) + "K",
+      xFmt: (x) => num(x) + " tokens",
+      xTick: (v) => Math.round(v / 1024) + "K", xTicks: c.capacities,
       yDomain: [0, Math.max(0.8, c.ceiling + 0.02)],
-      rules: [{ x: c.fixed, label: "the fixed cache (131K)",
+      rules: [{ x: c.fixed, label: "the fixed cache: 131,072 tokens",
                 color: tok("--muted") }],
+      hrules: [{ y: c.ceiling, label: "no eviction " + pct(c.ceiling) }],
       series: pols.map((p) => ({ id: p, label: POLICY[p], color: pol(p),
                                  y: c.curves[p], dots: true })),
     });
     legend(node, pols.map((p) => ({ label: POLICY[p], color: pol(p) }))
       .concat([{ label: "No-eviction ceiling " + pct(c.ceiling),
-                 color: tok("--rule") }]));
+                 color: tok("--muted") }]));
   };
 
   draw["fig-belady"] = (node) => {
     const b = D.beladySplit;
     if (!b) return;
     dots(node, {
-      rows: wlRows, xLabel: "Usable reuse at 131K tokens (simulator) →",
+      rows: wlRows,
+      xLabel: "Usable reuse with a 131,072-token cache (simulator) →",
       gap: { from: b.lru, to: b.belady },
       marks: ["ceiling", "belady", "lru"].map((p) => ({ id: p,
         label: POLICY[p], color: pol(p), shape: SHAPE[p],

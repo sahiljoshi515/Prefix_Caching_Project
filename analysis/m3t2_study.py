@@ -705,11 +705,27 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
         for p in policies
     }
     summary["sensitivity"] = sensitivity(runs, cfg)
+    summary["sensitivity"]["load"] = load_sensitivity(
+        runs, runs.parent / f"{runs.name}-contended", cfg)
     summary["mix"] = mix_summary(plans_root, cfg)
     if sweep is not None and sweep.exists():
         summary["sim"] = sim_summary(sweep, cfg)
         summary["validation"] = validation(runs, sweep, cfg)
     if reports is not None:
+        cs = reports / "validate_cachesim.json"
+        if cs.exists():
+            summary["validation_engine_timing"] = [{
+                "run":
+                Path(r["run"]).name,
+                "engine":
+                r["engine"]["summary"]["usable_reused_fraction"],
+                "sim":
+                r["sim_engine_timing"]["summary"]["usable_reused_fraction"],
+                "evicted_overlap":
+                r["sim_engine_timing"].get("evicted_multiset_overlap"),
+                "same_lookups":
+                r["sim_engine_timing"].get("same_lookup_blocks"),
+            } for r in json.loads(cs.read_text())]
         for name in ("identify", "signals", "paper"):
             path = reports / f"{name}.json"
             if path.exists():
@@ -848,6 +864,41 @@ def sensitivity(runs: Path, cfg: Row) -> Row:
             }
             for w in list(wl) + ["all"]
         }
+    return out
+
+
+def latency_p50(run_dir: Path) -> Optional[float]:
+    """Median request latency of a run (client.jsonl), in seconds."""
+    lat = []
+    with (run_dir / "client.jsonl").open() as f:
+        for line in f:
+            v = json.loads(line).get("latency_s")
+            if v is not None:
+                lat.append(v)
+    return float(np.median(lat)) if lat else None
+
+
+def load_sensitivity(runs: Path, contended: Path, cfg: Row) -> List[Row]:
+    """Runs replayed twice: once while other jobs loaded the machine (kept
+    in `contended`) and once on a quiet machine (the reported run). Their
+    difference shows how much the replay's timing moves each metric."""
+    out: List[Row] = []
+    if not contended.is_dir():
+        return out
+    wl, stop, bs = cfg["workloads"], cfg["stop_s"], cfg["block_size"]
+    for path in sorted(contended.iterdir()):
+        quiet = runs / path.name
+        if not ((path / "tables").is_dir() and (quiet / "tables").is_dir()):
+            continue
+        a = usable_by_workload(load_requests(path), wl, cfg["w0_s"], stop, bs)
+        b = usable_by_workload(load_requests(quiet), wl, cfg["w0_s"], stop, bs)
+        out.append({
+            "run": path.name,
+            "loaded_usable": a["all"]["fraction"],
+            "quiet_usable": b["all"]["fraction"],
+            "loaded_latency_p50": latency_p50(path),
+            "quiet_latency_p50": latency_p50(quiet),
+        })
     return out
 
 

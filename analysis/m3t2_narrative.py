@@ -466,6 +466,32 @@ def headroom(s: Row, data: Row) -> str:
     if not b:
         return ""
     gain = b["belady_all"] - b["lru_all"]
+    cap = data.get("capacity") or {}
+    lru_curve = cap.get("curves", {}).get("lru", [])
+    caps = cap.get("capacities", [])
+    # The smallest swept cache at which LRU catches Belady at the fixed one.
+    catch = next((c for c, v in zip(caps, lru_curve)
+                  if v is not None and v >= b["belady_all"]), None)
+    if catch is None and caps:
+        title = (f"A smarter policy is worth more than "
+                 f"{caps[-1] / cap['fixed']:.0f} times the memory")
+        size_txt = (f" LRU does not reach that even with "
+                    f"{caps[-1]:,} tokens, {caps[-1] / cap['fixed']:.0f} "
+                    "times the cache.")
+    else:
+        title = "A smarter policy is worth a bigger cache"
+        size_txt = (f" LRU needs {catch:,} tokens to match it."
+                    if catch else "")
+    gaps = [
+        bel - lru for bel, lru in zip(
+            cap.get("curves", {}).get("belady", []), lru_curve)
+        if bel is not None and lru is not None
+    ]
+    gap_txt = (f" Across the sizes tried the gap stays between "
+               f"{100 * min(gaps):.0f} and {100 * max(gaps):.0f} points: "
+               "even the largest cache tried holds less than the mix's "
+               "working set, so the policy matters at every size here."
+               if gaps else "")
     return f"""
 <section class="section" aria-labelledby="headroom"><h2 id="headroom">How
 much room is there?</h2>
@@ -474,12 +500,10 @@ the future. It needs to know the future, so no real server can run it, but
 it is the best any policy could do at a given cache size. These numbers come
 from our simulator, which replays vLLM's own cache code and matched the
 engine runs closely (see Checks).</p>
-{figure("fig-capacity", "Policy matters most where memory is scarce",
-        ["sim:simulator"],
+{figure("fig-capacity", title, ["sim:simulator"],
         f"At the fixed cache, Belady serves {pct(b['belady_all'])} against "
         f"LRU's {pct(b['lru_all'])}: {pts(gain)} are there for a better "
-        "policy to win. Every policy converges once the cache holds the "
-        "working set.")}
+        f"policy to win.{size_txt}{gap_txt}")}
 {figure("fig-belady", "Where the headroom is", ["sim:simulator"],
         "The room to gain is in the human-paced workloads. Belady maximises "
         "the total, so its split across workloads is one good allocation, "
@@ -616,12 +640,52 @@ def checks(s: Row, data: Row) -> str:
             "Simulator against engine: on the same plans, the simulator's "
             "usable reuse is within "
             f"{100 * val['max_diff']:.1f} points of the engine runs overall.")
+    vt = s.get("validation_engine_timing") or []
+    if vt:
+        diff = max(abs(r["engine"] - r["sim"]) for r in vt)
+        overlap = min(r["evicted_overlap"] for r in vt)
+        items.append(
+            "Simulator with the engine's own timing (seed 1, LRU, LFU and "
+            "FIFO): the same prompt blocks, usable reuse within "
+            f"{100 * diff:.2f} points, and {pct(overlap, 3)} of evicted "
+            "blocks the same.")
     sens = s.get("sensitivity") or {}
     noise = sens.get("noise")
     if noise:
         items.append(
             "Run-to-run noise: replaying seed 2 under LRU a second time moved "
             f"usable reuse by {pts(noise['all']['diff'])} overall.")
+    load = sens.get("load") or []
+    if load:
+        by = {r["run"]: r for r in load}
+        lat_l = max(r["loaded_latency_p50"] for r in load)
+        lat_q = max(r["quiet_latency_p50"] for r in load)
+        fifo = [r for r in load if "-fifo-" in r["run"]]
+        rest = [r for r in load if "-fifo-" not in r["run"]]
+        moved = max(abs(r["quiet_usable"] - r["loaded_usable"]) for r in rest)
+        fifo_moved = max(
+            (abs(r["quiet_usable"] - r["loaded_usable"]) for r in fifo),
+            default=None)
+        fifo_txt = (f"; FIFO moved by up to {100 * fifo_moved:.1f} points"
+                    if fifo_moved is not None else "")
+        flip = ""
+        lru4 = by.get("balanced-human-s4-lru-cap131072")
+        lfu4 = by.get("balanced-human-s4-lfu-cap131072")
+        if lru4 and lfu4:
+            before = lfu4["loaded_usable"] - lru4["loaded_usable"]
+            after = lfu4["quiet_usable"] - lru4["quiet_usable"]
+            if before * after < 0:
+                flip = (f" Seed 4's LFU minus LRU was {pts(before)} under "
+                        f"load and {pts(after)} quiet, so LFU's small deficit "
+                        "to LRU is within the replay's timing noise.")
+        items.append(
+            f"Machine load: {len(by)} runs first ran while analysis jobs "
+            f"loaded the laptop (median request latency up to "
+            f"{1000 * lat_l:.0f} ms instead of {1000 * lat_q:.0f} ms) and "
+            "were replayed on a quiet machine; the page reports the quiet "
+            "runs. LRU, LFU and the ceiling moved by at most "
+            f"{100 * moved:.1f} points{fifo_txt}, so FIFO is the most "
+            f"timing-sensitive.{flip}")
     warm = sens.get("warmup") or {}
     lru = [
         warm[k]["lru"]["mean"] for k in sorted(warm, key=float)
