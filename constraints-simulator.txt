@@ -31,3 +31,5 @@ xgrammar<0.2
 # matplotlib 3.9 still uses and floods the test output with warnings.
 matplotlib==3.9.2
 pyparsing<3.3
+# Milestone 3 adapters read AgentBank's and CC-Bench's parquet files.
+pyarrow==17.0.0
