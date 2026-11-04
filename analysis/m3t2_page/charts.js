@@ -531,7 +531,8 @@
       "Other workload", "Read by a first turn"], W.map((w) => [LABEL[w],
       pct(D.sources[w].same_session, 1), pct(D.sources[w].other_session, 1),
       pct(D.sources[w].other_workload, 1), pct(D.sources[w].first_turn, 1)])],
-    "fig-lost": () => [["Workload", "Policy", "Reused", "Evicted", "Cut off"],
+    "fig-lost": () => [["Workload", "Policy", "Reused (blocks per seed)",
+      "Evicted", "Cut off"],
       ["lru", "lfu", "fifo"].flatMap((p) => W.map((w) => {
         const L = D.lost[p][w]; return [LABEL[w], POLICY[p], num(L.kept),
           num(L.evicted), num(L.cut_off)]; }))],
@@ -541,7 +542,8 @@
       "Reuses per block-minute"], W.map((w) => [LABEL[w],
       pct(D.density.lru[w].pool, 1), pct(D.density.lru[w].revive, 1),
       D.density.lru[w].rate == null ? "–" : D.density.lru[w].rate.toFixed(2)])],
-    "fig-evictions": () => [["Evicting → victim", ...W.map((w) => LABEL[w])],
+    "fig-evictions": () => [["Evictions per seed: evicting → evicted",
+      ...W.map((w) => LABEL[w])],
       ["lru", "lfu", "fifo"].flatMap((p) => W.map((w, i) =>
         [POLICY[p] + ": " + LABEL[w], ...D.evictions[p].counts[i].map(num)]))],
     "fig-ladder": () => D.identify ? [["Workload", "First block",

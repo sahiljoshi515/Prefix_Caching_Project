@@ -891,7 +891,12 @@ def sim_summary(path: Path, cfg: Row) -> Row:
     """Simulator guide: usable reuse against capacity per policy (mean and
     spread over the plans of each group), and Belady's split per workload
     at the fixed capacity."""
-    rows = [r for r in read_sweep(path) if "summary" in r]
+    # Model-timed rows only: engine-timed rows of the same plan would
+    # otherwise be averaged in (and counted twice).
+    rows = [
+        r for r in read_sweep(path)
+        if "summary" in r and r.get("timing", "model") == "model"
+    ]
     groups = {
         "balanced-human": [f"balanced-human-s{s}" for s in (1, 2, 3, 4)],
         "balanced-fast": [f"balanced-fast-s{s}" for s in (1, 2, 3, 4)],
@@ -938,7 +943,8 @@ def validation(runs: Path, sweep: Path, cfg: Row) -> Row:
     """Engine against simulator (model timing) on the same plans, whole
     plan, overall and per workload."""
     sims = {(Path(r["plan"]).name, r["policy"], str(r.get("capacity"))): r
-            for r in read_sweep(sweep) if "summary" in r}
+            for r in read_sweep(sweep)
+            if "summary" in r and r.get("timing", "model") == "model"}
     out: List[Row] = []
     cap = cfg["capacity_tokens"]
     for seed in cfg["train_seeds"] + cfg["reported_seeds"]:

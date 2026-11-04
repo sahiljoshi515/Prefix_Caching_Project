@@ -99,8 +99,9 @@ def build_data(s: Row) -> Row:
         lost[p] = {}
         for w in W + ["all"]:
             vals = [s["lost"][p][k][w] for k in seeds]
+            # Per-seed means, like every other table on the page.
             lost[p][w] = {
-                key: sum(v[key] for v in vals)
+                key: sum(v[key] for v in vals) / len(vals)
                 for key in ("kept", "evicted", "cut_off")
             }
     pos = s["q2"]["position"]

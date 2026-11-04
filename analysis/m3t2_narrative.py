@@ -331,6 +331,7 @@ def q2(s: Row, data: Row) -> str:
                            for w in shared)
     fifo = data["lost"]["fifo"]["all"]
     cut = fifo["cut_off"] / max(1, sum(fifo.values()))
+    cut_lost = fifo["cut_off"] / max(1, fifo["cut_off"] + fifo["evicted"])
     return f"""
 <section class="section" aria-labelledby="q2"><h2 id="q2">Question 2: how
 much of each prompt is reused?</h2>
@@ -344,10 +345,11 @@ much of each prompt is reused?</h2>
         "treatment.")}
 {figure("fig-lost", "Where the lost reuse goes", ["measured:measured, 3 "
         "seeds"],
-        f"Almost all loss is eviction. FIFO also leaves {pct(cut)} of the "
-        "reusable blocks cached but unusable, behind an evicted block. A new "
-        "policy must never evict a block while the blocks after it in the "
-        "same prompt stay cached.",
+        f"Under LRU and LFU every lost block was evicted. FIFO also leaves "
+        f"{pct(cut)} of the reusable blocks cached but unusable behind an "
+        f"evicted block, {pct(cut_lost)} of all it loses. A new policy must "
+        "never evict a block while the blocks after it in the same prompt "
+        "stay cached.",
         note="Blocks that the no-eviction run reused, split by what happened "
         "to them under each policy.")}
 {figure("fig-position", "Production prompts share their head; histories "
@@ -568,6 +570,34 @@ label?</th><th>Risk</th></tr></thead><tbody>{body}</tbody></table></div>
 </section>"""
 
 
+def thinning(s: Row) -> str:
+    """The Bailian thinning sentence, from the plans and the paper report."""
+    seeds = [str(x) for x in s["config"]["reported_seeds"]]
+    lab = _labels(s)
+    kept = {}
+    for w in ("bailian-api", "bailian-coder", "bailian-chat",
+              "bailian-thinking"):
+        vals = [
+            s["mix"][k]["workloads"][w]["kept_session_fraction"] for k in seeds
+        ]
+        kept[w] = sum(vals) / len(vals)
+    text = ("Thinning: to fit the mix, each Bailian trace keeps only part of "
+            "its sessions (seed average: " +
+            ", ".join(f"{lab[w]} {pct(v, 1)}" for w, v in kept.items()) + ").")
+    thin = (s.get("paper") or {}).get("thinning") or {}
+    ratio = [
+        thin[f"{s['config']['mix']}-{s['config']['pacing']}-s{k}"]
+        ["bailian-api"]["kept_over_full_hit_ratio"] for k in seeds
+        if f"{s['config']['mix']}-{s['config']['pacing']}-s{k}" in thin
+    ]
+    if ratio:
+        loss = 1 - sum(ratio) / len(ratio)
+        text += (f" That removes {pct(loss)} of the API trace's reuse in the "
+                 "same window, all of it reuse across users, so the Bailian "
+                 "reuse here is a lower bound of the production value.")
+    return text
+
+
 def checks(s: Row, data: Row) -> str:
     items: List[str] = []
     integ = s.get("integrity") or {}
@@ -610,10 +640,7 @@ def checks(s: Row, data: Row) -> str:
             f"{pct(hp['sharegpt']['fraction'])}. The pacing decides who LRU "
             "serves, which is why real gaps are used.")
     items += [
-        "Thinning: to fit the mix, the Bailian traces keep only 2% (API) to "
-        "44% (thinking) of their sessions, which removes about a quarter of "
-        "the API trace's reuse across users. Their reuse here is a lower "
-        "bound of the production value.",
+        thinning(s),
         "Synthetic tokens: Bailian prompts are rebuilt from hashed block ids, "
         "so equal blocks match exactly but the text is random; nothing here "
         "depends on the text.",
