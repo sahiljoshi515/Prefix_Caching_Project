@@ -163,6 +163,7 @@ def build_data(s: Row) -> Row:
         "evictions": evictions,
     }
     data["mixRuns"] = mix_runs_view(s)
+    data["capCurve"] = s.get("capacity_curve")
     sim = s.get("sim", {}).get("balanced-human")
     if sim:
         caps = sorted(int(k) for k in sim["lru"] if k != "ceiling")

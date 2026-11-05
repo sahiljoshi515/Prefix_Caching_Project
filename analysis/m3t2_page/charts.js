@@ -124,6 +124,7 @@
         fill: s.color, stroke: tok("--surface"), strokeWidth: 1.5 })),
       ...(o.xType === "log" && o.xTicks ?
         [logTicks(o.xTicks, o.xTick || String)] : []),
+      ...(o.extra || []),
       Plot.ruleX(tips, Plot.pointerX({ x: "x", stroke: tok("--muted") })),
       Plot.tip(tips, Plot.pointerX({ x: "x", y: "y", title: "title",
         anchor: "top-left" })),
@@ -275,6 +276,45 @@
   const MIXPOLS = ["ceiling", "lru", "lfu", "fifo"];
   const SHORT = { ceiling: "No eviction", lru: "LRU", lfu: "LFU",
                   fifo: "FIFO" };
+
+  const capTick = (v) => v >= 1048576 ? (v / 1048576) + "M" :
+    Math.round(v / 1024) + "K";
+  const capTicks = (caps) => [32768, 65536, 131072, 262144, 524288, 1048576,
+    2097152, 4194304, 8388608].filter((v) => v >= caps[0] &&
+      v <= caps[caps.length - 1]);
+
+  draw["fig-capcurve"] = (node) => {
+    const C = D.capCurve;
+    if (!C) { node.append(el("p", {}, "Cache-size sweep missing.")); return; }
+    const pols = ["lru", "lfu", "fifo"];
+    lines(node, {
+      x: C.capacities, xType: "log", height: 330, marginRight: 64,
+      xDomain: [C.capacities[0] * 0.9, C.capacities[C.capacities.length - 1]
+        * 1.1], endLabels: true,
+      xLabel: "Cache size in tokens (log; 1K = 1,024) →",
+      yLabel: "↑ Hit rate: prompt tokens served from the cache",
+      yDomain: [0.3, 0.8],
+      xFmt: (x) => num(x) + " tokens", xTick: capTick,
+      xTicks: capTicks(C.capacities),
+      series: pols.map((p) => ({ id: p, label: POLICY[p], short: SHORT[p],
+        color: pol(p), y: C.curve[p].hit_rate, dots: true,
+        labelDy: { lru: -11, lfu: 3, fifo: 14 }[p] })),
+      rules: [{ x: C.fixed, label: "the fixed cache", color: tok("--muted") }],
+      hrules: C.ceiling == null ? [] : [{ y: C.ceiling,
+        label: "no eviction " + pct(C.ceiling) }],
+      extra: pols.map((p) => Plot.dot(C.engine.filter((e) => e.policy === p),
+        { x: "capacity", y: "engine", r: 6.5, symbol: SHAPE[p],
+          stroke: pol(p), fill: tok("--surface"), strokeWidth: 2,
+          title: (e) => POLICY[p] + ", engine run, seed " + e.seed + ", " +
+            num(e.capacity) + " tokens: " + pct(e.engine, 1) +
+            " (cache replay " + pct(e.replay, 1) + ")" })),
+    });
+    legend(node, pols.map((p) => ({ label: POLICY[p] + " (cache replay)",
+      color: pol(p) })).concat([
+      { label: "Engine run (vllm serve), one seed", color: tok("--ink"),
+        kind: "dot", hollow: true },
+      { label: "No eviction", color: tok("--muted") }]));
+  };
 
   draw["fig-mixbars"] = (node) => {
     const M = D.mixRuns;
@@ -669,7 +709,7 @@
       xLabel: "Cache size in tokens (log; 1K = 1,024) →",
       yLabel: "↑ Usable reuse (cache replay)",
       xFmt: (x) => num(x) + " tokens",
-      xTick: (v) => Math.round(v / 1024) + "K", xTicks: c.capacities,
+      xTick: capTick, xTicks: capTicks(c.capacities),
       yDomain: [0, Math.max(0.8, c.ceiling + 0.02)],
       rules: [{ x: c.fixed, label: "the fixed cache: 131,072 tokens",
                 color: tok("--muted") }],
@@ -701,6 +741,14 @@
 
   /* Tables under each figure (the same numbers, readable without hover). */
   const tables = {
+    "fig-capcurve": () => D.capCurve ? [["Cache (tokens)", "LRU", "LFU",
+      "FIFO", "Engine runs: engine (cache replay)"],
+      D.capCurve.capacities.map((c, i) => [num(c),
+        ...["lru", "lfu", "fifo"].map((p) =>
+          pct(D.capCurve.curve[p].hit_rate[i], 1)),
+        D.capCurve.engine.filter((e) => e.capacity === c).map((e) =>
+          SHORT[e.policy] + " s" + e.seed + " " + pct(e.engine, 1) + " (" +
+          pct(e.replay, 1) + ")").join(", ") || "–"])] : null,
     "fig-mixbars": () => D.mixRuns ? [["Policy", "Seed mean",
       ...D.mixRuns.seeds.map((k) => "Seed " + k), "Share of the ceiling"],
       MIXPOLS.map((p) => [POLICY[p], pct(D.mixRuns.bars[p].mean, 1),

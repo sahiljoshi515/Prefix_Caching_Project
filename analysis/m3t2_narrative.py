@@ -300,6 +300,117 @@ def _cut(served: List[Optional[float]], edges: List[float],
     return None
 
 
+def _tokens(n: float) -> str:
+    return (f"{n / 1048576:g}M" if n >= 1048576 else f"{n / 1024:g}K")
+
+
+def _verdicts(seeds_a: List[List[float]],
+              seeds_b: List[List[float]]) -> List[str]:
+    """Per cache size, "a", "b" or "tie": a difference counts only when
+    every seed agrees on its sign and the mean exceeds half a point."""
+    out = []
+    for xa, xb in zip(seeds_a, seeds_b):
+        if not xa or not xb or None in xa or None in xb:
+            out.append("tie")
+            continue
+        d = [p - q for p, q in zip(xa, xb)]
+        mean = sum(d) / len(d)
+        if abs(mean) >= 0.005 and (min(d) > 0 or max(d) < 0):
+            out.append("a" if mean > 0 else "b")
+        else:
+            out.append("tie")
+    return out
+
+
+def _runs(caps: List[int], verdicts: List[str], want: str) -> List[str]:
+    """Contiguous stretches of cache sizes with the verdict `want`, as
+    "48K" or "256K to 1M"."""
+    out, start = [], None
+    for i, v in enumerate(verdicts + ["end"]):
+        if v == want and start is None:
+            start = i
+        elif v != want and start is not None:
+            lo, hi = caps[start], caps[i - 1]
+            out.append(
+                _tokens(lo) if lo == hi else f"{_tokens(lo)} to {_tokens(hi)}")
+            start = None
+    return out
+
+
+def capacity_figure(s: Row, data: Row) -> str:
+    """Cache size against hit rate on the mix: the cache replay's curves
+    with the engine runs on top."""
+    C = data.get("capCurve")
+    if not C:
+        return ""
+    caps, cv, ceil = C["capacities"], C["curve"], C["ceiling"]
+    lru, lfu, fifo = (cv[p]["hit_rate"] for p in ("lru", "lfu", "fifo"))
+    lfu_v = _verdicts(cv["lfu"]["seeds"], cv["lru"]["seeds"])
+    fifo_v = _verdicts(cv["fifo"]["seeds"], cv["lru"]["seeds"])
+    lfu_wins, lru_wins = _runs(caps, lfu_v, "a"), _runs(caps, lfu_v, "b")
+    fifo_all_behind = all(v == "b" for v in fifo_v)
+    fifo_gap = [
+        100 * (q - p)
+        for xs, ys in zip(cv["fifo"]["seeds"], cv["lru"]["seeds"])
+        for p, q in zip(xs, ys)
+    ]
+    fifo_txt = ("FIFO trails LRU at every size"
+                if fifo_all_behind else "FIFO mostly trails LRU")
+    lfu_txt = (
+        (f"LFU beats LRU only at {' and '.join(lfu_wins)}"
+         if lfu_wins else "LFU never beats LRU") +
+        (f" and trails it from {' and '.join(lru_wins)}" if lru_wins else ""))
+    title = f"{fifo_txt}; {lfu_txt} tokens"
+    parts = []
+    if C["fixed"] in caps:
+        i = caps.index(C["fixed"])
+        parts.append(
+            f"At the fixed cache ({caps[i]:,} tokens) LRU serves "
+            f"{pct(lru[i])}, LFU {pct(lfu[i])} and FIFO {pct(fifo[i])} of "
+            "prompt tokens over the whole run.")
+        if 2 * caps[i] in caps:
+            j = caps.index(2 * caps[i])
+            parts.append(f"Doubling it gives LRU {pts(lru[j] - lru[i])}.")
+    parts.append(
+        "Compared seed by seed (a difference counts only when all three "
+        "seeds agree and it exceeds half a point): "
+        f"{fifo_txt}, by "
+        f"{min(fifo_gap):.0f} to {max(fifo_gap):.0f} points; "
+        f"{lfu_txt}; elsewhere LFU and LRU tie.")
+    if ceil is not None:
+        near = next((caps[k] for k in range(len(caps))
+                     if lru[k] is not None and ceil - lru[k] < 0.02), None)
+        parts.append(
+            f"LRU comes within 2 points of the no-eviction rate "
+            f"({pct(ceil)}) only at {_tokens(near)} tokens, "
+            f"{near / C['fixed']:.0f} times the fixed cache; below that the "
+            "cache cannot hold the working set and the policy matters."
+            if near else f"Even at {_tokens(caps[-1])} tokens LRU stays "
+            f"more than 2 points below the no-eviction rate ({pct(ceil)}).")
+    eng = [e for e in C["engine"] if e["replay"] is not None]
+    if eng:
+        diff = max(abs(e["engine"] - e["replay"]) for e in eng)
+        sizes = sorted({e["capacity"] for e in eng})
+        parts.append(
+            f"The {len(eng)} engine runs at "
+            f"{', '.join(_tokens(c) for c in sizes)} tokens land within "
+            f"{100 * diff:.1f} points of the replay for the same plan, so the "
+            f"curve can be trusted at least from {_tokens(sizes[0])} to "
+            f"{_tokens(sizes[-1])}.")
+    return figure(
+        "fig-capcurve",
+        title,
+        ["sim:cache replay, seeds 2–4", "measured:engine runs (markers)"],
+        " ".join(parts),
+        note="Hit rate: the share of prompt tokens served from the cache, "
+        "what vLLM reports as cached tokens. Here it counts the whole "
+        "30-minute run, warm-up included, as the cache replay does, so the "
+        "fixed-cache values sit a little below the totals above, which "
+        "leave out the first 10 minutes. Lines: our cache replay at "
+        f"{len(caps)} sizes (1K = 1,024 tokens), averaged over seeds 2 to 4. "
+        "Hollow markers: single engine runs (vllm serve).")
+
+
 def baselines(s: Row, data: Row) -> str:
     M = data.get("mixRuns")
     if not M:
@@ -419,6 +530,7 @@ sections after it split the same runs by workload.</p>
         f"{fifo_word} ({pts(fifo_v['min'])} to {pts(fifo_v['max'])}). The "
         "new policy has to raise this number without giving up any one "
         "workload, which the sections below check.")}
+{capacity_figure(s, data)}
 {figure("fig-timeline", "Every policy falls below the no-eviction run "
         "within minutes and stays there", ["measured:measured, 3 seeds"],
         time_take,
@@ -733,20 +845,45 @@ def headroom(s: Row, data: Row) -> str:
         size_txt = (f" LRU does not reach that even with "
                     f"{caps[-1]:,} tokens, {caps[-1] / cap['fixed']:.0f} "
                     "times the cache.")
+    elif catch:
+        k = catch / cap["fixed"]
+        prev = max((c for c in caps if c < catch), default=None)
+        lo = prev / cap["fixed"] if prev else None
+        title = ((f"LRU needs {lo:g} to {k:g} times the memory" if lo
+                  and lo >= 1 else f"LRU needs up to {k:g} times the memory") +
+                 " to match a policy that knew the future")
+        size_txt = (f" LRU falls short of that at {prev:,} tokens and "
+                    f"reaches it at {catch:,} tokens, {k:g} times the cache."
+                    if prev else f" LRU reaches that at {catch:,} tokens.")
     else:
         title = "A policy that knew the future would equal a bigger cache"
-        size_txt = (f" LRU needs {catch:,} tokens to match it."
-                    if catch else "")
+        size_txt = ""
     gaps = [
         bel - lru for bel, lru in zip(
             cap.get("curves", {}).get("belady", []), lru_curve)
         if bel is not None and lru is not None
     ]
-    gap_txt = (f" Across the sizes tried the gap stays between "
-               f"{100 * min(gaps):.0f} and {100 * max(gaps):.0f} points: "
-               "even the largest cache tried holds less than the mix's "
-               "working set, so the policy matters at every size here."
-               if gaps else "")
+    gap_txt = ""
+    if gaps:
+        gap_txt = (f" Across the sizes tried the gap runs from "
+                   f"{100 * max(gaps):.0f} points down to "
+                   f"{100 * gaps[-1]:.0f} at {caps[-1]:,} tokens" +
+                   (", where the cache holds nearly the whole working set and "
+                    "the policy stops mattering." if gaps[-1] < 0.02 else
+                    ": even the largest cache tried holds less than the mix's "
+                    "working set."))
+        bel = cap.get("curves", {}).get("belady", [])
+        full = next((c for c, v in zip(caps, bel)
+                     if v is not None and cap.get("ceiling") is not None
+                     and v >= cap["ceiling"] - 0.002), None)
+        lru_full = next((c for c, v in zip(caps, lru_curve)
+                         if v is not None and cap.get("ceiling") is not None
+                         and v >= cap["ceiling"] - 0.01), None)
+        if full and lru_full and lru_full > full:
+            gap_txt += (f" Belady already serves everything the traffic "
+                        f"allows at {full:,} tokens, while LRU needs about "
+                        f"{lru_full:,}: most of LRU's extra memory holds "
+                        "blocks that never come back.")
     return f"""
 <section class="section" aria-labelledby="headroom"><h2 id="headroom">How
 much room is there?</h2>

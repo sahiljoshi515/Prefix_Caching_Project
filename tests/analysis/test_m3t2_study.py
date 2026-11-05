@@ -244,3 +244,55 @@ def test_timeline_is_token_weighted_per_slice_with_the_warm_up():
     req = requests()
     req["status"] = arr(["completed", "failed", "completed", "completed"], OBJ)
     assert st.timeline(req, 30.0, 60.0, 16)["usable"][1] is None
+
+
+def test_capacity_curve_averages_the_reported_seeds(tmp_path):
+    # Two reported seeds, LRU at two sizes plus the ceiling; seed 1 (not
+    # reported) and an engine-timed row are left out. At 64 tokens the
+    # curve is (0.2 + 0.4) / 2 = 0.3; at 128, (0.5 + 0.7) / 2 = 0.6.
+    import json as _json
+
+    def row(seed, cap, value, timing="model", policy="lru"):
+        return {
+            "plan": f"data/processed/m3/balanced-human-s{seed}",
+            "policy": policy,
+            "capacity": cap,
+            "capacity_tokens": 0 if cap == "ceiling" else cap,
+            "timing": timing,
+            "summary": {
+                "usable_reused_fraction": value,
+                "block_hit_rate": value + 0.01
+            },
+        }
+
+    rows = [
+        row(2, 64, 0.2),
+        row(3, 64, 0.4),
+        row(2, 128, 0.5),
+        row(3, 128, 0.7),
+        row(1, 64, 0.9),
+        row(2, 64, 0.99, timing="engine:x"),
+        row(2, "ceiling", 0.8),
+        row(3, "ceiling", 0.9),
+    ]
+    sweep = tmp_path / "sweep.jsonl"
+    sweep.write_text("\n".join(_json.dumps(r) for r in rows))
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    cfg = {
+        "mix": "balanced",
+        "pacing": "human",
+        "reported_seeds": [2, 3],
+        "policies": ["lru"],
+        "workloads": W,
+        "block_size": 16,
+        "capacity_tokens": 128
+    }
+    out = st.capacity_curve(runs, sweep, cfg)
+    assert out["capacities"] == [64, 128]
+    assert out["curve"]["lru"]["hit_rate"] == [
+        pytest.approx(0.3), pytest.approx(0.6)
+    ]
+    assert out["curve"]["lru"]["seeds"][0] == [0.2, 0.4]
+    assert out["ceiling"] == pytest.approx(0.85)
+    assert out["engine"] == []

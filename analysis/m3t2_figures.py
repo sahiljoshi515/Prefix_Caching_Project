@@ -239,6 +239,61 @@ def mixed_baselines(s: Row, plt, out: Path) -> List[Path]:
     return _save(fig, out, "fig0_mixed_baselines")
 
 
+def capacity_hit_rate(s: Row, plt, out: Path) -> List[Path]:
+    """Cache size against hit rate on the mixed workload: the cache
+    replay's curves (mean of the reported seeds) and the engine runs."""
+    c = s.get("capacity_curve")
+    if not c:
+        return []
+    caps = c["capacities"]
+    fig, ax = plt.subplots(figsize=(6.5, 3.6))
+    for p in ("lru", "lfu", "fifo"):
+        color, marker, _ = POLICY_STYLE[p]
+        ax.plot(
+            caps,
+            [math.nan if v is None else v for v in c["curve"][p]["hit_rate"]],
+            color=color,
+            marker=marker,
+            ms=3,
+            lw=1.6,
+            label=f"{POLICY[p]} (cache replay)")
+        eng = [e for e in c["engine"] if e["policy"] == p]
+        ax.scatter([e["capacity"] for e in eng], [e["engine"] for e in eng],
+                   s=46,
+                   marker=marker,
+                   facecolor="white",
+                   edgecolor=color,
+                   linewidth=1.6,
+                   zorder=3)
+    ax.scatter([], [],
+               s=46,
+               marker="o",
+               facecolor="white",
+               edgecolor="#111a1d",
+               label="Engine run (one seed)")
+    if c.get("ceiling") is not None:
+        ax.axhline(c["ceiling"],
+                   color="#7b878b",
+                   lw=1,
+                   ls="--",
+                   label="No eviction")
+    ax.axvline(c["fixed"], color="#7b878b", lw=0.8)
+    ax.set_xscale("log", base=2)
+    ticks = [
+        t for t in (32768, 65536, 131072, 262144, 524288, 1048576, 2097152,
+                    4194304) if caps[0] <= t <= caps[-1]
+    ]
+    ax.set_xticks(ticks, [
+        f"{t // 1048576}M" if t >= 1048576 else f"{t // 1024}K" for t in ticks
+    ])
+    ax.set_xlabel("Cache size (tokens)")
+    ax.set_ylabel("Hit rate (prompt tokens from cache)")
+    ax.set_ylim(0.3, 0.8)
+    ax.grid(alpha=0.25)
+    ax.legend(fontsize=7, frameon=False, loc="lower right")
+    return _save(fig, out, "fig6_capacity_hit_rate")
+
+
 def capacity(s: Row, plt, out: Path) -> List[Path]:
     sim = (s.get("sim") or {}).get("balanced-human")
     if not sim:
@@ -286,7 +341,7 @@ def main(argv=None) -> None:
     args.out.mkdir(parents=True, exist_ok=True)
     written = []
     for draw in (mixed_baselines, come_back, hit_by_interval, usable, lost,
-                 capacity):
+                 capacity, capacity_hit_rate):
         written += draw(s, plt, args.out)
         plt.close("all")
     for path in written:

@@ -51,6 +51,22 @@ to 1 s. Only LFU serves any reuses after 30 s (up to 18%). Median idle time
 at eviction is 14 s for LRU and FIFO and 2.1 s for LFU. See
 [`figures/task2/fig0_mixed_baselines.png`](figures/task2/fig0_mixed_baselines.png).
 
+**Cache size against hit rate on the mix.** The hit rate here is the share
+of prompt tokens served from the cache over the whole run, warm-up
+included. It comes from the cache replay at 13 sizes from 32K to 4M tokens,
+averaged over seeds 2–4, with 15 engine runs as checkpoints: seed 2 at 64K,
+128K and 256K, and seeds 3–4 at 128K. The engine runs land within 1.6
+points of the replay for the same plan.
+
+At 131,072 tokens LRU serves 53.5%, LFU 52.3% and FIFO 48.4%. Doubling the
+cache gives LRU +5.4 points, and LRU comes within 2 points of the
+no-eviction rate (74.3%) only at 4M tokens, 32 times the cache.
+
+Compared seed by seed, FIFO trails LRU at every size, by 2–7 points. LFU
+beats LRU only at 32K–48K and trails it from 256K to 1M; elsewhere the two
+tie. See
+[`figures/task2/fig6_capacity_hit_rate.png`](figures/task2/fig6_capacity_hit_rate.png).
+
 The same runs, split by workload:
 
 | Usable reuse | Whole mix | ShareGPT | Bailian chat | AgentBank | CC-Bench | Bailian thinking | Bailian coder | Bailian API |
@@ -95,17 +111,23 @@ Paired against LRU per seed: LFU −3.2, −1.6, −0.6 points; FIFO −5.4, −
    signals 0.92 and 0.79; adding the true label gains 0.01 for fresh blocks
    and 0.03–0.04 for blocks idle 30 s to 2 min.
 
-4. **Headroom (cache simulator, a guide).** At 131,072 tokens Belady's
-   offline rule serves 65.6% against LRU's 52.7% (LFU 51.0%, FIFO 47.3%;
-   ceiling 74.5%), more than LRU reaches with 393,216 tokens (61.3%). The
-   gap stays 7–13 points over every size tried (32K–384K tokens), because
-   none holds the mix's working set (about 28,000 blocks with a future
-   reuse, against 8,192 cached). Weighted by prompt tokens, 64% of Belady's
-   gain is in the human-paced workloads (Bailian coder 29%, thinking 15%,
-   chat 11%, ShareGPT 9%) and 32% in CC-Bench alone. These runs average
-   seeds 1–4 with the simulator's timing, hence LRU 52.7% here against 55.8%
-   in the engine runs. Belady knows the future; a real policy wins back only
-   part of this gap.
+4. **Headroom (cache simulator, a guide, seeds 1–4).**
+   - At 131,072 tokens, Belady's offline rule serves 65.6% against LRU's
+     52.7% (LFU 51.0%, FIFO 47.3%; ceiling 74.5%).
+   - LRU falls short of Belady's 65.6% at 524,288 tokens (63.5%) and first
+     reaches it at 786,432 (66.6%), 4–6 times the cache.
+   - The gap is 7 points at 32K, peaks at 13 points around 128K–256K, and
+     closes to under 1 point at 4M tokens.
+   - Belady already reaches the no-eviction rate at 786,432 tokens, while
+     LRU needs about 4M. LRU's extra memory mostly holds blocks that never
+     come back.
+   - Weighted by prompt tokens, 64% of Belady's gain is in the human-paced
+     workloads (Bailian coder 29%, thinking 15%, chat 11%, ShareGPT 9%) and
+     32% in CC-Bench alone.
+   - These runs average seeds 1–4 with the simulator's timing, hence LRU
+     52.7% here against 55.8% in the engine runs.
+   - Belady knows the future; a real policy wins back only part of this
+     gap.
    With the engine's own timing the simulator matches the engine runs within
    0.01 points and evicts the same blocks (99.996%).
 

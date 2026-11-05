@@ -41,6 +41,7 @@ import argparse
 import gzip
 import json
 import math
+import re
 from array import array
 from collections import defaultdict
 from pathlib import Path
@@ -753,6 +754,7 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
     if sweep is not None and sweep.exists():
         summary["sim"] = sim_summary(sweep, cfg)
         summary["validation"] = validation(runs, sweep, cfg)
+        summary["capacity_curve"] = capacity_curve(runs, sweep, cfg)
     if reports is not None:
         cs = reports / "validate_cachesim.json"
         if cs.exists():
@@ -1030,6 +1032,83 @@ def sim_summary(path: Path, cfg: Row) -> Row:
             }
         out[group] = curves
     return out
+
+
+def capacity_curve(runs: Path, sweep: Path, cfg: Row) -> Optional[Row]:
+    """The mixed workload's hit rate (share of prompt tokens served from the
+    cache over the whole run, warm-up included, as the cache replay counts
+    it) against cache size: the replay's curve per policy averaged over the
+    reported seeds, and every engine run of those plans at any size beside
+    the replay's value for the same plan and size."""
+    seeds = list(cfg["reported_seeds"])
+    plans = {f"{cfg['mix']}-{cfg['pacing']}-s{x}": x for x in seeds}
+    sims: Dict[Tuple[str, str, Any], Row] = {}
+    for r in read_sweep(sweep):
+        if "summary" not in r or r.get("timing", "model") != "model":
+            continue
+        plan = Path(r["plan"]).name
+        if plan not in plans:
+            continue
+        ceiling = str(r.get("capacity")) == "ceiling"
+        key = "ceiling" if ceiling else int(r["capacity_tokens"])
+        sims[(plan, "ceiling" if ceiling else r["policy"], key)] = r["summary"]
+    caps = sorted({k for (_, _, k) in sims if k != "ceiling"})
+    if not caps:
+        return None
+    curve: Row = {}
+    for policy in cfg["policies"]:
+        curve[policy] = {"hit_rate": [], "block_hit_rate": [], "seeds": []}
+        for cap in caps:
+            vals = [sims.get((plan, policy, cap)) for plan in plans]
+            if any(v is None for v in vals):
+                for k in curve[policy]:
+                    curve[policy][k].append(None)
+                continue
+            usable = [v["usable_reused_fraction"] for v in vals]
+            curve[policy]["hit_rate"].append(float(np.mean(usable)))
+            curve[policy]["block_hit_rate"].append(
+                float(np.mean([v["block_hit_rate"] for v in vals])))
+            curve[policy]["seeds"].append(usable)
+    ceil = [sims.get((plan, "ceiling", "ceiling")) for plan in plans]
+    engine: List[Row] = []
+    pattern = re.compile(rf"{re.escape(cfg['mix'])}-{re.escape(cfg['pacing'])}"
+                         r"-s(\d+)-(lru|lfu|fifo)-cap(\d+)")
+    for path in sorted(runs.iterdir()):
+        m = pattern.fullmatch(path.name)
+        if (not m or int(m[1]) not in seeds
+                or not (path / "tables" / "requests.parquet").exists()):
+            continue
+        plan, cap = f"{cfg['mix']}-{cfg['pacing']}-s{m[1]}", int(m[3])
+        req = load_requests(path)
+        whole = usable_by_workload(req, cfg["workloads"], -math.inf, math.inf,
+                                   cfg["block_size"])["all"]["fraction"]
+        sim = sims.get((plan, m[2], cap))
+        engine.append({
+            "seed": int(m[1]),
+            "policy": m[2],
+            "capacity": cap,
+            "engine": whole,
+            "replay": sim["usable_reused_fraction"] if sim else None,
+        })
+    return {
+        "note":
+        "whole run, warm-up included; curve: cache replay, model "
+        "timing, mean of the reported seeds; engine: single vllm serve runs",
+        "seeds":
+        seeds,
+        "fixed":
+        cfg["capacity_tokens"],
+        "capacities":
+        caps,
+        "curve":
+        curve,
+        "ceiling":
+        (float(np.mean([c["usable_reused_fraction"]
+                        for c in ceil])) if all(c is not None
+                                                for c in ceil) else None),
+        "engine":
+        engine,
+    }
 
 
 def validation(runs: Path, sweep: Path, cfg: Row) -> Row:
