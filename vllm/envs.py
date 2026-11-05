@@ -489,13 +489,14 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     lambda: os.getenv("VLLM_CACHE_EVENT_LOG", None),
 
     # COMP 536: eviction policy of the GPU prefix cache: lru, lfu, fifo,
-    # ttdf or race_rp (vllm/core/eviction_policies.py). Unset: lru, vLLM's
-    # only policy.
+    # ttdf, race_rp or sampled_lrfu (vllm/core/eviction_policies.py).
+    # Unset: lru, vLLM's only policy.
     "VLLM_EVICTION_POLICY":
     lambda: os.getenv("VLLM_EVICTION_POLICY", None),
 
-    # COMP 536: key=value,... settings of ttdf and race_rp
-    # (vllm/core/reuse_evictors.py). Unset: their defaults.
+    # COMP 536: key=value,... settings of ttdf, race_rp and sampled_lrfu
+    # (vllm/core/reuse_evictors.py, vllm/core/sampled_lrfu.py). Unset:
+    # their defaults.
     "VLLM_EVICTION_PARAMS":
     lambda: os.getenv("VLLM_EVICTION_PARAMS", None),
 }

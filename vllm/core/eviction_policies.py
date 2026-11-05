@@ -2,10 +2,11 @@
 
 vLLM v0 ships only ``LRUEvictor`` (``vllm/core/evictor.py``). This module adds
 two more policies for the eviction study and lets ``VLLM_EVICTION_POLICY``
-(``lru``, ``lfu``, ``fifo``, ``ttdf`` or ``race_rp``; unset means ``lru``)
-choose the evictor of the GPU prefix-caching allocator. See
-``specs/005-m2-cache-tuning``. TTDF and RACE-RP (Milestone 3) live in
-``vllm/core/reuse_evictors.py`` and read ``VLLM_EVICTION_PARAMS``.
+(``lru``, ``lfu``, ``fifo``, ``ttdf``, ``race_rp`` or ``sampled_lrfu``;
+unset means ``lru``) choose the evictor of the GPU prefix-caching
+allocator. See ``specs/005-m2-cache-tuning``. TTDF and RACE-RP (Milestone
+3) live in ``vllm/core/reuse_evictors.py``, Sampled LRFU in
+``vllm/core/sampled_lrfu.py``; they read ``VLLM_EVICTION_PARAMS``.
 
 Both evictors order the blocks in the free pool (refcount 0) by a key, lowest
 first:
@@ -47,6 +48,7 @@ POLICY_NAMES = {
     "lfu": EvictionPolicy.LFU,
     "ttdf": EvictionPolicy.TTDF,
     "race_rp": EvictionPolicy.RACE_RP,
+    "sampled_lrfu": EvictionPolicy.SAMPLED_LRFU,
 }
 
 _Key = Tuple[float, ...]
@@ -212,4 +214,7 @@ def make_project_evictor(policy: EvictionPolicy) -> Optional[Evictor]:
         cls = (reuse_evictors.TTDFEvictor if policy == EvictionPolicy.TTDF else
                reuse_evictors.RaceRPEvictor)
         return cls.from_params(envs.VLLM_EVICTION_PARAMS)
+    if policy == EvictionPolicy.SAMPLED_LRFU:
+        from vllm.core.sampled_lrfu import SampledLRFUEvictor
+        return SampledLRFUEvictor.from_params(envs.VLLM_EVICTION_PARAMS)
     return None

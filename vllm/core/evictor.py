@@ -15,6 +15,8 @@ class EvictionPolicy(enum.Enum):
     # COMP 536: implemented in vllm/core/reuse_evictors.py.
     TTDF = enum.auto()
     RACE_RP = enum.auto()
+    # COMP 536: implemented in vllm/core/sampled_lrfu.py.
+    SAMPLED_LRFU = enum.auto()
 
 
 class Evictor(ABC):
