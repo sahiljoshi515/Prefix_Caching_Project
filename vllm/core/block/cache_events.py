@@ -143,6 +143,9 @@ class RequestContext:
         self.enabled = False
         self.request_id: Optional[str] = None
         self.op: Optional[str] = None
+        # The call's time (`time.time()` when it began): TTDF and RACE-RP
+        # stamp every access and eviction of one call with it.
+        self.time: Optional[float] = None
         # Sequences carry no request id, so `allocate` records it here.
         self._seq_requests: Dict[int, str] = {}
 
@@ -159,12 +162,13 @@ class RequestContext:
         elif op == "allocate":
             for seq in target.get_seqs():
                 self._seq_requests[seq.seq_id] = request_id
-        previous = self.request_id, self.op
+        previous = self.request_id, self.op, self.time
         self.request_id, self.op = request_id, op
+        self.time = time.time()
         try:
             yield
         finally:
-            self.request_id, self.op = previous
+            self.request_id, self.op, self.time = previous
             if op == "free":
                 self._seq_requests.pop(target.seq_id, None)
 
@@ -188,6 +192,15 @@ def set_current_request(request_id: Optional[str],
     tests)."""
     _context.enabled = True
     _context.request_id, _context.op = request_id, op
+    _context.time = time.time()
+
+
+def event_time() -> float:
+    """The time of the block-manager call being served (`time.time()` at
+    its start, or at `set_current_request`), else `time.time()`. The cache
+    simulator replaces this module's `time`, so its calls get simulated
+    times."""
+    return _context.time if _context.time is not None else time.time()
 
 
 ENGINE_PREFIXES = ("chatcmpl-", "cmpl-")

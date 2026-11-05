@@ -1,7 +1,7 @@
 import enum
 import heapq
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 class EvictionPolicy(enum.Enum):
@@ -12,6 +12,9 @@ class EvictionPolicy(enum.Enum):
     # COMP 536: implemented in vllm/core/eviction_policies.py.
     FIFO = enum.auto()
     LFU = enum.auto()
+    # COMP 536: implemented in vllm/core/reuse_evictors.py.
+    TTDF = enum.auto()
+    RACE_RP = enum.auto()
 
 
 class Evictor(ABC):
@@ -58,6 +61,15 @@ class Evictor(ABC):
     def record_hit(self, block_id: int) -> None:
         """Called on every prefix-cache lookup hit on the block, in use or
         not (COMP 536). Only LFU counts hits; the default does nothing."""
+        return
+
+    def record_access(self, block_id: int, content_hash: int, depth: int,
+                      prev_hash: Optional[int]) -> None:
+        """Called each time a request uses a cached block: a lookup hit, or
+        the block's insertion or deduplication once it is full (COMP 536).
+        `depth` is its 1-based position in the prompt and `prev_hash` its
+        parent's content hash (None for a first block). Only TTDF and
+        RACE-RP use it; the default does nothing."""
         return
 
 

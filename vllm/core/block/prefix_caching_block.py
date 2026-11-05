@@ -180,6 +180,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             self.evictor.record_hit(cached_block_id)
             block.block_id = cached_block_id
             self._incr_refcount_cached_block(block)
+            self._record_access(block)
             return block
         self.metric_data.query(hit=False)
         if self._events is not None:
@@ -481,6 +482,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
             self._touched_blocks.add(block.block_id)
             if self._events is not None:
                 self._events.log("insert", block.content_hash, block.block_id)
+            self._record_access(block)
             return block.block_id
 
         # Reuse the cached content hash
@@ -493,8 +495,16 @@ class PrefixCachingBlockAllocator(BlockAllocator):
         # it from the evictor.
         # Note that in this case, the block is marked as computed
         self._incr_refcount_cached_block(block)
+        self._record_access(block)
 
         return block.block_id
+
+    def _record_access(self, block: Block) -> None:
+        # COMP 536: a request used this cached block (TTDF and RACE-RP).
+        prev = block.prev_block
+        self.evictor.record_access(block.block_id, block.content_hash,
+                                   block.num_tokens_total // self._block_size,
+                                   None if prev is None else prev.content_hash)
 
     def cow_block_if_not_appendable(self, block: Block) -> BlockId:
         """Performs a copy-on-write operation on the given block if it is not
