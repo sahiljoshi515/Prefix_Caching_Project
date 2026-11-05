@@ -63,6 +63,7 @@ import dataclasses
 import fcntl
 import functools
 import gzip
+import hashlib
 import json
 import math
 import multiprocessing
@@ -93,8 +94,22 @@ from client_simulator.token_plan import read_plan
 DEFAULT_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 # The plans drop turns longer than this (analysis/mix.py --max-model-len).
 MAX_MODEL_LEN = 32768
-GRIDS = ("phase1", "smoke", "isolated")
+GRIDS = ("phase1", "smoke", "isolated", "policies")
 BASELINES = ("lru", "lfu", "fifo")
+# Milestone 3's two policies (vllm/core/reuse_evictors.py).
+NEW_POLICIES = ("ttdf", "race_rp")
+# RACE-RP's sketches, trained on seed 1 (analysis/race_train.py).
+RACE_SKETCH = Path("results/m3-race/sketch-L16-P6.json")
+# Engine checks of the capacity sweep's replay at its two ends.
+POLICY_CHECK_CAPACITIES = (32768, 393216)
+# RACE-RP scores with small NumPy products; a math library that starts a
+# thread per core for them would load the machine every other run shares.
+ONE_THREAD = {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+}
 # Phase 0's capacity (plan.md): there LRU's usable reuse fell 12.9 points
 # short of the no-eviction ceiling, so the mix is under pressure (FR-007).
 DEFAULT_CAPACITY = 131072
@@ -305,6 +320,11 @@ def grid_configs(name: str,
     (the system prompt ShareGPT, AgentBank and CC-Bench share; at most 1.5%
     on one seed), so these plans need no ceiling of their own: the study
     uses the mix's.
+
+    ``policies`` (10 runs) replays the balanced plans of the reported seeds
+    under TTDF and RACE-RP at `capacity_tokens` (6), and seed 2's at the
+    capacity sweep's two ends, 32K and 384K tokens (4), to check the
+    replay; the baselines' runs and ceilings are phase1's.
     """
 
     def plan(mix: str, pacing: str, seed: int) -> List[MixConfig]:
@@ -330,6 +350,14 @@ def grid_configs(name: str,
             MixConfig(isolate.isolated_mix(group), "human", seed, policy,
                       capacity_tokens) for seed in (2, 3, 4)
             for group in isolate.GROUPS for policy in BASELINES
+        ]
+    elif name == "policies":
+        configs = [
+            MixConfig("balanced", "human", seed, policy, capacity_tokens)
+            for seed in (2, 3, 4) for policy in NEW_POLICIES
+        ] + [
+            MixConfig("balanced", "human", 2, policy, capacity)
+            for capacity in POLICY_CHECK_CAPACITIES for policy in NEW_POLICIES
         ]
     else:
         raise ValueError(f"Unknown grid {name!r}; use one of "
@@ -384,6 +412,26 @@ def parse_shard(text: str) -> Tuple[int, int]:
 
 
 # --- Plans -----------------------------------------------------------------
+
+
+def policy_env(policy: str,
+               run_dir: Path,
+               sketch: Path = RACE_SKETCH) -> Dict[str, str]:
+    """The server settings of an engine run of TTDF or RACE-RP: their
+    counters go to the run's ``evictor-stats.json``, and RACE-RP loads
+    `sketch` and uses one math thread (`ONE_THREAD`). Nothing for the other
+    policies."""
+    if policy not in NEW_POLICIES:
+        return {}
+    params = [f"stats={(run_dir / 'evictor-stats.json').resolve()}"]
+    extra: Dict[str, str] = {}
+    if policy == "race_rp":
+        if not sketch.exists():
+            raise RunnerError(f"race_rp needs its sketch {sketch}; run "
+                              "python -m analysis.race_train first")
+        params.insert(0, f"sketch={sketch.resolve()}")
+        extra = dict(ONE_THREAD)
+    return {"VLLM_EVICTION_PARAMS": ",".join(params), **extra}
 
 
 def plan_dir(data: Path, config: MixConfig) -> Path:
@@ -916,6 +964,11 @@ class _Grid:
         if config.ceiling:
             capacity = self.ceiling_capacity(config, path, max_model_len,
                                              updates)
+        env = policy_env(config.policy, run_dir, RACE_SKETCH)
+        if config.policy == "race_rp":
+            updates["race_sketch"] = str(RACE_SKETCH)
+            updates["race_sketch_sha256"] = hashlib.sha256(
+                RACE_SKETCH.read_bytes()).hexdigest()
         self.replay(path,
                     run_dir,
                     policy=config.policy,
@@ -924,7 +977,10 @@ class _Grid:
                     max_model_len=max_model_len,
                     port=port,
                     stop_at=plan["stop_s"] + self.stop_slack,
-                    manifest_updates=updates)
+                    manifest_updates=updates,
+                    **({
+                        "extra_env": env
+                    } if env else {}))
         if config.ceiling:
             check_ceiling(run_dir)
 

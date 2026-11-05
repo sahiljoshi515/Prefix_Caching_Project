@@ -32,8 +32,10 @@ preemption (a decode block that finds no free block is counted and the
 request stops growing). A request whose prompt does not fit waits until a
 block is freed, like ``AllocStatus.LATER``; such waits are counted.
 
-The policy is one of vLLM's (``lru``, ``lfu``, ``fifo``, set through
-``VLLM_EVICTION_POLICY``) or ``belady``, the offline optimum of
+The policy is one of vLLM's (``lru``, ``lfu``, ``fifo``, ``ttdf``,
+``race_rp``, set through ``VLLM_EVICTION_POLICY``; text after a colon, as in
+``ttdf:tau_short=2``, becomes ``VLLM_EVICTION_PARAMS``) or ``belady``, the
+offline optimum of
 ``analysis/oracle.py``, which reads every future prompt lookup. Belady
 bounds what any policy could reuse at a capacity. It is a reference that
 only the simulator can run, never a vLLM policy, and its summary says so
@@ -46,6 +48,7 @@ import heapq
 import json
 import logging
 import os
+import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -196,6 +199,8 @@ class _Active:
 class SimResult:
     summary: Dict[str, Any]
     rows: List[Dict[str, Any]] = field(default_factory=list)
+    # (simulated time, workload of the block's last request) per eviction.
+    evictions: List[Tuple[float, Optional[str]]] = field(default_factory=list)
 
 
 @contextlib.contextmanager
@@ -247,9 +252,11 @@ class CacheSim:
         # Belady is not a vLLM policy: the allocator is built with LRU (not
         # logged, as it is not the policy) and the oracle's evictor replaces
         # LRU's before anything is cached. `run` hands it the lookups.
-        belady = policy.strip().lower() == BELADY
+        name, _, params = policy.partition(":")
+        belady = name.strip().lower() == BELADY
         settings: Dict[str, Optional[str]] = {
-            "VLLM_EVICTION_POLICY": "lru" if belady else policy,
+            "VLLM_EVICTION_POLICY": "lru" if belady else name,
+            "VLLM_EVICTION_PARAMS": params or None,
             "VLLM_CACHE_EVENT_LOG": str(event_log) if event_log else None,
             **(env or {}),
         }
@@ -269,6 +276,9 @@ class CacheSim:
         self.recorder = self.gpu._events
         self.counts: Counter = Counter()
         self._hits = 0
+        # Content hash -> workload of the last request that used the block.
+        self.owner: Dict[int, str] = {}
+        self.evictions: List[Tuple[float, Optional[str]]] = []
         record_hit, evict = self.gpu.evictor.record_hit, self.gpu.evictor.evict
 
         def counting_hit(block_id: int) -> None:
@@ -277,7 +287,12 @@ class CacheSim:
 
         def counting_evict():
             self.counts["evictions"] += 1
-            return evict()
+            start = time.perf_counter()
+            block_id, content_hash = evict()
+            self.counts["evict_seconds"] += time.perf_counter() - start
+            self.evictions.append(
+                (self.clock.now, self.owner.get(content_hash)))
+            return block_id, content_hash
 
         self.gpu.evictor.record_hit = counting_hit
         self.gpu.evictor.evict = counting_evict
@@ -398,6 +413,8 @@ class CacheSim:
             self.alloc.mark_blocks_as_computed([])
             hits = self._hits - hits_before
             workload = r.workload
+            for h in hashes:
+                self.owner[h] = workload
             prompt = len(r.prompt_token_ids)
             usable_tokens = min(usable * self.block_size, prompt)
             row = {
@@ -465,6 +482,9 @@ class CacheSim:
                             state.table.append_token_ids(rest)
                         except BlockAllocator.NoFreeBlocksError:
                             self.counts["decode_out_of_blocks"] += 1
+                for block in state.table.blocks:
+                    if block.content_hash is not None:
+                        self.owner[block.content_hash] = state.workload
                 self.alloc.mark_blocks_as_accessed(
                     state.table.physical_block_ids, timing[rid].la)
                 self._attribute(r, "free")
@@ -475,7 +495,7 @@ class CacheSim:
             if self.recorder is not None:
                 self.recorder.close()
         self.counts["never_allocated"] += len(waiting)
-        return SimResult(self._summary(per, rows), rows)
+        return SimResult(self._summary(per, rows), rows, self.evictions)
 
     def _summary(self, per: Dict[str, Counter],
                  rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -504,17 +524,27 @@ class CacheSim:
             **({
                 "offline_oracle": True
             } if self.belady is not None else {}),
+            # TTDF's and RACE-RP's own counters (scans, metadata size).
+            **({
+                "evictor": self.gpu.evictor.summary()
+            } if hasattr(self.gpu.evictor, "summary") else {}),
             "workloads": {w: fractions(c)
                           for w, c in sorted(per.items())},
         }
 
 
-def window_summary(rows: Sequence[Dict[str,
-                                       Any]], requests: Sequence[TokenRequest],
-                   w0: float, stop: float) -> Dict[str, Any]:
+def window_summary(
+    rows: Sequence[Dict[str, Any]],
+    requests: Sequence[TokenRequest],
+    w0: float,
+    stop: float,
+    evictions: Sequence[Tuple[float, Optional[str]]] = ()
+) -> Dict[str, Any]:
     """Prompt and usable tokens of the requests planned in [w0, stop),
     overall and per workload, as the study's engine numbers count them
-    (``client_simulator.plan_replay.planned_s``)."""
+    (``client_simulator.plan_replay.planned_s``), and the evictions in
+    [w0, stop) on the simulated clock, by the workload of the evicted
+    block's last request (``evictions``, total and ``workloads``)."""
     planned = {r.request_id: planned_s(r) for r in requests}
     per: Dict[str, Counter] = {}
     for row in rows:
@@ -533,9 +563,15 @@ def window_summary(rows: Sequence[Dict[str,
             c["usable_tokens"] / prompt if prompt else None
         }
 
+    evicted: Counter = Counter(w for t, w in evictions if w0 <= t < stop)
+    for w, n in evicted.items():
+        if w is not None:
+            per.setdefault(w, Counter())["evictions"] = n
     total: Counter = Counter()
     for c in per.values():
         total.update(c)
+    if evicted:
+        total["evictions"] = sum(evicted.values())
     return {
         "w0_s": w0,
         "stop_s": stop,
@@ -574,7 +610,7 @@ def simulate(plan_dir: Path,
     result = sim.run(requests, times)
     if window is not None:
         result.summary["window"] = window_summary(result.rows, requests,
-                                                  *window)
+                                                  *window, result.evictions)
     if out is not None:
         with (out / "client.jsonl").open("w") as f:
             for row in result.rows:
@@ -604,8 +640,10 @@ def main(argv=None) -> None:
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--policy",
                         default="lru",
-                        help="lru, lfu or fifo (vLLM's evictors), or belady "
-                        "(the offline optimum; simulator only)")
+                        help="lru, lfu, fifo, ttdf or race_rp (vLLM's "
+                        "evictors; settings after a colon, e.g. "
+                        "ttdf:tau_short=2), or belady (the offline optimum; "
+                        "simulator only)")
     parser.add_argument("--capacity", type=int, required=True)
     parser.add_argument("--block-size", type=int, default=16)
     parser.add_argument("--timing",
