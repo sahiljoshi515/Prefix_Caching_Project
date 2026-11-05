@@ -839,11 +839,15 @@ def isolation_study(runs: Path, cfg: Row, headline: Row,
     }
 
 
-def mixed_group_view(headline: Row, cfg: Row) -> Row:
+def mixed_group_view(headline: Row,
+                     cfg: Row,
+                     policies: Optional[List[str]] = None) -> Row:
     """The mixed runs' usable reuse per group (and the whole mix), per
-    policy and the ceiling: seed mean and spread, and each policy's paired
-    difference from LRU with its verdict; and the prompt tokens per seed."""
-    seeds, policies = cfg["reported_seeds"], cfg["policies"]
+    policy (`policies`, default the baselines) and the ceiling: seed mean
+    and spread, and each policy's paired difference from LRU with its
+    verdict; and the prompt tokens per seed."""
+    seeds = cfg["reported_seeds"]
+    policies = list(policies or cfg["policies"])
     out: Row = {}
     for key in list(GROUPS) + ["all"]:
         per = {
@@ -865,17 +869,36 @@ def mixed_group_view(headline: Row, cfg: Row) -> Row:
     return out
 
 
+def new_policies_run(runs: Path, cfg: Row) -> List[str]:
+    """The new policies (``new_policies``) whose engine runs at the fixed
+    capacity have tables for every reported seed; the others are left out
+    of the engine views."""
+    return [
+        p for p in cfg.get("new_policies", [])
+        if all((
+            runs /
+            run_name(cfg["mix"], cfg["pacing"], x, p, cfg["capacity_tokens"]) /
+            "tables" / "requests.parquet").exists()
+               for x in cfg["reported_seeds"])
+    ]
+
+
 def study(runs: Path,
           cfg: Row,
           sweep: Optional[Path],
           reports: Optional[Path],
           plans_root: Path,
-          capacity_sweep: Optional[Path] = None) -> Row:
+          capacity_sweep: Optional[Path] = None,
+          tuning_sweep: Optional[Path] = None,
+          overhead_sweep: Optional[Path] = None) -> Row:
     w0, stop, bs = cfg["w0_s"], cfg["stop_s"], cfg["block_size"]
     wl, cap = cfg["workloads"], cfg["capacity_tokens"]
     mix, pacing = cfg["mix"], cfg["pacing"]
     seeds = cfg["reported_seeds"]
-    policies = cfg["policies"]
+    # TTDF and RACE-RP join the mixed-workload views (not the alone runs,
+    # which are the baselines'), once their engine runs are analysed.
+    new = new_policies_run(runs, cfg)
+    policies = cfg["policies"] + new
     summary: Row = {"config": cfg}
 
     # Headline, Q2 portion and the policy views, per reported seed.
@@ -1007,7 +1030,7 @@ def study(runs: Path,
                          fine)
         for g in GROUPS
     }
-    summary["mixed_groups"] = mixed_group_view(headline, cfg)
+    summary["mixed_groups"] = mixed_group_view(headline, cfg, policies)
     summary["isolation"] = isolation_study(runs, cfg, headline, mixed_latency,
                                            mixed_lookups)
     summary["lost"] = lost
@@ -1070,10 +1093,35 @@ def study(runs: Path,
         summary["sim"] = sim_summary(sweep, cfg)
         summary["validation"] = validation(runs, sweep, cfg)
         summary["capacity_curve"] = capacity_curve(runs, sweep, cfg)
+    from analysis import m3t2_policies as mp
+    tune = (mp.tuning(mp.read_rows(tuning_sweep))
+            if tuning_sweep is not None else None)
+    specs = mp.policy_specs(tune)
     if capacity_sweep is not None and capacity_sweep.exists():
-        summary["capacity_window"] = capacity_curve(runs, capacity_sweep, cfg,
-                                                    (w0, stop),
-                                                    cfg["sim_policies"])
+        summary["capacity_window"] = capacity_curve(
+            runs, capacity_sweep, cfg, (w0, stop), cfg["sim_policies"] +
+            [p for p in specs if p not in cfg["sim_policies"]], specs)
+    sketch = Path(mp.SKETCH)
+    summary["new_policies"] = {
+        "engine":
+        new,
+        "specs":
+        specs,
+        "sketch":
+        (json.loads(sketch.read_text())["meta"] if sketch.exists() else None),
+        "tuning":
+        tune,
+        "evictions":
+        mp.eviction_view({p: views[p]["evictions"]
+                          for p in policies}, isolate.GROUPS, stop - w0),
+        "overhead":
+        mp.overhead_view(
+            runs, {
+                p: [run_name(mix, pacing, x, p, cap) for x in seeds]
+                for p in new
+            },
+            mp.read_rows(overhead_sweep) if overhead_sweep else [], specs),
+    }
     if reports is not None:
         cs = reports / "validate_cachesim.json"
         if cs.exists():
@@ -1357,7 +1405,8 @@ def capacity_curve(runs: Path,
                    sweep: Path,
                    cfg: Row,
                    window_s: Optional[Tuple[float, float]] = None,
-                   policies: Optional[Sequence[str]] = None) -> Optional[Row]:
+                   policies: Optional[Sequence[str]] = None,
+                   specs: Optional[Dict[str, str]] = None) -> Optional[Row]:
     """The mixed workload's hit rate (share of prompt tokens served from the
     cache) against cache size: the replay's curve per policy averaged over
     the reported seeds, and every engine run of those plans at any size
@@ -1366,11 +1415,17 @@ def capacity_curve(runs: Path,
     Over the whole run, warm-up included, unless `window_s` (w0, stop):
     then only replay rows made with that window count (``sim --window``),
     and engine runs are counted over it too. `policies` defaults to the
-    baselines; Belady's curve comes from the replay alone."""
+    baselines; Belady's curve comes from the replay alone. `specs` maps a
+    policy's name to the replay's policy string when they differ
+    (``race_rp`` -> ``race_rp:sketch=...``). With a window, ``groups``
+    holds each workload's curve (``group_seeds`` its per-seed values) and
+    ``evictions`` each workload's evicted blocks per second, where the
+    replay counted them."""
     seeds = list(cfg["reported_seeds"])
     plans = {f"{cfg['mix']}-{cfg['pacing']}-s{x}": x for x in seeds}
     want = None if window_s is None else [float(v) for v in window_s]
     sims: Dict[Tuple[str, str, Any], Row] = {}
+    names = {v: k for k, v in (specs or {}).items()}
     for r in read_sweep(sweep):
         if ("summary" not in r or r.get("timing", "model") != "model"
                 or r.get("window") != want):
@@ -1381,13 +1436,22 @@ def capacity_curve(runs: Path,
         ceiling = str(r.get("capacity")) == "ceiling"
         key = "ceiling" if ceiling else int(r["capacity_tokens"])
         summary = r["summary"] if want is None else r["summary"]["window"]
-        sims[(plan, "ceiling" if ceiling else r["policy"], key)] = summary
+        name = names.get(r["policy"], r["policy"])
+        sims[(plan, "ceiling" if ceiling else name, key)] = summary
     caps = sorted({k for (_, _, k) in sims if k != "ceiling"})
     if not caps:
         return None
     lo, hi = (-math.inf, math.inf) if want is None else want
     curve: Row = {}
+    groups: Row = {}
+    group_seeds: Row = {}
+    evictions: Row = {}
     for policy in (policies or cfg["policies"]):
+        if want is not None:
+            groups[policy], group_seeds[policy], evictions[policy] = (
+                _capacity_groups(
+                    [[sims.get((plan, policy, cap)) for plan in plans]
+                     for cap in caps], want[1] - want[0]))
         curve[policy] = {"hit_rate": [], "block_hit_rate": [], "seeds": []}
         for cap in caps:
             vals = [sims.get((plan, policy, cap)) for plan in plans]
@@ -1403,8 +1467,10 @@ def capacity_curve(runs: Path,
             curve[policy]["seeds"].append(usable)
     ceil = [sims.get((plan, "ceiling", "ceiling")) for plan in plans]
     engine: List[Row] = []
+    engine_policies = "|".join(
+        re.escape(p) for p in cfg["policies"] + cfg.get("new_policies", []))
     pattern = re.compile(rf"{re.escape(cfg['mix'])}-{re.escape(cfg['pacing'])}"
-                         r"-s(\d+)-(lru|lfu|fifo)-cap(\d+)")
+                         rf"-s(\d+)-({engine_policies})-cap(\d+)")
     for path in sorted(runs.iterdir()):
         m = pattern.fullmatch(path.name)
         if (not m or int(m[1]) not in seeds
@@ -1437,6 +1503,12 @@ def capacity_curve(runs: Path,
         caps,
         "curve":
         curve,
+        **({
+            "groups": groups,
+            "group_seeds": group_seeds,
+            "evictions": evictions,
+            "group_ceiling": _group_ceiling(ceil, want[1] - want[0]),
+        } if want is not None else {}),
         "ceiling":
         (float(np.mean([c["usable_reused_fraction"]
                         for c in ceil])) if all(c is not None
@@ -1444,6 +1516,50 @@ def capacity_curve(runs: Path,
         "engine":
         engine,
     }
+
+
+def _group_ceiling(ceil: List[Optional[Row]], seconds: float) -> Row:
+    """Each group's no-eviction usable reuse (seed mean), {} without a
+    ceiling row for every seed."""
+    if any(c is None for c in ceil):
+        return {}
+    return {g: v[0] for g, v in _capacity_groups([ceil], seconds)[0].items()}
+
+
+def _capacity_groups(cells: List[List[Optional[Row]]],
+                     seconds: float) -> Tuple[Row, Row, Row]:
+    """Per workload group, from windowed replay summaries (`cells`: per
+    capacity, per seed): usable reuse (seed mean, and per seed) and evicted
+    blocks per second (seed mean; None where the replay did not count
+    them)."""
+    mean_: Row = {g: [] for g in GROUPS}
+    seeds_: Row = {g: [] for g in GROUPS}
+    evict: Row = {g: [] for g in list(GROUPS) + ["all"]}
+    for per_seed in cells:
+        for g, members in isolate.GROUPS.items():
+            if any(v is None for v in per_seed):
+                mean_[g].append(None)
+                seeds_[g].append(None)
+                evict[g].append(None)
+                continue
+            vals, rates = [], []
+            for v in per_seed:
+                parts = [v.get("workloads", {}).get(w, {}) for w in members]
+                prompt = sum(x.get("prompt_tokens", 0) for x in parts)
+                used = sum(x.get("usable_tokens", 0) for x in parts)
+                vals.append(used / prompt if prompt else None)
+                rates.append(None if "evictions" not in v or "workloads" not in
+                             v else sum(x.get("evictions", 0)
+                                        for x in parts) / seconds)
+            seeds_[g].append(vals)
+            mean_[g].append(None if None in vals else float(np.mean(vals)))
+            evict[g].append(None if None in rates else float(np.mean(rates)))
+        if any(v is None or "evictions" not in v for v in per_seed):
+            evict["all"].append(None)
+        else:
+            evict["all"].append(
+                float(np.mean([v["evictions"] / seconds for v in per_seed])))
+    return mean_, seeds_, evict
 
 
 def validation(runs: Path, sweep: Path, cfg: Row) -> Row:
@@ -1523,6 +1639,15 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                         default=Path("results/m3-sim/capacity-window.jsonl"),
                         help="Cache replay rows made with sim --window "
                         "(the capacity curve over the measurement window)")
+    parser.add_argument("--tuning-sweep",
+                        type=Path,
+                        default=Path("results/m3-sim/tune-seed1.jsonl"),
+                        help="Seed-1 replays of TTDF's and RACE-RP's "
+                        "settings (analysis/m3t2_policies.py)")
+    parser.add_argument("--overhead-sweep",
+                        type=Path,
+                        default=Path("results/m3-sim/overhead.jsonl"),
+                        help="Replays that time every policy's evictions")
     parser.add_argument("--reports",
                         type=Path,
                         default=Path("results/m3-study"))
@@ -1533,7 +1658,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parser.parse_args(list(argv) if argv is not None else None)
     cfg = load_config(args.config)
     summary = study(args.runs, cfg, args.sweep, args.reports, args.plans,
-                    args.capacity_sweep)
+                    args.capacity_sweep, args.tuning_sweep,
+                    args.overhead_sweep)
     from analysis.run_m2_task2 import git_state
     summary["provenance"] = git_state()
     args.out.parent.mkdir(parents=True, exist_ok=True)

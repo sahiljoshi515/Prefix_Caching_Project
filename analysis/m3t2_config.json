@@ -7,6 +7,10 @@
     "lfu",
     "fifo"
   ],
+  "new_policies": [
+    "ttdf",
+    "race_rp"
+  ],
   "mix": "balanced",
   "pacing": "human",
   "sensitivity_pacing": "fast",
