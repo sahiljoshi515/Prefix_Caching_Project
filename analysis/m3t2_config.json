@@ -106,7 +106,7 @@
   "served_interval_edges_s": [
     0,
     10,
-    60,
+    30,
     300
   ],
   "sim_capacities": [

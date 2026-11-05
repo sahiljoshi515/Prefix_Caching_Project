@@ -48,7 +48,8 @@
         continue;
       }
       const key = el("i", { class: "key-" + (it.kind || "rect") });
-      if (it.kind === "dash") key.style.borderTopColor = it.color;
+      if (it.kind === "dash" || it.kind === "line")
+        key.style.borderTopColor = it.color;
       else if (it.hollow) key.style.boxShadow = "inset 0 0 0 2px " + it.color;
       else key.style.background = it.color;
       s.append(key, document.createTextNode(it.label));
@@ -183,8 +184,11 @@
           fill: tok("--ink"), fontSize: 11 }),
         Plot.tickX(refs, { fy: "row", x: "v", stroke: tok("--ink"),
           strokeWidth: 2, strokeDasharray: "4,3" }),
-        ...(o.vrule != null ? [Plot.ruleX([o.vrule], { stroke: tok("--ink"),
-          strokeDasharray: "4,3", strokeWidth: 1.5 })] : []),
+        // A reference per series (one bar of each row): a dashed tick.
+        Plot.tickX(o.seriesRefs ? o.rows.flatMap((r) => o.seriesRefs.map(
+          (x) => ({ row: r.label, s: x.s, v: x.v }))) : [], { fy: "row",
+          y: "s", x: "v", stroke: tok("--ink"), strokeWidth: 2,
+          strokeDasharray: "3,2" }),
         Plot.tip(data, Plot.pointer({ fy: "row", y: "s", x: "v",
           title: (d) => d.row + " · " + d.s + ": " + pct(d.v, 1) +
             (d.hi > d.lo ? "\nseeds " + pct(d.lo, 1) + " to " +
@@ -220,6 +224,8 @@
   /* Reuse-interval bins as points: the geometric middle of each bin with
      enough reuses on offer under every policy. */
   const INTERVAL_TICKS = [0.1, 1, 10, 60, 300, 1200];
+  // Below this chart width, axes keep every other kind of tick.
+  const NARROW = 560;
   const binLabel = (b) => b.hi == null ? "over " + secs(b.lo) :
     (b.lo <= 0 ? "under " + secs(b.hi) : secs(b.lo) + " to " + secs(b.hi));
 
@@ -230,7 +236,8 @@
     const mid = (b) => b.lo <= 0 ? b.hi / 2 : Math.sqrt(b.lo * b.hi);
     lines(node, {
       x: keep.map((i) => mid(bins[i])), xType: "log",
-      xTicks: INTERVAL_TICKS, xTick: tickSecs, xDomain: [0.03, 1800],
+      xTicks: width(node) < NARROW ? INTERVAL_TICKS.filter((t) => t !== 300)
+        : INTERVAL_TICKS, xTick: tickSecs, xDomain: [0.03, 1800],
       xFmt: (v) => "Waited " + binLabel(bins[keep.find((i) =>
         mid(bins[i]) === v)]),
       xLabel: "Time the block sat unused before it was needed again →",
@@ -259,7 +266,8 @@
 
   /* 2 and 5. Usable prefix reuse per workload and policy. */
   function portion(node, Q, rows) {
-    policyLegend(node, P, [CEILING_KEY()]);
+    policyLegend(node, P, [CEILING_KEY(), { label: "Range over the seeds",
+      color: tok("--ink"), kind: "line" }]);
     groupedBars(node, {
       rows: rows.map((r) => ({ id: r, label: LABEL[r] })),
       series: P.map((p) => ({ id: p, label: POLICY[p], color: pol(p) })),
@@ -283,10 +291,14 @@
       { id: "balanced", label: "Average of the four workloads' scores",
         color: tok("--seq-2") }];
     legend(node, [...series, { label: "Always guessing " +
-      LABEL[Q.majority.label], color: tok("--ink"), kind: "dash" }]);
+      LABEL[Q.majority.label] + " (" + pct(Q.majority.accuracy) + " right; " +
+      pct(Q.majority.balanced) + " averaged over workloads)",
+      color: tok("--ink"), kind: "dash" }]);
     groupedBars(node, {
       rows: Q.models.map((m) => ({ id: m.id, label: m.label })),
-      series, marginLeft: 172, digits: 0, vrule: Q.majority.accuracy,
+      series, marginLeft: 172, digits: 0,
+      seriesRefs: [{ s: series[0].label, v: Q.majority.accuracy },
+                   { s: series[1].label, v: Q.majority.balanced }],
       value: (r, s) => ({ mean: Q.models.find((m) => m.id === r)[s] }),
       xLabel: "Share labelled right on runs it never saw (seeds 2–4) →",
     });
@@ -328,15 +340,19 @@
         kind: "dot" },
       { label: "Cache replay of the same seeds", glyph: "×" }]);
     const engine = C.engine.map((e) => ({ ...e, color: pol(e.policy) }));
+    // Narrow: only the doubling sizes, so labels do not run together.
+    const ticks = width(node) < NARROW ? C.capacities.filter((c, i) =>
+      i === C.capacities.length - 1 || Math.log2(c / C.capacities[0]) % 1 === 0)
+      : C.capacities;
     lines(node, {
-      x: C.capacities, xType: "log", xTicks: C.capacities, xTick: tokens,
+      x: C.capacities, xType: "log", xTicks: ticks, xTick: tokens,
       xDomain: [C.capacities[0] / 1.12, C.capacities.at(-1) * 1.12],
       xFmt: (v) => tokens(v) + " tokens of cache",
       xLabel: "KV-cache capacity in tokens (log scale) →",
       yDomain: C.yDomain, yLabel: "↑ Usable prefix reuse",
       height: 340, marginRight: 64, endLabels: true,
       hrules: [{ y: C.ceiling, label: "No eviction " + pct(C.ceiling, 1) }],
-      vrules: [{ x: C.fixed, label: "Cache used in points 1–3, 5, 6" }],
+      vrules: [{ x: C.fixed, label: "Cache used in points 1, 2, 5, 6" }],
       series: pols.map((p) => ({ id: p, label: POLICY[p], color: pol(p),
         dash: p === "belady" ? "5,3" : null, y: C.curve[p],
         labelDy: C.labelDy[p] || 0 })),

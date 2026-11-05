@@ -257,13 +257,14 @@ The results page was cut to six points at the owners' request (reuse
 interval, reuse portion, identification, capacity, each workload alone,
 alone against sharing). What this added after the Phase 1 freeze:
 
-- `analysis/m3t2_config.json` gained `served_interval_edges_s` (0, 10, 60
+- `analysis/m3t2_config.json` gained `served_interval_edges_s` (0, 10, 30
   and 300 s), the bins the page quotes for the share of reuses served by
   wait. It changes no earlier number.
 - The `isolated` grid: each workload's requests of the reported seeds'
   balanced plans, unchanged, so its traffic intensity is the same alone as
-  in the mix. Under 1% of any workload's no-eviction reuse comes from
-  another workload, so the alone runs use the mix's ceiling.
+  in the mix. About 1% of a workload's no-eviction reuse comes from another
+  workload (at most 0.9% averaged over seeds, 1.5% on one seed), so the
+  alone runs use the mix's ceiling.
 - Identification over the four workloads (Bailian's traces as one): one
   CART tree per signal set, depth chosen on seed 1, scored on seeds 2–4.
   Inheriting a parent's label is dropped there: in a trial it carried one

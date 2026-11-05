@@ -2,9 +2,13 @@
 
 Every number below is read from ``summary.json`` or from the chart data
 built from it, and every comparison is worded from the numbers: a
-difference counts only when all three seeds agree on its sign and its mean
-is at least half a point (spec 007 SC-003); otherwise it is called a tie.
-The page answers six questions; `sections` returns them in order.
+difference counts only when all seeds agree on its sign and its mean is at
+least half a point (spec 007 SC-003); otherwise it is called a tie. The
+page answers six questions; `sections` returns them in order.
+
+Words: an *engine run* is the real vLLM server (measured); the *cache
+replay* is our simulator of vLLM's cache code (simulated). "Replay" is kept
+for the second.
 """
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -16,16 +20,15 @@ from analysis.m3t2_study import MIN_GAP
 Row = Dict[str, Any]
 P = POLICY_LABELS
 L = LABELS
-MEASURED = "measured:measured, vllm serve, seeds 2–4"
-PLANS = "measured:from the request streams, seeds 2–4"
-REPLAY = "sim:cache replay lines, seeds 2–4"
 # Reuse that waits at least this long counts as a long wait (seconds).
 LONG_WAIT_S = 10.0
-# A policy "serves nothing" beyond the first interval bin from which every
-# bin's share served is under this.
+# A policy "serves almost nothing" beyond the first interval bin from which
+# every drawn bin's share served is under this.
 NONE_SHARE = 0.01
-# Interval lines closer than this in every bin are said to coincide.
+# Interval lines closer than this in every drawn bin are said to coincide.
 COINCIDE = 0.005
+TEXT_WORKLOADS = ("sharegpt", "agentbank", "ccbench")
+BAILIAN = ("bailian-chat", "bailian-api", "bailian-thinking", "bailian-coder")
 
 
 def _list(items: Sequence[str]) -> str:
@@ -34,6 +37,10 @@ def _list(items: Sequence[str]) -> str:
     if len(items) <= 1:
         return "".join(items)
     return ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _verb(items: Sequence[str], one: str, many: str) -> str:
+    return one if len(items) == 1 else many
 
 
 def _span(lo: float, hi: float) -> str:
@@ -68,13 +75,27 @@ def _served_beyond(curve: List[Row], lo: float) -> Optional[float]:
 
 def _cutoff(curve: List[Row]) -> Optional[float]:
     """The wait (a bin's lower edge, seconds) from which a policy serves
-    under `NONE_SHARE` of the reuses in every later bin; None if it never
-    stops serving."""
+    under `NONE_SHARE` of the reuses in every later drawn bin; None if it
+    never stops serving."""
     drawn = [b for b in curve if b["offered"] >= MIN_OFFERED]
     for i, b in enumerate(drawn):
         if all((x["share"] or 0) < NONE_SHARE for x in drawn[i:]):
             return b["lo"]
     return None
+
+
+def _coincide(views: Row) -> bool:
+    """Whether every policy's share served is within `COINCIDE` of the
+    others in every drawn interval bin."""
+    curves = [views[p]["curve"] for p in POLICIES]
+    for i, b in enumerate(curves[0]):
+        if b["hi"] is None or any(c[i]["offered"] < MIN_OFFERED
+                                  for c in curves):
+            continue
+        shares = [c[i]["share"] or 0.0 for c in curves]
+        if max(shares) - min(shares) > COINCIDE:
+            return False
+    return True
 
 
 def _cap_verdicts(seeds_a: List[List[float]],
@@ -87,7 +108,7 @@ def _cap_verdicts(seeds_a: List[List[float]],
             continue
         d = [p - q for p, q in zip(xa, xb)]
         m = sum(d) / len(d)
-        if abs(m) >= 0.005 and (min(d) > 0 or max(d) < 0):
+        if abs(m) >= MIN_GAP and (min(d) > 0 or max(d) < 0):
             out.append("a" if m > 0 else "b")
         else:
             out.append("tie")
@@ -106,6 +127,63 @@ def _cap_runs(caps: List[int], verdicts: List[str], want: str) -> List[str]:
                 tokens(lo) if lo == hi else f"{tokens(lo)} to {tokens(hi)}")
             start = None
     return out
+
+
+def _against_lru(verdicts: Dict[str, str]) -> str:
+    """Policies' verdicts against LRU in one clause: 'LFU and FIFO are lower
+    than LRU', 'LFU beats LRU and FIFO ties with it'."""
+    by = {
+        v: [P[p] for p, x in verdicts.items() if x == v]
+        for v in ("higher", "lower", "tie")
+    }
+    parts = []
+    if by["higher"]:
+        parts.append(f"{_list(by['higher'])} "
+                     f"{_verb(by['higher'], 'beats', 'beat')} LRU")
+    if by["lower"]:
+        parts.append(f"{_list(by['lower'])} "
+                     f"{_verb(by['lower'], 'is', 'are')} lower than LRU")
+    if by["tie"]:
+        parts.append(f"{_list(by['tie'])} "
+                     f"{_verb(by['tie'], 'ties', 'tie')} with it"
+                     if parts else f"{_list(by['tie'])} "
+                     f"{_verb(by['tie'], 'ties', 'tie')} with LRU")
+    return _list(parts)
+
+
+def _best_text(vs: Row) -> str:
+    """Which policy is best for one workload alone, by the rule."""
+    v = {p: vs[p]["verdict"] for p in ("lfu", "fifo")}
+    higher = [P[p] for p in v if v[p] == "higher"]
+    if higher:
+        return f"{_list(higher)} {_verb(higher, 'beats', 'beat')} LRU"
+    ties = [P[p] for p in v if v[p] == "tie"]
+    if not ties:
+        return "LRU is best"
+    if len(ties) == len(v):
+        return "all three tie"
+    return f"LRU and {_list(ties)} tie for best"
+
+
+def _seeds_txt(s: Row) -> str:
+    return _list([str(x) for x in s["config"]["reported_seeds"]])
+
+
+def _seed_range(s: Row) -> str:
+    seeds = s["config"]["reported_seeds"]
+    return (f"{seeds[0]}–{seeds[-1]}" if seeds == list(
+        range(seeds[0], seeds[-1] + 1)) else _seeds_txt(s))
+
+
+def badges(s: Row) -> Dict[str, str]:
+    """The badge of each kind of number, naming the seeds."""
+    seeds = f"seeds {_seed_range(s)}"
+    return {
+        "engine": f"measured:engine runs, {seeds}",
+        "offline": f"offline:computed from the planned requests, {seeds}",
+        "replay": f"sim:cache replay (simulated), {seeds}",
+        "markers": "measured:engine runs (markers)",
+    }
 
 
 # --- Facts the text quotes --------------------------------------------------
@@ -151,44 +229,59 @@ def _token_shares(s: Row) -> Dict[str, float]:
     }
 
 
+def _members(group: str) -> Tuple[str, ...]:
+    return BAILIAN if group == "bailian" else (group, )
+
+
+def _mix_mean(s: Row, group: str, field: str) -> float:
+    """A workload's mean over the reported seeds of a plan-manifest count
+    (requests, sessions), its traces summed."""
+    seeds = [str(x) for x in s["config"]["reported_seeds"]]
+    mix = s["mix"]
+    vals = [
+        sum(mix[x]["workloads"][w][field] for w in _members(group))
+        for x in seeds
+    ]
+    return sum(vals) / len(vals)
+
+
 # --- Sections ---------------------------------------------------------------
 
 
 def header(s: Row) -> str:
     cfg = s["config"]
     cap = cfg["capacity_tokens"]
-    seeds = cfg["reported_seeds"]
     w0, stop = cfg["w0_s"] / 60, cfg["stop_s"] / 60
     return f"""<header class="top">
   <span class="eyebrow">COMP 536 · Milestone 3 · Task 2 · Results</span>
   <h1>How four workloads share one KV cache</h1>
-  <p class="prose">We replayed four workloads against one vLLM server:
+  <p class="prose">We ran four workloads against one vLLM server:
   <b>ShareGPT</b> (people chatting), <b>AgentBank</b> (agents acting in an
   environment), <b>CC-Bench</b> (a coding agent calling tools) and
   <b>Bailian</b> (four production traces from Alibaba's model service). They
   ran together on a KV cache of {cap:,} tokens, and then each one alone,
   under three eviction policies: LRU, LFU and FIFO. This page answers six
   questions about what each policy keeps.</p>
-  <div class="meta"><span>Qwen2.5-0.5B-Instruct on vLLM v0, simulator
-  executor</span><span>{cap:,}-token cache ({cap // cfg["block_size"]:,}
-  blocks of {cfg["block_size"]} tokens)</span><span>{stop:.0f}-minute runs,
-  measured over minutes {w0:.0f}–{stop:.0f}</span><span>seeds
-  {_list([str(x) for x in seeds])}</span></div>
+  <div class="meta"><span>Qwen2.5-0.5B-Instruct on vLLM v0, with the GPU
+  replaced by a stand-in (see the last section)</span><span>{cap:,}-token
+  cache ({cap // cfg["block_size"]:,} blocks of {cfg["block_size"]}
+  tokens)</span><span>{stop:.0f}-minute runs, measured over minutes
+  {w0:.0f}–{stop:.0f}</span><span>seeds {_seeds_txt(s)}</span></div>
 </header>"""
 
 
-def answers(s: Row, data: Row, facts: Row) -> str:
+def answers(facts: Row) -> str:
     cards = [
-        ("1 · Reuse time interval", facts["q1_answer"], "point-1"),
-        ("2 · Reuse portion", facts["q2_answer"], "point-2"),
-        ("3 · Which workload sent a request", facts["q3_answer"], "point-3"),
-        ("4 · Cache capacity", facts["q4_answer"], "point-4"),
-        ("5 · Each workload alone", facts["q5_answer"], "point-5"),
-        ("6 · Alone against sharing", facts["q6_answer"], "point-6"),
+        ("1 · Reuse time interval", facts["q1_answer"]),
+        ("2 · Reuse portion", facts["q2_answer"]),
+        ("3 · Which workload sent a request", facts["q3_answer"]),
+        ("4 · Cache capacity", facts["q4_answer"]),
+        ("5 · Each workload alone", facts["q5_answer"]),
+        ("6 · Alone vs. sharing", facts["q6_answer"]),
     ]
     body = "".join(f'<div class="answer"><span class="q">{q}</span><p>{a}</p>'
-                   f'<a href="#{anchor}">See point {q[0]}</a></div>'
-                   for q, a, anchor in cards)
+                   f'<a href="#point-{q[0]}">See point {q[0]}</a></div>'
+                   for q, a in cards)
     return (f'<section class="section" aria-labelledby="answers-h">'
             f'<h2 id="answers-h">The six answers</h2>'
             f'<div class="answers">{body}</div></section>')
@@ -200,36 +293,41 @@ def terms(s: Row) -> str:
     rows = [
         ("KV cache", "Memory where the server keeps what it computed for each "
          f"prompt token, in blocks of {bs} tokens. A later request whose "
-         "prompt "
-         "starts with the same tokens can reuse those blocks instead of "
-         "computing them again."),
+         "prompt starts with the same tokens can reuse those blocks instead "
+         "of computing them again."),
         ("Reuse", "A request needs a block that an earlier request produced "
          "(the system prompt, or the previous turns of the same "
-         "conversation)."),
+         f"conversation). Each reuse is one {bs}-token block."),
         ("Reuse time interval", "How long the block sat unused before it was "
          "needed again."),
         ("Usable prefix reuse", "The share of prompt tokens served from the "
          "cache, counting only the unbroken run of cached blocks from the "
          "start of each prompt (the server stops at the first missing block). "
          "Weighted by tokens. This is vLLM's prefix cache hit rate."),
-        ("No eviction (ceiling)", "The same requests on a cache too large to "
-         "ever evict: all the reuse the traffic offers."),
-        ("LRU, LFU, FIFO", "Which free block to evict when the cache is full: "
-         "the one used least recently (LRU), the one with the fewest hits "
-         "(LFU), or the one cached earliest, whatever happened since (FIFO)."),
-        ("Belady", "An offline reference that knows the future: it evicts the "
-         "block needed farthest ahead. No real server can do this; it shows "
-         "how much better any policy could do."),
-        ("Measured, cache replay", "Measured numbers come from real "
-         "<code>vllm serve</code> runs. Cache replay is our simulator: it runs "
-         "vLLM's own cache code on the same requests, so it can sweep cache "
-         "sizes and run Belady. It is labelled wherever it is used."),
+        ("Points", "Percentage points: 55.8% against 50.3% is 5.5 points."),
+        ("No eviction (ceiling)", "An engine run of the same requests on a "
+         "cache too large to ever evict: all the reuse the traffic offers."),
+        ("LRU, LFU, FIFO", "When room is needed, which cached block (among "
+         "those no running request is using) to throw out: the one used least "
+         "recently (LRU), the one reused the fewest times (LFU), or the one "
+         "cached earliest, whatever happened since (FIFO)."),
+        ("Belady", "An offline reference that knows the future: it throws out "
+         "the block needed farthest ahead. No real server can do this. It is "
+         "the best possible for plain hit counts; for usable prefix reuse it "
+         "is a strong reference, not a proven upper bound."),
+        ("Engine run (measured)", "The real vLLM server, its scheduler and "
+         "cache code unchanged, with the model replaced by a stand-in that "
+         "returns recorded answers and estimates how long each step takes. "
+         "What the cache keeps is what vLLM really did; times are "
+         "estimates."),
+        ("Cache replay (simulated)", "Only vLLM's cache code, fed the same "
+         "requests offline, so it can try many cache sizes and run Belady. "
+         "It is labelled wherever it is used."),
         ("Seeds and ties",
-         f"Independent {cfg['stop_s'] / 60:.0f}-minute mixes "
-         f"(seeds {_list([str(x) for x in cfg['reported_seeds']])}); numbers "
-         "are their mean. A difference counts only if every seed agrees on "
-         f"its direction and it is at least {100 * MIN_GAP:.1f} points; "
-         "otherwise it is a tie."),
+         f"Independent {cfg['stop_s'] / 60:.0f}-minute mixes (seeds "
+         f"{_seeds_txt(s)}); numbers are their mean. A difference counts "
+         "only if every seed agrees on its direction and it is at least "
+         f"{100 * MIN_GAP:.1f} points; otherwise it is a tie."),
     ]
     dl = "".join(f"<dt>{t}</dt><dd>{d}</dd>" for t, d in rows)
     return (f'<section class="section" aria-labelledby="terms-h">'
@@ -247,36 +345,6 @@ def point(n: int, kind: str, question: str, body: str) -> str:
             f'aria-labelledby="point-{n}-h"><span class="eyebrow">Point {n} '
             f'of 6 · {kind}</span><h2 id="point-{n}-h">{question}</h2>'
             f'{body}</section>')
-
-
-def _verb(items: Sequence[str], one: str, many: str) -> str:
-    return one if len(items) == 1 else many
-
-
-def _seeds_txt(s: Row) -> str:
-    return _list([str(x) for x in s["config"]["reported_seeds"]])
-
-
-def _against_lru(verdicts: Dict[str, str]) -> str:
-    """Policies' verdicts against LRU in one clause: 'LFU and FIFO are lower
-    than LRU', 'LFU beats LRU and FIFO ties with it'."""
-    by = {
-        v: [P[p] for p, x in verdicts.items() if x == v]
-        for v in ("higher", "lower", "tie")
-    }
-    parts = []
-    if by["higher"]:
-        parts.append(f"{_list(by['higher'])} "
-                     f"{_verb(by['higher'], 'beats', 'beat')} LRU")
-    if by["lower"]:
-        parts.append(f"{_list(by['lower'])} "
-                     f"{_verb(by['lower'], 'is', 'are')} lower than LRU")
-    if by["tie"]:
-        parts.append(f"{_list(by['tie'])} "
-                     f"{_verb(by['tie'], 'ties', 'tie')} with it"
-                     if parts else f"{_list(by['tie'])} "
-                     f"{_verb(by['tie'], 'ties', 'tie')} with LRU")
-    return _list(parts)
 
 
 def q1(s: Row, facts: Row) -> str:
@@ -308,35 +376,39 @@ def q1(s: Row, facts: Row) -> str:
     order = sorted(GROUPS, key=lambda g: -long_by[g])
     top_quick = max(GROUPS, key=lambda g: quick_by[g])
     intro = (
-        f"For every reuse in the mix we know how long the block had sat "
-        f"unused. Without eviction, {pct(1 - long_share, 0)} of reuses come "
-        f"back within {secs(LONG_WAIT_S)} ({pct(quick_by[top_quick], 0)} of "
-        f"those are {L[top_quick]}'s). The other {pct(long_share, 0)} wait "
-        "longer: " + _list([f"{L[g]} {pct(long_by[g], 0)}" for g in order]) +
-        " of them. The chart sorts reuses by how long they waited and shows "
-        "the share each policy served from its "
-        f"{s['config']['capacity_tokens']:,}-token cache. Blocks still in use "
-        "by another running request are left out: no policy can evict those.")
-    rows = []
-    for p in POLICIES:
-        b = coarse[p]
-        parts = [f"{pct(x['share'], 1)} at {_range_label(x)}" for x in b[1:]]
-        rows.append(f"<b>{P[p]}</b> served {pct(b[0]['share'], 1)} of the "
-                    f"reuses that waited {_range_label(b[0])}, " +
-                    _list(parts) + ".")
+        "For every reuse in the mix we know how long the block had sat "
+        f"unused. With no eviction, {pct(1 - long_share, 0)} of reuses happen "
+        f"within {secs(LONG_WAIT_S)} of the block's last use, "
+        f"{pct(quick_by[top_quick], 0)} of them {L[top_quick]}'s. Of the "
+        f"{pct(long_share, 0)} that wait longer, " +
+        _list([f"{pct(long_by[g], 0)} are {L[g]}'s" for g in order]) +
+        ". The chart sorts reuses by how long they waited and shows the share "
+        f"each policy served from its {s['config']['capacity_tokens']:,}-"
+        "token cache. Blocks still in use by another running request are "
+        "left out (no policy can throw those out), and waits with fewer than "
+        f"{MIN_OFFERED:,} reuses are not drawn.")
+    head = ["Policy", *[_range_label(b) for b in coarse["lru"]]]
+    table = ('<div class="tablewrap"><table><thead><tr>' +
+             "".join(f"<th>{h}</th>" for h in head) + "</tr></thead><tbody>" +
+             "".join(f"<tr><td>{P[p]}</td>" +
+                     "".join(f"<td>{pct(b['share'], 1)}</td>"
+                             for b in coarse[p]) + "</tr>"
+                     for p in POLICIES) + "</tbody></table></div>")
     why = [
-        "LRU evicts the block unused for longest, so a block survives only "
-        "while fresher blocks keep arriving behind it" +
-        (f": here about {secs(lru_cut)}." if lru_cut is not None else "."),
-        "LFU evicts the block with the fewest hits, so an often-used block can "
-        "outlive a long pause, while a block that was just cached (no hits "
-        "yet) goes first" +
-        (f"; it serves fewer quick reuses than LRU ({pct(quick['lfu'], 1)} "
-         f"against {pct(quick['lru'], 1)})."
+        "Under LRU an unused block is thrown out once newer blocks have "
+        "filled the cache behind it" +
+        (f", which in the mix took under {secs(lru_cut)}."
+         if lru_cut is not None else "."),
+        "LFU throws out the block reused the fewest times, so an often-used "
+        "block can outlive a long pause, while a block just cached (not yet "
+        "reused) goes first" +
+        ("; so it serves fewer of the quick reuses than LRU."
          if quick["lfu"] < quick["lru"] else "."),
-        "FIFO evicts the block cached earliest, even one used a moment ago.",
+        "FIFO throws out the block cached earliest, even one used a moment "
+        "ago.",
     ]
-    take = _ul(rows) + f'<p class="prose">{" ".join(why)}</p>'
+    take = (f'<p class="prose">Share of reuses served, by how long the block '
+            f'waited:</p>{table}<p class="prose">{" ".join(why)}</p>')
     drawn = [
         i for i, b in enumerate(curves["lru"])
         if b["offered"] >= MIN_OFFERED and (b["share"] or 0) >= NONE_SHARE
@@ -351,23 +423,24 @@ def q1(s: Row, facts: Row) -> str:
         fifo_txt = "FIFO serves less than LRU at every wait LRU serves."
     else:
         fifo_txt = ""
-    head = (f"With the four workloads sharing the cache, LRU serves "
-            f"{pct(quick['lru'], 1)} of reuses that come back within "
-            f"{secs(LONG_WAIT_S)} but " +
-            (f"almost none that waited more than {secs(lru_cut)}."
-             if lru_cut is not None else "also some at every longer wait."))
+    head_txt = (f"With the four workloads sharing the cache, LRU serves "
+                f"{pct(quick['lru'], 1)} of reuses that happen within "
+                f"{secs(LONG_WAIT_S)} of the block's last use, but " +
+                (f"almost none after more than {secs(lru_cut)}." if lru_cut
+                 is not None else "also some at every longer wait."))
     tail = ""
     if keeps:
-        tail = (f"{_list([P[p] for p in keeps])} "
-                f"{_verb(keeps, 'serves', 'serve')} some of those longer "
-                "waits (" + _list([pct(beyond[p], 0) for p in keeps]) + ")")
+        tail = (f"{_list([P[p] for p in keeps])} still "
+                f"{_verb(keeps, 'serves', 'serve')} " +
+                _list([pct(beyond[p], 0) for p in keeps]) +
+                f" of those that waited over {secs(lru_cut)}")
         if "lfu" in keeps and quick["lfu"] < quick["lru"]:
             tail += (("," if keeps == ["lfu"] else ", LFU") +
-                     f" at the cost of quick ones ({pct(quick['lfu'], 1)})")
+                     f" but only {pct(quick['lfu'], 1)} of the quick ones")
         tail += "."
-    facts["q1_answer"] = " ".join(x for x in (head, fifo_txt, tail) if x)
+    facts["q1_answer"] = " ".join(x for x in (head_txt, fifo_txt, tail) if x)
     body = (f'<p class="prose">{intro}</p>' +
-            figure("fig-q1", esc(claim), [MEASURED], take))
+            figure("fig-q1", esc(claim), [badges(s)["engine"]], take))
     return point(
         1, "Mixed workload", "What is the difference in reuse time "
         "interval between FIFO, LRU and LFU?", body)
@@ -390,33 +463,34 @@ def q2(s: Row, facts: Row) -> str:
     eff = {g: u[g]["lru"] / u[g]["ceiling"] for g in GROUPS}
     least = min(GROUPS, key=lambda g: eff[g])
     others = [g for g in sorted(GROUPS, key=lambda g: -eff[g]) if g != least]
+    cfg = s["config"]
+    window = f"minutes {cfg['w0_s'] / 60:.0f}–{cfg['stop_s'] / 60:.0f}"
     intro = (
         "The share of each request's prompt that came from the cache, over "
         "the whole mix and for each workload inside it. The dashed tick in "
         "each row is the no-eviction ceiling: all the reuse that workload's "
-        "traffic offers.")
+        "traffic offers. The thin line at each bar's end spans the seeds.")
     verdicts = {p: mg["all"][p]["verdict"] for p in ("lfu", "fifo")}
     agree = any(v != "tie" for v in verdicts.values())
     lines = [
         "Over the whole mix, " + _against_lru(verdicts) +
-        (f" on every seed ({_seeds_txt(s)})." if agree else "."),
-        (f"LRU loses {pts(gap)} of the mix's prompt tokens against no "
-         "eviction. By workload that is " + _list([
-             f"{L[g]} {pts(parts[g])}"
-             f" ({pct(share[g], 0)} of the measured tokens)" for g in order
-         ]) + "."),
+        (f", on every seed ({_seeds_txt(s)})." if agree else "."),
+        (f"LRU's usable reuse is {pts(gap)} below no eviction. By workload "
+         "that is " + _list([f"{L[g]} {pts(parts[g])}" for g in order]) +
+         ", weighted by the share of prompt tokens each sends in " + window +
+         " (" + _list([f"{L[g]} {pct(share[g], 0)}" for g in order]) + ")."),
     ]
     p50 = s["ceiling_intervals_by_group"][least]["served"]["quantiles"]["p50"]
     cut = facts.get("lru_cut")
     least_txt = (
         f"{L[least]} keeps the smallest part of what it could: LRU serves "
-        f"{pct(u[least]['lru'], 0)} of its prompt tokens out of "
-        f"{pct(u[least]['ceiling'], 0)} possible (LFU "
+        f"{pct(u[least]['lru'], 0)} of its prompt tokens from the cache, out "
+        f"of {pct(u[least]['ceiling'], 0)} possible (LFU "
         f"{pct(u[least]['lfu'], 0)}, FIFO {pct(u[least]['fifo'], 0)}). Half "
-        f"of its reuses wait more than {secs(p50)}")
+        f"of its reuses wait more than {p50:.0f} s")
     if cut is not None and p50 > cut:
-        least_txt += (f", longer than the {secs(cut)} an unused block lasts "
-                      "under LRU in the mix (point 1)")
+        least_txt += (f", longer than the {secs(cut)} after which LRU serves "
+                      "almost nothing in the mix (point 1)")
     lines.append(least_txt + ".")
     lines.append("The others under LRU: " + _list([
         f"{L[g]} {pct(u[g]['lru'], 0)} of {pct(u[g]['ceiling'], 0)}"
@@ -438,20 +512,18 @@ def q2(s: Row, facts: Row) -> str:
         by_policy.append(f"{P[p]} {_list(bits)}")
     lines.append("Workload by workload: " + "; ".join(by_policy) + ".")
     facts["q2_answer"] = (
-        f"LRU {pct(a['lru'], 1)}, LFU {pct(a['lfu'], 1)} and FIFO "
-        f"{pct(a['fifo'], 1)} of prompt tokens served, against "
-        f"{pct(a['ceiling'], 1)} with no eviction. The largest part of the "
-        f"loss is {L[order[0]]}'s ({pts(parts[order[0]]).split()[0]} of the "
-        f"{pts(gap)}); {L[least]} keeps only {pct(u[least]['lru'], 0)} of "
-        f"its {pct(u[least]['ceiling'], 0)}.")
+        f"Of the mix's prompt tokens, LRU serves {pct(a['lru'], 1)} from the "
+        f"cache, LFU {pct(a['lfu'], 1)} and FIFO {pct(a['fifo'], 1)}, against "
+        f"{pct(a['ceiling'], 1)} with no eviction. The largest part of LRU's "
+        f"shortfall is {L[order[0]]}'s ({pts(parts[order[0]]).split()[0]} of "
+        f"the {pts(gap)}). LRU serves {L[least]} only "
+        f"{pct(u[least]['lru'], 0)} of its prompt tokens, out of "
+        f"{pct(u[least]['ceiling'], 0)} possible.")
     body = (f'<p class="prose">{intro}</p>' +
-            figure("fig-q2", esc(claim), [MEASURED], _ul(lines)))
+            figure("fig-q2", esc(claim), [badges(s)["engine"]], _ul(lines)))
     return point(
         2, "Mixed workload", "What is the difference in reuse "
         "portion between FIFO, LRU and LFU?", body)
-
-
-TEXT_WORKLOADS = ("sharegpt", "agentbank", "ccbench")
 
 
 def q3(s: Row, facts: Row) -> str:
@@ -462,87 +534,116 @@ def q3(s: Row, facts: Row) -> str:
     best = max(single, key=lambda k: single[k]["accuracy"])
     worst = min(single, key=lambda k: single[k]["accuracy"])
     rec = full["recall"]
-    by_seed = [pct(v["accuracy"], 1) for v in full["per_test"].values()]
     conf = full["confusion"]
     mistakes = sorted(((t, p, n / sum(conf[t].values())) for t in conf
                        for p, n in conf[t].items() if p != t),
                       key=lambda x: -x[2])[:2]
-    claim = (f"From what the server sees, a decision tree names the workload "
-             f"of {pct(full['accuracy'], 0)} of requests, against "
-             f"{pct(maj['accuracy'], 0)} by always guessing "
-             f"{L[maj['label']]}")
+    guess = (f"{pct(maj['accuracy'], 0)} by always guessing the most common "
+             f"workload, {L[maj['label']]}")
+    claim = (f"From signals a server can see, a decision tree identifies the "
+             f"workload of {pct(full['accuracy'], 0)} of requests, against "
+             f"{guess}")
     intro = (
-        "No request carries its workload's name, so a policy has to infer it. "
-        "For each arriving request the server computes four kinds of signal "
-        "from that request and the ones before it, never from later ones:")
+        "No request carries its workload's name, so a policy has to infer "
+        "it. A policy inside the server could compute four kinds of signal "
+        "for each arriving request, from that request and the ones before it "
+        "(never later ones); we computed them offline from the planned "
+        "requests:")
     signals = [
         "<b>Prompt length</b>: the number of prompt tokens.",
-        "<b>Prefix hashes</b>: the hash of the prompt's first block and of "
-        "its first 2 and 4 blocks, looked up in a table of which workload "
-        "sent prompts that start that way.",
+        "<b>Prefix hashes</b>: a fingerprint (hash) of the prompt's first 1, "
+        "2 and 4 blocks, looked up in a table of which workload sent prompts "
+        "that start that way.",
         "<b>Reuse history</b>: how many of the prompt's leading blocks the "
-        "server has seen before, whether it extends an earlier request and "
-        "how many turns deep, how many new tokens it adds, and how many "
-        "earlier requests share its first 2 blocks.",
-        "<b>Inter-arrival times</b>: the time since the request it extends, "
+        "server has seen before, whether it continues an earlier request and "
+        "how many earlier turns of the conversation it follows, how many new "
+        "tokens it adds, and how many earlier requests share its first 2 "
+        "blocks.",
+        "<b>Inter-arrival times</b>: the time since the request it continues, "
         "and since the last request that started with the same 2 blocks.",
     ]
-    how = ("Labels are used once, offline: the tree (and the hash table) is "
-           "learned on one profiling run (seed 1), and its depth is picked on "
-           "that run alone. At run time the policy sees no label. The tree is "
-           f"scored on seeds {_seeds_txt(s)}, whose requests it never saw.")
+    how = (
+        "A decision tree (a learned flowchart of yes/no questions about the "
+        "signals) turns them into a workload. Labels are used once, offline: "
+        "the tree and the hash table are learned on one profiling run "
+        "(seed 1), and the tree's size is chosen on that run alone. At run "
+        f"time the policy sees no label. The tree is scored on seeds "
+        f"{_seeds_txt(s)}, whose requests it never saw.")
+    sessions = {g: _mix_mean(s, g, "sessions") for g in GROUPS}
+    requests = {g: _mix_mean(s, g, "requests") for g in GROUPS}
+    bailian_sessions = sessions["bailian"] / sum(sessions.values())
     lines = [
         f"Alone, {MODELS[best].lower()} is the strongest signal "
         f"({pct(single[best]['accuracy'], 0)} of requests right) and "
         f"{MODELS[worst].lower()} the weakest "
         f"({pct(single[worst]['accuracy'], 0)}). Together they reach "
         f"{pct(full['accuracy'], 1)}, or {pct(full['balanced_accuracy'], 1)} "
-        "when each workload counts equally.",
-        f"Right on {pct(full['first_accuracy'], 0)} of first requests (no "
-        f"history yet) and {pct(full['later_accuracy'], 0)} of later ones; by "
-        f"seed {_list(by_seed)}.",
+        "when each workload counts equally (the average of the four "
+        "workloads' scores, where always guessing would get "
+        f"{pct(1 / len(GROUPS), 0)}).",
+        f"The first request of each conversation is identified "
+        f"{pct(full['first_accuracy'], 0)} of the time, later ones "
+        f"{pct(full['later_accuracy'], 0)}. Most conversations are "
+        f"Bailian's ({pct(bailian_sessions, 0)} of them, at "
+        f"{requests['bailian'] / sessions['bailian']:.1f} requests each on "
+        f"average), and Bailian is identified {pct(rec['bailian'], 0)} of the "
+        "time.",
+        "Seed by seed: " + _list([
+            f"seed {name.rsplit('-s', 1)[-1]} {pct(v['accuracy'], 1)}"
+            for name, v in full["per_test"].items()
+        ]) + ".",
         "ShareGPT and AgentBank have no timestamps of their own (their "
         "pauses are borrowed from other traces), so their timing could "
         "flatter the result. Without the inter-arrival signal the tree still "
-        f"names {pct(m['all_but_timing']['accuracy'], 1)}.",
+        f"identifies {pct(m['all_but_timing']['accuracy'], 1)}.",
+        "Counted by prompt tokens instead of requests, reuse history alone "
+        f"({pct(m['reuse_history']['token_accuracy'], 1)}) scores about as "
+        f"well as all four ({pct(full['token_accuracy'], 1)}).",
     ]
     hashes = m["prefix_hashes"]
     if full.get("ccbench_known_requests") and hashes.get(
             "ccbench_known_requests"):
+        n = full["ccbench_known_requests"] + full["ccbench_new_requests"]
         lines.append(
             "CC-Bench's tasks recur across seeds, which could flatter the "
-            "hash lookups. Requests of tasks the profiling run also ran "
-            f"({full['ccbench_known_requests']:,}) against new tasks "
-            f"({full['ccbench_new_requests']:,}): with prefix hashes alone, "
-            f"{pct(hashes['ccbench_known_accuracy'], 0)} and "
-            f"{pct(hashes['ccbench_new_accuracy'], 0)} right; with all four "
-            f"signals, {pct(full['ccbench_known_accuracy'], 0)} and "
-            f"{pct(full['ccbench_new_accuracy'], 0)}.")
-    fig_a = figure("fig-q3-acc", esc(claim), [PLANS], _ul(lines))
+            f"hash table. Of CC-Bench's {n:,} test requests, "
+            f"{full['ccbench_known_requests']:,} come from tasks seed 1 also "
+            f"ran and {full['ccbench_new_requests']:,} from new tasks. Prefix "
+            f"hashes alone get {pct(hashes['ccbench_known_accuracy'], 0)} and "
+            f"{pct(hashes['ccbench_new_accuracy'], 0)} of them right; all "
+            f"four signals get {pct(full['ccbench_known_accuracy'], 0)} and "
+            f"{pct(full['ccbench_new_accuracy'], 0)}. With every signal the "
+            "tree leans less on the table: it recognises fewer repeated tasks "
+            "but more new ones, which is what matters for unseen traffic.")
+    b = badges(s)["offline"]
+    fig_a = figure("fig-q3-acc", esc(claim), [b], _ul(lines))
     mistake_txt = [
         f"{pct(x, 0)} of {L[t]}'s requests labelled {L[p]}"
         for t, p, x in mistakes
     ]
-    shared = all(t in TEXT_WORKLOADS and p in TEXT_WORKLOADS
-                 for t, p, _ in mistakes[:1])
+    shared = [(t, p) for t, p, _ in mistakes
+              if t in TEXT_WORKLOADS and p in TEXT_WORKLOADS]
     fig_b = figure(
         "fig-q3-cm", "Where it goes wrong: " +
-        _list([f"{L[t]} taken for {L[p]}" for t, p, _ in mistakes]), [PLANS],
+        _list([f"{L[t]} taken for {L[p]}" for t, p, _ in mistakes]), [b],
         _ul([
-            "Recall by workload: " +
-            _list([f"{L[g]} {pct(rec[g], 0)}" for g in GROUPS]) + ".",
+            "Share of each workload's requests identified correctly (its "
+            "recall): " + _list([f"{L[g]} {pct(rec[g], 0)}"
+                                 for g in GROUPS]) + ".",
             "The largest mistakes: " + _list(mistake_txt) + "." +
             (" ShareGPT, AgentBank and CC-Bench start with the same system "
-             "prompt, so their first blocks look alike." if shared else ""),
+             "prompt, so their first blocks look alike, which explains " +
+             _list([f"{L[t]} taken for {L[p]}"
+                    for t, p in shared]) + "." if shared else ""),
         ]))
     gain = full["accuracy"] - maj["accuracy"]
     facts["q3_answer"] = (
-        ("Yes, " if gain >= 0.1 else "Partly, ") +
-        "without labels at run time: from prompt length, prefix hashes, "
-        "reuse history and inter-arrival times, a tree learned on one "
-        f"profiling run names the workload of {pct(full['accuracy'], 0)} of "
-        f"requests on unseen runs ({pct(maj['accuracy'], 0)} by guessing). "
-        f"{MODELS[best]} is the best single signal.")
+        ("It can be inferred" if gain >= 0.1 else "Only partly") +
+        " without labels at run time: from prompt length, prefix hashes, "
+        "reuse history and inter-arrival times, a decision tree learned on "
+        f"one profiling run identifies the workload of "
+        f"{pct(full['accuracy'], 0)} of requests on runs it never saw "
+        f"({guess}). {MODELS[best]} is the best single signal.")
     body = (f'<p class="prose">{intro}</p>' + _ul(signals) +
             f'<p class="prose">{how}</p>' + fig_a + fig_b)
     return point(3, "Mixed workload", "How do we know which workload a "
@@ -569,10 +670,8 @@ def q4(s: Row, data: Row, facts: Row) -> str:
                  f"{tokens(caps[top])}")
     lfu_v = _cap_verdicts(cv["lfu"]["seeds"], cv["lru"]["seeds"])
     fifo_v = _cap_verdicts(cv["fifo"]["seeds"], cv["lru"]["seeds"])
-    lfu_wins, lfu_loses = (_cap_runs(caps, lfu_v,
-                                     "a"), _cap_runs(caps, lfu_v, "b"))
-    fifo_wins, fifo_loses = (_cap_runs(caps, fifo_v,
-                                       "a"), _cap_runs(caps, fifo_v, "b"))
+    lfu_runs = {k: _cap_runs(caps, lfu_v, k) for k in ("a", "b", "tie")}
+    fifo_runs = {k: _cap_runs(caps, fifo_v, k) for k in ("a", "b", "tie")}
     fifo_gap = [hr["lru"][k] - hr["fifo"][k] for k in range(len(caps))]
     gaps = [hr["belady"][k] - hr["lru"][k] for k in range(len(caps))]
     doubled = caps.index(2 * fixed) if 2 * fixed in caps else None
@@ -584,20 +683,26 @@ def q4(s: Row, data: Row, facts: Row) -> str:
                     f"{_span(min(fifo_gap), max(fifo_gap))}")
     else:
         bits = []
-        if fifo_loses:
-            bits.append(f"trails LRU at {_list(fifo_loses)}")
-        if fifo_wins:
-            bits.append(f"beats it at {_list(fifo_wins)}")
-        fifo_txt = ("FIFO " + _list(bits) +
-                    " and ties elsewhere" if bits else "FIFO ties with LRU")
-    lfu_txt = ((f"LFU beats LRU only at {_list(lfu_wins)} tokens"
-                if lfu_wins else "LFU never beats LRU") +
-               (f" and trails it at {_list(lfu_loses)}" if lfu_loses else ""))
+        if fifo_runs["b"]:
+            bits.append(f"trails LRU at {_list(fifo_runs['b'])}")
+        if fifo_runs["a"]:
+            bits.append(f"beats it at {_list(fifo_runs['a'])}")
+        if fifo_runs["tie"]:
+            bits.append(f"ties at {_list(fifo_runs['tie'])}")
+        fifo_txt = "FIFO " + _list(bits)
+    lfu_bits = [(f"beats LRU at {_list(lfu_runs['a'])}"
+                 if lfu_runs["a"] else "never beats LRU")]
+    if lfu_runs["b"]:
+        lfu_bits.append(f"trails it at {_list(lfu_runs['b'])}")
+    if lfu_runs["tie"]:
+        lfu_bits.append(f"ties at {_list(lfu_runs['tie'])}, where the seeds "
+                        "disagree")
+    lfu_txt = "LFU " + _list(lfu_bits)
     intro = (
         f"The same mix on caches from {tokens(caps[0])} to {tokens(caps[top])} "
         "tokens (1K = 1,024 tokens). The lines are the cache replay, averaged "
         f"over seeds {_seeds_txt(s)}; it is the only way to run Belady and to "
-        "try many sizes. The hollow markers are measured engine runs at "
+        "try many sizes. The hollow markers are engine runs at "
         f"{_list([tokens(x) for x in sorted({e['capacity'] for e in marks})])}"
         " tokens.")
     partial = sorted({
@@ -617,10 +722,22 @@ def q4(s: Row, data: Row, facts: Row) -> str:
           is not None else "") + f"going to {tokens(caps[top])} adds "
          f"{pts(hr['lru'][top] - hr['lru'][i])}."),
         f"{fifo_txt}. {lfu_txt}.",
-        (f"Belady's lead over LRU is {pts(gaps[0])} at {tokens(caps[0])} and "
-         f"{pts(gaps[top])} at {tokens(caps[top])}: the reuse a smarter "
-         "policy could still win at these sizes."),
     ]
+    engine_lfu = s["mixed_groups"]["all"]["lfu"]["verdict"]
+    replay_lfu = {"a": "higher", "b": "lower", "tie": "tie"}[lfu_v[i]]
+    if engine_lfu != replay_lfu:
+        word = {
+            "higher": "higher than LRU on every seed",
+            "lower": "lower than LRU on every seed",
+            "tie": "tied with LRU"
+        }
+        lines.append(f"At {tokens(fixed)} the engine runs (point 2) find LFU "
+                     f"{word[engine_lfu]}, while the cache replay finds it "
+                     f"{word[replay_lfu]}.")
+    lines.append(
+        f"Belady's lead over LRU is {pts(gaps[0])} at {tokens(caps[0])} and "
+        f"{pts(gaps[top])} at {tokens(caps[top])}: reuse a smarter policy "
+        "could still win at these sizes.")
     if worst is not None:
         note = (f"The engine runs land within {pts(worst)} of the cache "
                 "replay of the same seeds (× beside each marker).")
@@ -638,40 +755,19 @@ def q4(s: Row, data: Row, facts: Row) -> str:
         (f"Belady with {tokens(fixed)} ({pct(hr['belady'][i], 0)}) beats LRU "
          f"with {tokens(caps[top])}." if belady_wins else
          f"Belady stays {pts(gaps[top])} ahead at {tokens(caps[top])}."))
-    body = (f'<p class="prose">{intro}</p>' +
-            figure("fig-q4", esc(claim),
-                   [REPLAY, "measured:engine runs (markers)"], _ul(lines)))
+    body = (
+        f'<p class="prose">{intro}</p>' +
+        figure("fig-q4", esc(claim),
+               [badges(s)["replay"], badges(s)["markers"]], _ul(lines)))
     return point(
         4, "Mixed workload", "How sensitive is usable prefix reuse "
         "to the KV-cache capacity?", body)
 
 
-def _coincide(views: Row) -> bool:
-    """Whether every policy's share served is within `COINCIDE` of the
-    others in every drawn interval bin."""
-    curves = [views[p]["curve"] for p in POLICIES]
-    for i, b in enumerate(curves[0]):
-        if b["hi"] is None or any(c[i]["offered"] < MIN_OFFERED
-                                  for c in curves):
-            continue
-        shares = [c[i]["share"] or 0.0 for c in curves]
-        if max(shares) - min(shares) > COINCIDE:
-            return False
-    return True
-
-
-def _best_text(vs: Row) -> str:
-    """Which policy is best for one workload alone, by the rule."""
-    v = {p: vs[p]["verdict"] for p in ("lfu", "fifo")}
-    higher = [P[p] for p in v if v[p] == "higher"]
-    if higher:
-        return f"{_list(higher)} {_verb(higher, 'beats', 'beat')} LRU"
-    ties = [P[p] for p in v if v[p] == "tie"]
-    if not ties:
-        return "LRU is best"
-    if len(ties) == len(v):
-        return "all three tie"
-    return f"LRU and {_list(ties)} tie for best"
+SAME_TIMES = (
+    "the same requests, session starts and pauses as in the mix (for the "
+    "closed-loop workloads, ShareGPT, AgentBank and CC-Bench, each next turn "
+    "waits for the reply, so its send time can shift by a few milliseconds)")
 
 
 def q5(s: Row, facts: Row) -> str:
@@ -683,65 +779,75 @@ def q5(s: Row, facts: Row) -> str:
         for g in GROUPS
     }
     ceil = {g: mean(rows[g]["ceiling"]) for g in GROUPS}
-    eff = {g: alone[g]["lru"] / ceil[g] for g in GROUPS}
-    order = sorted(GROUPS, key=lambda g: -eff[g])
     vs = iso["vs_lru"]
-    claim = ("Alone on the same cache, " + _list([
-        f"{L[g]} gets {pct(alone[g]['lru'], 0)} of {pct(ceil[g], 0)}"
-        for g in order
-    ]) + " under LRU")
+    claim = ("Alone on the same cache, LRU serves " + _list([
+        f"{L[g]} {pct(alone[g]['lru'], 0)} of {pct(ceil[g], 0)} possible"
+        for g in GROUPS
+    ]))
     cross = max(v["other_workload"] for v in s["q2"]["sources"].values())
     intro = (
-        "Each workload replayed by itself, with exactly the requests and send "
-        "times it had in the mix, on the same "
-        f"{s['config']['capacity_tokens']:,}-token cache. Its traffic is "
-        "unchanged; only the other workloads are gone. The ceiling is taken "
-        f"from the mix: at most {pct(cross, 1)} of any workload's reuse came "
-        "from another workload's blocks.")
+        f"Each workload run by itself on the same "
+        f"{s['config']['capacity_tokens']:,}-token cache, with {SAME_TIMES}. "
+        "Only the other workloads are gone. The no-eviction mark is each "
+        "workload's ceiling from the mixed run; that is safe because, on "
+        f"average over the seeds, at most {pct(cross, 1)} of any workload's "
+        "reuse came from another workload's blocks.")
     lines = []
     for g in GROUPS:
         verdicts = {p: vs[g][p]["verdict"] for p in ("lfu", "fifo")}
         by = [
-            f"{P[p]} by {pts(mean(vs[g][p]['diff']))}" for p in verdicts
-            if verdicts[p] != "tie"
+            f"{pts(abs(mean(vs[g][p]['diff']))).split()[0]} ({P[p]})"
+            for p in verdicts if verdicts[p] != "tie"
         ]
         lines.append(f"<b>{L[g]}</b>: LRU {pct(alone[g]['lru'], 1)}, LFU "
                      f"{pct(alone[g]['lfu'], 1)}, FIFO "
                      f"{pct(alone[g]['fifo'], 1)}; " + _against_lru(verdicts) +
-                     (f" ({_list(by)})" if by else "") + ".")
+                     (f", by {_list(by)} points" if by else "") + ".")
+    full = [
+        L[g] for g in GROUPS if all(
+            all(
+                abs(a - c) < 1e-6 for a, c in zip(rows[g][p]["alone"]["seeds"],
+                                                  rows[g]["ceiling"]["seeds"]))
+            for p in POLICIES)
+    ]
+    if full:
+        lines.append(
+            f"{_list(full)} alone never lost a reuse: every policy reaches "
+            "its ceiling on every seed, so the policy never had to choose.")
     cuts = {g: _cutoff(iso["intervals"][g]["lru"]["curve"]) for g in GROUPS}
     endless = [L[g] for g in GROUPS if cuts[g] is None]
-    cut_txt = []
-    if endless:
-        cut_txt.append(f"keeps serving some reuse at every wait for "
-                       f"{_list(endless)}")
-    stops = [
-        f"{secs(cuts[g])} for {L[g]}" for g in GROUPS if cuts[g] is not None
-    ]
-    if stops:
-        cut_txt.append(f"serves almost nothing past {_list(stops)}")
+    stops = [g for g in GROUPS if cuts[g] is not None]
     mix_cut = facts.get("lru_cut")
+    cut_bits = []
+    if endless:
+        cut_bits.append("keeps serving some of " +
+                        _list([f"{x}'s" for x in endless]) +
+                        " reuses at every drawn wait")
+    if stops:
+        cut_bits.append("serves almost nothing that waited longer than " +
+                        _list([f"{secs(cuts[g])} for {L[g]}" for g in stops]))
+    interval_claim = "Alone, LRU " + "; it ".join(cut_bits)
     same = [L[g] for g in GROUPS if _coincide(iso["intervals"][g])]
-    fig_a = figure("fig-q5-portion", esc(claim), [MEASURED], _ul(lines))
+    fig_a = figure("fig-q5-portion", esc(claim), [badges(s)["engine"]],
+                   _ul(lines))
     fig_b = figure(
-        "fig-q5-interval",
-        "How long a block can sit unused, workload by workload", [MEASURED],
+        "fig-q5-interval", esc(interval_claim), [badges(s)["engine"]],
         _ul([
-            "Alone, LRU " + "; it ".join(cut_txt) + ". In the mix as a whole "
-            "it served almost nothing past " +
-            (secs(mix_cut) if mix_cut is not None else "no wait") +
+            "In the mix as a whole LRU served almost nothing that waited "
+            "longer than " +
+            (secs(mix_cut) if mix_cut is not None else "any wait") +
             " (point 1).",
             "Reading the panels: a line that stays near the top means the "
             "policy kept almost every block that workload came back for." +
-            (f" For {_list(same)} the three lines nearly coincide (within "
-             f"{100 * COINCIDE:.1f} points in every bin): the policy hardly "
-             "mattered." if same else ""),
+            (f" For {_list(same)} the three lines lie on top of each other."
+             if same else ""),
         ]))
     facts["q5_answer"] = (
         "Alone on the same cache, LRU serves " +
-        _list([f"{L[g]} {pct(alone[g]['lru'], 0)}"
-               for g in GROUPS]) + " of prompt tokens. By the rule: " +
-        "; ".join(f"{L[g]}, {_best_text(vs[g])}" for g in GROUPS) + ".")
+        _list([f"{L[g]} {pct(alone[g]['lru'], 0)}" for g in GROUPS]) +
+        " of prompt tokens from the cache. Counting only differences every "
+        "seed agrees on: " + "; ".join(f"{L[g]}, {_best_text(vs[g])}"
+                                       for g in GROUPS) + ".")
     body = f'<p class="prose">{intro}</p>' + fig_a + fig_b
     return point(
         5, "Each workload alone", "Reuse portion and reuse interval "
@@ -770,14 +876,26 @@ def q6(s: Row, facts: Row) -> str:
         claim = ("Sharing the cache makes no difference that every seed "
                  "agrees on")
     minutes = (cfg["stop_s"] - cfg["w0_s"]) / 60
+    rate = {g: mean(rows[g]["prompt_tokens_per_s"]) for g in GROUPS}
+    total = sum(rate.values())
     intro = (
-        "The same workload, the same requests at the same times, the same "
-        "cache: once alone, once sharing with the other three. Each workload "
-        "sends exactly as many requests and tokens per second in both runs, "
-        "so its traffic intensity is held fixed and the difference is what "
-        "sharing the cache does to it (the check below shows the numbers).")
+        f"Each workload twice on the same cache: once alone, once sharing "
+        f"with the other three, with {SAME_TIMES}. So each workload's own "
+        "traffic intensity, its requests and prompt tokens per second, is "
+        "held fixed. What sharing adds is everyone else's traffic: in the "
+        f"mix the cache takes about {total:,.0f} prompt tokens per second, "
+        "against " +
+        _list([f"{rate[g]:,.0f} for {L[g]} alone" for g in GROUPS]) +
+        ". The difference below is the effect of that competition; it does "
+        "not separate how much traffic arrives from what kind.")
     lines = []
     for g in sorted(GROUPS, key=lambda g: diff[(g, "lru")]):
+        kinds = {verdict[(g, p)] for p in POLICIES}
+        if kinds == {"higher"}:
+            lines.append(f"<b>{L[g]}</b> when sharing: lower by " + _list(
+                [f"{pts(diff[(g, p)]).split()[0]} ({P[p]})"
+                 for p in POLICIES]) + " points.")
+            continue
         parts = []
         for p in POLICIES:
             v, d = verdict[(g, p)], diff[(g, p)]
@@ -788,11 +906,14 @@ def q6(s: Row, facts: Row) -> str:
             else:
                 parts.append(f"{P[p]} a tie")
         lines.append(f"<b>{L[g]}</b> when sharing: {_list(parts)}.")
+    if hurt and len(hurt) == len(diff):
+        lines.append("Every workload loses under every policy, on every "
+                     f"seed ({_seeds_txt(s)}).")
     controls = [
         '<table><thead><tr><th>Workload</th><th>Requests measured, alone / '
-        'sharing</th><th>Prompt tokens per second</th><th>Median reply '
-        'alone (LRU)</th><th>Median reply sharing (LRU)</th></tr>'
-        '</thead><tbody>'
+        'sharing</th><th>Its prompt tokens per second</th><th>Prompt tokens '
+        'per second the cache takes, alone / sharing</th><th>Median time to '
+        'the full reply under LRU, alone / sharing</th></tr></thead><tbody>'
     ]
     lat = {}
     for g in GROUPS:
@@ -801,9 +922,9 @@ def q6(s: Row, facts: Row) -> str:
                   mean(r["lru"]["latency_mixed_s"]))
         controls.append(
             f"<tr><td>{L[g]}</td><td>{mean(r['requests']):,.0f} / "
-            f"{mean(r['mixed_requests']):,.0f}</td>"
-            f"<td>{mean(r['prompt_tokens_per_s']):,.0f}</td>"
-            f"<td>{secs(lat[g][0])}</td><td>{secs(lat[g][1])}</td></tr>")
+            f"{mean(r['mixed_requests']):,.0f}</td><td>{rate[g]:,.0f}</td>"
+            f"<td>{rate[g]:,.0f} / {total:,.0f}</td>"
+            f"<td>{secs(lat[g][0])} / {secs(lat[g][1])}</td></tr>")
     controls.append("</tbody></table>")
     known = [g for g in GROUPS if None not in lat[g]]
     biggest = max(known,
@@ -813,26 +934,28 @@ def q6(s: Row, facts: Row) -> str:
     if biggest is not None:
         a, b = lat[biggest]
         speed = (
-            " What can differ is how fast the server answers, which moves "
-            "closed-loop turns (ShareGPT, AgentBank, CC-Bench) a little. The "
-            "largest change in median reply time under LRU is "
-            f"{L[biggest]}'s: {secs(a)} alone against {secs(b)} sharing.")
+            " The reply times are estimated by the GPU stand-in; they move "
+            "the closed-loop turns slightly. The largest change in median "
+            f"reply time under LRU is {L[biggest]}'s: {secs(a)} alone "
+            f"against {secs(b)} sharing.")
     control_note = (
-        '<details class="more"><summary>Traffic intensity check</summary>'
-        '<div class="stack"><p class="prose">Requests and prompt tokens per '
-        f"second over the measured {minutes:.0f} minutes (mean of seeds "
-        f"{_seeds_txt(s)}) are the same alone and sharing, by construction."
-        f"{speed}</p>"
+        '<details class="more"><summary>Traffic check</summary>'
+        '<div class="stack"><p class="prose">Over the measured '
+        f"{minutes:.0f} minutes (mean of seeds {_seeds_txt(s)}), each "
+        "workload sends the same requests and prompt tokens per second "
+        "alone and sharing; that holds by construction, and the counts "
+        f"confirm it. The cache's total load differs.{speed}</p>"
         f'<div class="tablewrap">{"".join(controls)}</div></div></details>')
     lru_hurt = [g for g in GROUPS if verdict[(g, "lru")] == "higher"]
     lru_helped = [g for g in GROUPS if verdict[(g, "lru")] == "lower"]
     lru_tie = [g for g in GROUPS if verdict[(g, "lru")] == "tie"]
     answer = []
     if lru_hurt:
-        answer.append("Under LRU, sharing costs " + _list([
+        answer.append("Under LRU, sharing the cache costs " + _list([
             f"{L[g]} {pts(diff[(g, 'lru')])}"
             for g in sorted(lru_hurt, key=lambda g: diff[(g, "lru")])
-        ]) + " of usable reuse against running alone with the same traffic")
+        ]) + " of usable reuse against running alone with its own traffic "
+                      "unchanged")
     if lru_helped:
         answer.append(
             "it helps " +
@@ -841,57 +964,57 @@ def q6(s: Row, facts: Row) -> str:
         answer.append(
             _list([L[g]
                    for g in lru_tie]) + " " + _verb(lru_tie, "ties", "tie"))
-    facts["q6_answer"] = "; ".join(answer) + (
-        ". Every seed agrees on each of these."
-        if lru_hurt or lru_helped else ".")
+    tail = ""
+    if hurt and len(hurt) == len(diff):
+        tail = (" LFU and FIFO lose too, for every workload, on every "
+                "seed.")
+    facts["q6_answer"] = "; ".join(answer) + "." + tail
     body = (f'<p class="prose">{intro}</p>' +
-            figure("fig-q6", esc(claim), [MEASURED], _ul(lines)) +
+            figure("fig-q6", esc(claim), [badges(s)["engine"]], _ul(lines)) +
             control_note)
-    return point(6, "Alone against sharing", "Does sharing the cache hurt "
-                 "each workload?", body)
+    return point(6, "Alone vs. sharing", "Does sharing the cache hurt each "
+                 "workload?", body)
 
 
 def method(s: Row) -> str:
     cfg = s["config"]
     mix = s["mix"]
     seeds = [str(x) for x in cfg["reported_seeds"]]
-    members = {
-        "sharegpt": ("sharegpt", ),
-        "agentbank": ("agentbank", ),
-        "ccbench": ("ccbench", ),
-        "bailian":
-        ("bailian-chat", "bailian-api", "bailian-thinking", "bailian-coder"),
-    }
     pacing = {
-        "sharegpt": "closed loop; pauses borrowed from Bailian chat",
-        "agentbank": "closed loop; pauses borrowed from CC-Bench tools",
-        "ccbench": "closed loop; its own recorded tool times",
-        "bailian": "open loop; recorded arrival times",
+        "sharegpt":
+        "closed loop: the next turn is sent after the reply plus "
+        "a pause copied from the Bailian chat trace",
+        "agentbank":
+        "closed loop, pauses copied from CC-Bench's tool times",
+        "ccbench":
+        "closed loop, its own recorded tool times",
+        "bailian":
+        "open loop: sent at the recorded times, whatever the "
+        "server does",
     }
     run_min = cfg["stop_s"] / 60
     rows = []
     for g in GROUPS:
-        req = [
-            sum(mix[x]["workloads"][w]["requests"] for w in members[g])
-            for x in seeds
-        ]
         tok = [
             sum(mix[x]["workloads"][w]["prompt_token_share"]
-                for w in members[g]) for x in seeds
+                for w in _members(g)) for x in seeds
         ]
-        rows.append(f"<tr><td>{L[g]}</td><td>{sum(req) / len(req):,.0f}</td>"
+        rows.append(f"<tr><td>{L[g]}</td><td>"
+                    f"{_mix_mean(s, g, 'requests'):,.0f}</td>"
                     f"<td>{pct(sum(tok) / len(tok), 0)}</td>"
                     f'<td class="text">{pacing[g]}</td></tr>')
     table = ('<div class="tablewrap"><table><thead><tr><th>Workload</th>'
-             f'<th>Requests per {run_min:.0f}-minute run</th><th>Share of the '
-             'run\'s prompt tokens</th><th class="text">When requests are '
-             'sent</th></tr></thead>'
+             f'<th>Requests per {run_min:.0f}-minute run</th><th>Share of '
+             f'prompt tokens over the whole {run_min:.0f} minutes</th>'
+             '<th class="text">When requests are sent</th></tr></thead>'
              '<tbody>' + "".join(rows) + "</tbody></table></div>")
     kept = [
         mix[x]["workloads"][w]["kept_session_fraction"] for x in seeds
-        for w in members["bailian"]
+        for w in BAILIAN
         if mix[x]["workloads"][w].get("kept_session_fraction") is not None
     ]
+    others = sum(_mix_mean(s, g, "requests")
+                 for g in TEXT_WORKLOADS) / len(TEXT_WORKLOADS)
     engine = [
         e for e in s["capacity_window"]["engine"] if e["replay"] is not None
     ]
@@ -899,28 +1022,33 @@ def method(s: Row) -> str:
     commit = s.get("provenance", {}).get("commit", "?")[:8]
     train = _list([str(x) for x in cfg["train_seeds"]])
     items = [
-        "Engine: vLLM v0 with prefix caching, run by <code>vllm serve</code> "
-        "with the simulator executor, which replays recorded answers and "
-        "models each step's time on a CPU instead of running the model on a "
-        f"GPU. Model Qwen2.5-0.5B-Instruct; cache {cfg['capacity_tokens']:,} "
-        f"tokens in blocks of {cfg['block_size']}.",
+        "Engine runs: vLLM v0 with prefix caching, run by <code>vllm "
+        "serve</code>. The model does not run; a stand-in executor returns "
+        "each request's recorded answer and estimates each step's time, so "
+        "the scheduler and the cache behave as vLLM does while timing is an "
+        "estimate. Model Qwen2.5-0.5B-Instruct; cache "
+        f"{cfg['capacity_tokens']:,} tokens in blocks of {cfg['block_size']}.",
         f"Runs: {run_min:.0f} minutes each, sessions starting throughout. "
         f"Numbers count the requests sent from minute {cfg['w0_s'] / 60:.0f} "
         f"to {run_min:.0f}, after the cache has filled. Seed k draws its own "
-        f"sessions and replays the k-th {run_min:.0f}-minute stretch of each "
+        f"sessions and uses the k-th {run_min:.0f}-minute stretch of each "
         f"Bailian trace. Seed {train} is kept for training.",
-        "Bailian is thinned to match the other workloads' request rate" +
-        (f" (each trace keeps {pct(min(kept), 0)} to {pct(max(kept), 0)} "
-         "of its sessions)" if kept else "") +
-        ", and its token ids are synthetic, keyed by the trace's hashes, so "
-        "only its reuse pattern is real.",
-        "Alone runs (points 5 and 6) replay the mix's plan with every other "
+        "Each of Bailian's four traces is thinned to the request rate of the "
+        "other workloads" +
+        (f" (each keeps {pct(min(kept), 0)} to {pct(max(kept), 0)} of its "
+         "sessions)" if kept else "") + ", so Bailian as a whole sends about "
+        f"{_mix_mean(s, 'bailian', 'requests') / others:.0f} times as many "
+        "requests as each other workload. The traces store only fingerprints "
+        "of the text, so we generate stand-in tokens that repeat exactly "
+        "where the fingerprints repeat: the reuse pattern is real, the words "
+        "are not.",
+        "Alone runs (points 5 and 6) use the mix's plan with every other "
         "workload's requests removed; nothing else changes.",
-        "Point 3 uses the requests as planned, not a run: the signals do "
-        "not depend on the eviction policy.",
+        "Point 3 uses the requests as planned, not a run: its signals do not "
+        "depend on the eviction policy.",
     ]
     if agree is not None:
-        items.append(f"The cache replay agrees with the engine: within "
+        items.append(f"The cache replay agrees with the engine within "
                      f"{pts(agree)} on all {len(engine)} engine runs it was "
                      "checked against.")
     items.append(
@@ -948,11 +1076,12 @@ def sections(s: Row, data: Row) -> List[str]:
     ]
     return [
         header(s),
-        answers(s, data, facts),
+        answers(facts),
         terms(s),
         part("Part A · Points 1 to 4", "All four workloads sharing one cache"),
         *parts[:4],
-        part("Part B · Points 5 and 6", "Each workload on its own"),
+        part("Part B · Points 5 and 6",
+             "Each workload alone, and against sharing"),
         *parts[4:],
         method(s),
     ]

@@ -301,9 +301,10 @@ def grid_configs(name: str,
     ``isolated`` (36 runs) replays each of the four workloads alone
     (`analysis.isolate`: its requests of the reported seeds' balanced
     plans, at the same times) under LRU, LFU and FIFO at `capacity_tokens`.
-    Under 1% of any workload's no-eviction reuse comes from another workload
-    (the system prompt ShareGPT, AgentBank and CC-Bench share), so these
-    plans need no ceiling of their own: the study uses the mix's.
+    About 1% of a workload's no-eviction reuse comes from another workload
+    (the system prompt ShareGPT, AgentBank and CC-Bench share; at most 1.5%
+    on one seed), so these plans need no ceiling of their own: the study
+    uses the mix's.
     """
 
     def plan(mix: str, pacing: str, seed: int) -> List[MixConfig]:
