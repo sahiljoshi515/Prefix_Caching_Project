@@ -418,12 +418,13 @@ def point7(data: Row, plt, out: Path) -> List[Path]:
     axes[0][0].set_ylabel("Usable prefix reuse")
     axes[1][0].set_ylabel("Usable prefix reuse")
     handles, labels = axes[0][0].get_legend_handles_labels()
+    # Below the panels: seven entries do not fit beside the title.
     fig.legend(handles,
                labels,
                frameon=False,
-               ncol=6,
-               loc="lower center",
-               bbox_to_anchor=(0.5, 0.98),
+               ncol=4,
+               loc="upper center",
+               bbox_to_anchor=(0.5, 0.0),
                fontsize=8)
     fig.suptitle(
         "Point 7 · Each workload in the mix against cache size "
@@ -431,8 +432,7 @@ def point7(data: Row, plt, out: Path) -> List[Path]:
         x=0.02,
         ha="left",
         fontweight="bold",
-        fontsize=10,
-        y=1.05)
+        fontsize=10)
     fig.tight_layout()
     paths = _save(fig, out, "point7_capacity_by_workload")
     ev = q["evictions"]
