@@ -78,6 +78,11 @@
              overflow: "visible" };
   }
 
+  function logTicks(ticks, fmt) {
+    return Plot.text(ticks, { x: (d) => d, text: (d) => fmt(d),
+      frameAnchor: "bottom", dy: 15, fill: tok("--ink-2"), fontSize: 12 });
+  }
+
   function width(node) {
     return Math.max(260, Math.min(980, node.clientWidth || 640));
   }
@@ -107,20 +112,30 @@
         dx: r.anchor === "end" ? -4 : 4 })),
       ...o.series.map((s) => Plot.line(rows.filter((r) => r.sid === s.id), {
         x: "x", y: "y", stroke: s.color, strokeWidth: 2,
-        curve: o.curve || "linear" })),
+        strokeDasharray: s.dash || null, curve: o.curve || "linear" })),
+      ...(o.endLabels ? o.series.map((s) => {
+        const pts = rows.filter((r) => r.sid === s.id);
+        return Plot.text(pts.slice(-1), { x: "x", y: "y",
+          text: () => s.short || s.label, dx: 6, dy: s.labelDy || 0,
+          textAnchor: "start", fill: tok("--ink"), fontSize: 11 });
+      }) : []),
       ...o.series.filter((s) => s.dots).map((s) => Plot.dot(
         rows.filter((r) => r.sid === s.id), { x: "x", y: "y", r: 3.5,
         fill: s.color, stroke: tok("--surface"), strokeWidth: 1.5 })),
+      ...(o.xType === "log" && o.xTicks ?
+        [logTicks(o.xTicks, o.xTick || String)] : []),
       Plot.ruleX(tips, Plot.pointerX({ x: "x", stroke: tok("--muted") })),
       Plot.tip(tips, Plot.pointerX({ x: "x", y: "y", title: "title",
         anchor: "top-left" })),
     ];
+    const logLabels = o.xType === "log" && o.xTicks;
     node.append(Plot.plot({
       width: o.width || width(node), height: o.height || 300,
-      marginLeft: 46, marginBottom: 40, marginTop: 22, marginRight: 18,
-      style: baseStyle(),
+      marginLeft: 46, marginBottom: logLabels ? 48 : 40, marginTop: 22,
+      marginRight: o.marginRight || 18, style: baseStyle(),
       x: { type: o.xType || "linear", domain: o.xDomain, label: o.xLabel,
-           tickFormat: o.xTick, ticks: o.xTicks },
+           tickFormat: logLabels ? () => "" : o.xTick, ticks: o.xTicks,
+           labelOffset: logLabels ? 34 : undefined },
       y: { domain: o.yDomain || [0, 1], label: o.yLabel, grid: true,
            tickFormat: o.yTick || ((v) => pct(v)) },
       marks,
@@ -254,6 +269,169 @@
     legend(node, [{ label: "Share of requests", color: tok("--muted"),
       kind: "dot", hollow: true }, { label: "Share of prompt tokens",
       color: tok("--ink"), kind: "dot" }]);
+  };
+
+  /* ---- The whole mixed workload under each policy ---------------------- */
+  const MIXPOLS = ["ceiling", "lru", "lfu", "fifo"];
+  const SHORT = { ceiling: "No eviction", lru: "LRU", lfu: "LFU",
+                  fifo: "FIFO" };
+
+  draw["fig-mixbars"] = (node) => {
+    const M = D.mixRuns;
+    if (!M) { node.append(el("p", {}, "Mixed-run data missing.")); return; }
+    const rows = MIXPOLS.map((p) => ({ p, label: SHORT[p],
+      v: M.bars[p].mean, hi: Math.max(...M.bars[p].seeds) }));
+    const seeds = MIXPOLS.flatMap((p) => M.bars[p].seeds.map((v, i) =>
+      ({ p, label: SHORT[p], v, seed: M.seeds[i] })));
+    node.append(Plot.plot({
+      width: width(node), height: 220, marginLeft: 96, marginRight: 64,
+      marginBottom: 40, style: baseStyle(),
+      x: { domain: [0, 1], grid: true, tickFormat: (v) => pct(v),
+           label: "Share of all prompt tokens served from the cache →" },
+      y: { domain: rows.map((r) => r.label), label: null },
+      marks: [
+        ...MIXPOLS.map((p) => Plot.barX(rows.filter((r) => r.p === p), {
+          x: "v", y: "label", rx: 3, insetTop: 8, insetBottom: 8,
+          fill: p === "ceiling" ? "none" : pol(p),
+          stroke: p === "ceiling" ? pol(p) : null,
+          strokeDasharray: p === "ceiling" ? "4,3" : null })),
+        Plot.dot(seeds, { x: "v", y: "label", r: 4, fill: tok("--surface"),
+          stroke: tok("--ink"), strokeWidth: 1.5 }),
+        Plot.text(rows, { x: "hi", y: "label", text: (d) => pct(d.v, 1),
+          dx: 10, textAnchor: "start", fill: tok("--ink"), fontSize: 13,
+          fontWeight: 600 }),
+        Plot.tip(seeds, Plot.pointer({ x: "v", y: "label",
+          title: (d) => d.label + ", seed " + d.seed + ": " + pct(d.v, 1) })),
+      ],
+    }));
+    legend(node, [
+      ...MIXPOLS.slice(1).map((p) => ({ label: SHORT[p] + " (seed mean)",
+        color: pol(p), kind: "rect" })),
+      { label: "No eviction (ceiling)", color: pol("ceiling"), kind: "rect",
+        hollow: true },
+      { label: "One seed's run", color: tok("--ink"), kind: "dot",
+        hollow: true },
+    ]);
+  };
+
+  draw["fig-timeline"] = (node) => {
+    const M = D.mixRuns; if (!M) return;
+    lines(node, {
+      x: M.minutes, xDomain: [0, 30], height: 300, marginRight: 84,
+      endLabels: true, xTicks: [0, 5, 10, 15, 20, 25, 30],
+      xLabel: "Minute of the 30-minute run (when each request was sent) →",
+      yLabel: "↑ Prompt tokens served from the cache",
+      xFmt: (x) => "minute " + Math.floor(x) + " to " + (Math.floor(x) + 1),
+      xTick: (v) => v + " min",
+      series: MIXPOLS.map((p) => ({ id: p, label: POLICY[p], short: SHORT[p],
+        color: pol(p), y: M.timeline[p], dash: p === "ceiling" ? "5,4" : null,
+        labelDy: { ceiling: -2, lru: -11, lfu: 1, fifo: 13 }[p] })),
+      rules: [{ x: M.w0, label: "measured from here", color: tok("--muted") }],
+    });
+    legend(node, MIXPOLS.map((p) => ({ label: POLICY[p], color: pol(p) })));
+  };
+
+  draw["fig-mixinterval"] = (node) => {
+    const M = D.mixRuns; if (!M) return;
+    const box = el("div", { class: "multiples" });
+    node.append(box);
+    const panel = (title) => {
+      const pn = el("div", { class: "panel" });
+      pn.append(el("div", { class: "panel-title" }, title));
+      const plotNode = el("div", { class: "plot" });
+      pn.append(plotNode); box.append(pn); return plotNode;
+    };
+    const half = Math.max(280, (node.clientWidth || 900) / 2 - 14);
+    const a = panel("How long the mix's reuses wait (no-eviction runs)");
+    const c = M.intervalCdf;
+    const keep = c.x.map((x, i) => [x, c.p[i]]).filter(([x]) => x >= 0.01);
+    lines(a, {
+      x: keep.map((d) => d[0]), xType: "log", xDomain: [0.01, 1800],
+      width: half, height: 260,
+      xLabel: "Time since the block's previous use (log) →",
+      yLabel: "↑ Share of reuses this soon or sooner",
+      xFmt: (x) => "within " + secs(x), xTick: (v) => secs(v),
+      xTicks: [0.01, 0.1, 1, 10, 60, 600],
+      series: [{ id: "mix", label: "Whole mix", color: tok("--accent"),
+                 y: keep.map((d) => d[1]) }],
+      rules: [{ x: D.mixRuns.evictP50.lru, label: "LRU keeps ~" +
+        secs(D.mixRuns.evictP50.lru), color: pol("lru") }],
+    });
+    const b = panel("Chance the policy still had the block");
+    const I = M.interval;
+    lines(b, {
+      x: I.mids, xType: "log", xDomain: [0.01, 1800], width: half,
+      height: 260, xTicks: [0.01, 0.1, 1, 10, 60, 600],
+      xLabel: "Time since the block's previous use (log) →",
+      yLabel: "↑ Share of reuses served",
+      xFmt: (x) => "about " + secs(x), xTick: (v) => secs(v),
+      series: ["lru", "lfu", "fifo"].map((p) => ({ id: p, label: POLICY[p],
+        color: pol(p), y: I.served[p], dots: true })),
+    });
+    legend(node, ["lru", "lfu", "fifo"].map((p) => ({ label: POLICY[p],
+      color: pol(p) })).concat([{ label: "Whole mix (left)",
+      color: tok("--accent") }]));
+  };
+
+  /* Direct labels at each curve's median; policies whose medians are
+     within 15% share one label. */
+  function ageLabels(M, rows) {
+    const groups = [];
+    for (const p of ["lru", "fifo", "lfu"]) {
+      const g = groups.find((x) => Math.abs(M.evictP50[x[0]] - M.evictP50[p])
+        / M.evictP50[p] < 0.15);
+      if (g) g.push(p); else groups.push([p]);
+    }
+    return groups.map((g) => Plot.text(rows.filter((r) => r.p === g[0])
+      .filter((r, i, a) => i === Math.floor(a.length * 0.5)), {
+      x: "x", y: "y", text: () => g.map((p) => SHORT[p]).join(" and "),
+      dx: -10, textAnchor: "end", fill: tok("--ink"), fontSize: 11 }));
+  }
+
+  draw["fig-mixages"] = (node) => {
+    const M = D.mixRuns; if (!M) return;
+    const pols = ["lru", "lfu", "fifo"];
+    const rows = pols.flatMap((p) => (M.evictCdf[p].x || []).map((x, i) =>
+      ({ p, label: POLICY[p], x: Math.max(x, 0.05), y: M.evictCdf[p].p[i] })));
+    node.append(Plot.plot({
+      width: width(node), height: 280, marginLeft: 46, marginRight: 60,
+      marginBottom: 48, style: baseStyle(),
+      x: { type: "log", domain: [0.05, 600], label:
+        "How long the block had been idle when it was evicted (log) →",
+        tickFormat: () => "", ticks: [0.1, 1, 10, 60, 600],
+        labelOffset: 34 },
+      y: { domain: [0, 1], grid: true, tickFormat: (v) => pct(v),
+           label: "↑ Share of evictions this soon or sooner" },
+      marks: [
+        Plot.ruleY([0], { stroke: tok("--rule") }),
+        ...pols.map((p) => Plot.line(rows.filter((r) => r.p === p), {
+          x: "x", y: "y", stroke: pol(p), strokeWidth: 2 })),
+        logTicks([0.1, 1, 10, 60, 600], secs),
+        ...ageLabels(M, rows),
+        Plot.tip(rows, Plot.pointer({ x: "x", y: "y", title: (d) =>
+          d.label + ": " + pct(d.y, 0) + " of evictions within " +
+          secs(d.x) })),
+      ],
+    }));
+    legend(node, pols.map((p) => ({ label: POLICY[p] + ", median " +
+      secs(M.evictP50[p]), color: pol(p) })));
+  };
+
+  draw["fig-mixlost"] = (node) => {
+    const segs = [
+      { id: "kept", label: "Reused", color: tok("--seq-4") },
+      { id: "evicted", label: "Lost: evicted", color: tok("--seq-2") },
+      { id: "cut_off", label: "Lost: cached but cut off", color: tok("--bad") },
+    ];
+    stacked(node, {
+      rows: ["lru", "lfu", "fifo"].map((p) => ({ id: p, label: SHORT[p] })),
+      xDomain: [0, 1], marginLeft: 70, segments: segs,
+      xLabel: "Share of the blocks the no-eviction run reuses →",
+      value: (p, sid) => { const L = D.lost[p].all;
+        const t = L.kept + L.evicted + L.cut_off; return t ? L[sid] / t : null; },
+    });
+    legend(node, segs.map((g) => ({ label: g.label, color: g.color,
+                                     kind: "rect" })));
   };
 
   draw["fig-headline"] = (node) => {
@@ -523,6 +701,27 @@
 
   /* Tables under each figure (the same numbers, readable without hover). */
   const tables = {
+    "fig-mixbars": () => D.mixRuns ? [["Policy", "Seed mean",
+      ...D.mixRuns.seeds.map((k) => "Seed " + k), "Share of the ceiling"],
+      MIXPOLS.map((p) => [POLICY[p], pct(D.mixRuns.bars[p].mean, 1),
+        ...D.mixRuns.bars[p].seeds.map((v) => pct(v, 1)),
+        p === "ceiling" ? "100%" : pct(D.mixRuns.efficiency[p], 1)])] : null,
+    "fig-timeline": () => D.mixRuns ? [["Minute", ...MIXPOLS.map((p) =>
+      SHORT[p])], D.mixRuns.minutes.map((m, i) => [Math.floor(m) + "–" +
+      (Math.floor(m) + 1), ...MIXPOLS.map((p) =>
+        pct(D.mixRuns.timeline[p][i], 1))])] : null,
+    "fig-mixinterval": () => D.mixRuns ? [["Time since previous use",
+      "LRU served", "LFU served", "FIFO served"],
+      D.mixRuns.interval.edges.slice(0, -1).map((e, i) => [secs(e) + "–" +
+        secs(D.mixRuns.interval.edges[i + 1]), ...["lru", "lfu", "fifo"]
+        .map((p) => pct(D.mixRuns.interval.served[p][i], 0))])] : null,
+    "fig-mixages": () => D.mixRuns ? [["Policy", "10% of evictions within",
+      "50% within", "90% within"], ["lru", "lfu", "fifo"].map((p) => [
+      POLICY[p], secs(D.retention[p].p10), secs(D.retention[p].p50),
+      secs(D.retention[p].p90)])] : null,
+    "fig-mixlost": () => [["Policy", "Reused (blocks per seed)", "Evicted",
+      "Cut off"], ["lru", "lfu", "fifo"].map((p) => { const L = D.lost[p].all;
+        return [POLICY[p], num(L.kept), num(L.evicted), num(L.cut_off)]; })],
     "fig-mix": () => [["Workload", "Loop", "Requests", "Prompt tokens",
       "Sessions", "Pause p50", "Kept of trace"], W.map((w) => [LABEL[w],
       D.loop[w], pct(D.mix[w].requests, 1), pct(D.mix[w].tokens, 1),

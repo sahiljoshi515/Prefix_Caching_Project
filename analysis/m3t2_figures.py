@@ -177,6 +177,68 @@ def lost(s: Row, plt, out: Path) -> List[Path]:
     return _save(fig, out, "fig4_lost_reuse")
 
 
+def mixed_baselines(s: Row, plt, out: Path) -> List[Path]:
+    """The whole mixed workload under each policy: the share of prompt
+    tokens served (seed mean and each seed) and the same share minute by
+    minute through the run."""
+    tl = s.get("timeline")
+    if not tl:
+        return []
+    pols = ["ceiling", "lru", "lfu", "fifo"]
+    fig, (a, b) = plt.subplots(1,
+                               2,
+                               figsize=(10, 3.2),
+                               gridspec_kw={"width_ratios": [1, 1.6]})
+    for i, p in enumerate(pols):
+        u = s["headline"][p]["all"]["usable"]
+        color, _, _ = POLICY_STYLE[p]
+        a.barh(i,
+               u["mean"],
+               color="none" if p == "ceiling" else color,
+               edgecolor=color,
+               ls="--" if p == "ceiling" else "-",
+               height=0.6)
+        a.scatter(u["seeds"], [i] * len(u["seeds"]),
+                  s=14,
+                  facecolor="white",
+                  edgecolor="#111a1d",
+                  zorder=3)
+        a.text(max(u["seeds"]) + 0.02,
+               i,
+               f"{100 * u['mean']:.1f}%",
+               va="center",
+               fontsize=8)
+    a.set_yticks(range(len(pols)), [POLICY[p] for p in pols])
+    a.invert_yaxis()
+    a.set_xlim(0, 1)
+    a.set_xlabel("Prompt tokens served from the cache, whole mix")
+    a.grid(axis="x", alpha=0.25)
+    edges = tl["lru"]["edges"]
+    minutes = [(lo + hi) / 120 for lo, hi in zip(edges[:-1], edges[1:])]
+    for p in pols:
+        color, _, _ = POLICY_STYLE[p]
+        b.plot(minutes,
+               [math.nan if v is None else v for v in tl[p]["usable"]],
+               color=color,
+               lw=1.6,
+               ls="--" if p == "ceiling" else "-",
+               label=POLICY[p])
+    b.axvline(s["config"]["w0_s"] / 60, color="#7b878b", lw=0.8)
+    b.text(s["config"]["w0_s"] / 60 + 0.3,
+           0.95,
+           "measured from here",
+           fontsize=7,
+           color="#46555a")
+    b.set_xlim(0, 30)
+    b.set_ylim(0, 1)
+    b.set_xlabel("Minute of the run")
+    b.set_ylabel("Served from the cache")
+    b.grid(alpha=0.25)
+    b.legend(fontsize=7, frameon=False, ncol=4, loc="lower center")
+    fig.tight_layout()
+    return _save(fig, out, "fig0_mixed_baselines")
+
+
 def capacity(s: Row, plt, out: Path) -> List[Path]:
     sim = (s.get("sim") or {}).get("balanced-human")
     if not sim:
@@ -223,7 +285,8 @@ def main(argv=None) -> None:
     s = json.loads(args.summary.read_text())
     args.out.mkdir(parents=True, exist_ok=True)
     written = []
-    for draw in (come_back, hit_by_interval, usable, lost, capacity):
+    for draw in (mixed_baselines, come_back, hit_by_interval, usable, lost,
+                 capacity):
         written += draw(s, plt, args.out)
         plt.close("all")
     for path in written:

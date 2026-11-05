@@ -276,9 +276,9 @@ tokens are not: CC-Bench agent prompts are long, so it brings
 </section>"""
 
 
-def headline(s: Row, data: Row) -> str:
+def _tiles(s: Row) -> str:
     lfu_v, fifo_v = _vs(s, "lfu"), _vs(s, "fifo")
-    tiles = "".join(
+    return "".join(
         f'<div class="tile"><span class="label">{label}</span><span '
         f'class="value">{pct(_u(s, p, "all"))}</span><span class="sub">'
         f'{sub}</span></div>' for p, label, sub in [
@@ -288,6 +288,159 @@ def headline(s: Row, data: Row) -> str:
              (", a tie" if _tie(lfu_v) else "")),
             ("fifo", "FIFO", pts(fifo_v["mean"]) + " vs LRU"),
         ])
+
+
+def _cut(served: List[Optional[float]], edges: List[float],
+         below: float) -> Optional[float]:
+    """The lower edge of the first interval bin whose served share falls
+    below `below`, or None if none does."""
+    for v, e in zip(served, edges):
+        if v is not None and v < below:
+            return e
+    return None
+
+
+def baselines(s: Row, data: Row) -> str:
+    M = data.get("mixRuns")
+    if not M:
+        return ""
+    ceil, lru = _u(s, "ceiling", "all"), _u(s, "lru", "all")
+    lfu, fifo = _u(s, "lfu", "all"), _u(s, "fifo", "all")
+    eff = M["efficiency"]
+    lfu_v, fifo_v = _vs(s, "lfu"), _vs(s, "fifo")
+    lfu_overall = _lfu_phrase(s)[0]
+    fifo_word = ("ties with LRU" if _tie(fifo_v) else "beats LRU on every seed"
+                 if fifo_v["min"] > 0 else "trails LRU on every seed"
+                 if fifo_v["max"] < 0 else "is mixed against LRU")
+
+    # Over the run: where LRU first falls 5 points below the no-eviction run.
+    mins, tl = M["minutes"], M["timeline"]
+    split = next((m for m, c, x in zip(mins, tl["ceiling"], tl["lru"])
+                  if c is not None and x is not None and c - x > 0.05), None)
+    meas = [i for i, m in enumerate(mins) if m >= M["w0"]]
+
+    def count(a: str, b: str) -> int:
+        return sum(1 for i in meas if tl[a][i] is not None
+                   and tl[b][i] is not None and tl[a][i] >= tl[b][i])
+
+    gaps = [
+        tl["ceiling"][i] - tl["lru"][i] for i in meas
+        if tl["ceiling"][i] is not None and tl["lru"][i] is not None
+    ]
+    n_close = int(split) if split is not None else 0
+    split_txt = (("Only in the first minute" if n_close == 1 else
+                  f"Only in the first {n_close} minutes") +
+                 " does every policy serve about "
+                 "what the no-eviction run does; then evictions start to cost "
+                 "reuse and the lines separate. " if n_close else "")
+    lf, lfi = count("lru", "fifo"), count("lru", "lfu")
+    time_take = (
+        f"{split_txt}In every measured minute LRU stays "
+        f"{pts(min(gaps)).lstrip('+')} to {pts(max(gaps)).lstrip('+')} below "
+        "the no-eviction run. " +
+        (f"LRU is above FIFO in all {len(meas)} measured minutes"
+         if lf == len(meas) else f"LRU is above FIFO in {lf} of {len(meas)} "
+         "measured minutes") + f", but above LFU in only {lfi} of them; LFU "
+        f"is ahead in the other {len(meas) - lfi}. The ups and downs come from "
+        "the traffic, since the no-eviction line moves with them.")
+
+    # Reuse interval for the mix.
+    IV, cdf = M["interval"], M["intervalCdf"]
+    q, within = cdf.get("quantiles") or {}, cdf.get("within") or {}
+    c90 = {p: _cut(IV["served"][p], IV["edges"], 0.9) for p in IV["served"]}
+    late = {
+        p: max((v for v, e in zip(IV["served"][p], IV["edges"])
+                if e >= 30 and v is not None),
+               default=0.0)
+        for p in IV["served"]
+    }
+    by_cut: Dict[float, List[str]] = {}
+    for p in ("lru", "lfu", "fifo"):
+        if c90[p] is not None:
+            by_cut.setdefault(c90[p], []).append(p.upper())
+    cut_txt = "; ".join(
+        f"{' and '.join(ps)} serve"
+        f"{'s' if len(ps) == 1 else ''} at least 90% of reuses "
+        f"up to {secs(c)}" for c, ps in sorted(by_cut.items(), reverse=True))
+    keeps_late = [p.upper() for p in late if late[p] >= 0.05]
+    late_txt = (
+        f" {' and '.join(keeps_late)} still serve"
+        f"{'s' if len(keeps_late) == 1 else ''} some reuses after "
+        f"30 s (up to {pct(max(late[p.lower()] for p in keeps_late))}), "
+        "because blocks with many past hits stay; "
+        f"{' and '.join(p.upper() for p in late if late[p] < 0.05)} "
+        "serve almost none." if keeps_late else "")
+    int_take = (
+        f"Half the mix's reuses come within {secs(q.get('p50'))} of the "
+        f"block's previous use and {pct(within.get('60'))} within a minute "
+        f"(left). {cut_txt} (right).{late_txt} The "
+        f"{pct(1 - within.get('60', 1))} of reuses that come back after a "
+        "minute are mostly lost under every baseline.")
+
+    ret = data["retention"]
+    age_take = (
+        "Median idle time at eviction: " + ", ".join(
+            f"{p.upper()} {secs(M['evictP50'][p])}"
+            for p in sorted(M["evictP50"], key=lambda p: -M["evictP50"][p])) +
+        f". Under every policy 90% of evicted blocks had been idle less "
+        f"than {secs(max(ret[p]['p90'] for p in ret))}, far shorter than "
+        "the minutes people take to come back.")
+
+    L = data["lost"]
+
+    def kept(p: str) -> float:
+        t = L[p]["all"]
+        return t["kept"] / max(1, t["kept"] + t["evicted"] + t["cut_off"])
+
+    f_all = L["fifo"]["all"]
+    cut_share = f_all["cut_off"] / max(1, sum(f_all.values()))
+    lost_take = (
+        "Of the blocks the no-eviction run reuses, " +
+        ", ".join(f"{p.upper()} reuses {pct(kept(p))}"
+                  for p in ("lru", "lfu", "fifo")) +
+        ". LRU and LFU lose blocks only by evicting them; FIFO also leaves "
+        f"{pct(cut_share)} cached but unusable behind an evicted block.")
+    return f"""
+<section class="section" aria-labelledby="baselines"><h2 id="baselines">
+Baselines on the mixed workload: LRU, LFU and FIFO</h2>
+<p class="prose">This is the experiment the task asks for. All seven
+workloads are replayed together, interleaved in time, through one shared
+cache of 131,072 tokens, once per policy. Within a seed every policy replays
+exactly the same requests, so the differences come only from what each
+policy evicts. This section treats the mix as one stream of requests; the
+sections after it split the same runs by workload.</p>
+<div class="tiles">{_tiles(s)}</div>
+{figure("fig-mixbars", f"On the mix, LRU serves {pct(lru)} of prompt "
+        f"tokens, LFU {pct(lfu)} and FIFO {pct(fifo)}; with no eviction, "
+        f"{pct(ceil)}", ["measured:measured, 3 seeds"],
+        f"LRU keeps {pct(eff['lru'])} of what the mix offers, LFU "
+        f"{pct(eff['lfu'])} and FIFO {pct(eff['fifo'])}. LFU {lfu_overall} "
+        f"({pts(lfu_v['min'])} to {pts(lfu_v['max'])} per seed); FIFO "
+        f"{fifo_word} ({pts(fifo_v['min'])} to {pts(fifo_v['max'])}). The "
+        "new policy has to raise this number without giving up any one "
+        "workload, which the sections below check.")}
+{figure("fig-timeline", "Every policy falls below the no-eviction run "
+        "within minutes and stays there", ["measured:measured, 3 seeds"],
+        time_take,
+        note="Each point is the share of prompt tokens served from the "
+        "cache for the requests sent in that minute, all workloads "
+        "together, averaged over the three seeds. The first 10 minutes "
+        "warm the cache and are not counted in the totals.")}
+{figure("fig-mixinterval", "On the mix, a reuse is served only if it "
+        "comes back quickly", ["measured:measured, 3 seeds"], int_take,
+        note="Reuse interval: the time between two uses of the same "
+        "block. Left: how the mix's reuses spread over that time, in runs "
+        "that never evict. Right: for each policy, the share of reuses "
+        "whose block was still cached, by the same time.")}
+{figure("fig-mixages", "How long each policy keeps an idle block",
+        ["measured:measured, 3 seeds"], age_take)}
+{figure("fig-mixlost", "Where the mix's lost reuse goes",
+        ["measured:measured, 3 seeds"], lost_take)}
+</section>"""
+
+
+def headline(s: Row, data: Row) -> str:
+    lfu_v, fifo_v = _vs(s, "lfu"), _vs(s, "fifo")
 
     def word(v: Row) -> str:
         return ("ties with"
@@ -307,13 +460,14 @@ def headline(s: Row, data: Row) -> str:
     lead = ("Overall ties hide large swings per workload"
             if _tie(lfu_v) else "The totals hide large swings per workload")
     return f"""
-<section class="section" aria-labelledby="headline"><h2 id="headline">How
-much each policy serves</h2>
-<p class="prose">Share of prompt tokens served from the cache, averaged over
-the three reported seeds; the thin line through each mark spans the seeds.
-The grey bar is what LRU leaves on the table compared with a cache that
-never evicts.</p>
-<div class="tiles">{tiles}</div>
+<section class="section" aria-labelledby="headline"><h2 id="headline">The
+same runs, workload by workload</h2>
+<p class="prose">The mixed runs above, split by the workload each request
+came from. Each mark is that workload's share of prompt tokens served from
+the cache, averaged over the three reported seeds; the thin line through
+each mark spans the seeds. The top row is the whole mix again. The grey bar
+is what LRU leaves on the table compared with a cache that never
+evicts.</p>
 {figure("fig-headline", claim, ["measured:measured, 3 seeds"],
         f"{lead}: LFU serves "
         f"{lab[sg]} {pct(_u(s, 'lfu', sg))} against LRU's "
@@ -901,6 +1055,7 @@ def sections(s: Row, data: Row) -> Dict[str, str]:
         "example": example(s, data),
         "glossary": glossary(s, data),
         "mix": mix(s, data),
+        "baselines": baselines(s, data),
         "headline": headline(s, data),
         "q1": q1(s, data),
         "q2": q2(s, data),

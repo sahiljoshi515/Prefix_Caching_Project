@@ -230,3 +230,17 @@ def test_usable_counts_only_completed_requests():
     # The failed request (c:1:1) is left out: chat is 0 of 40 tokens.
     assert out["chat"]["fraction"] == 0.0
     assert out["chat"]["requests"] == 1
+
+
+def test_timeline_is_token_weighted_per_slice_with_the_warm_up():
+    # Slices [0, 30) and [30, 60) s, every workload together. [0, 30):
+    # requests at 10, 20 and 5 s serve min(40, 0) + min(64, 64) +
+    # min(32, 32) = 96 of 136 tokens. [30, 60): min(100, 80) = 80 of 100.
+    out = st.timeline(requests(), 30.0, 60.0, 16)
+    assert out["edges"] == [0.0, 30.0, 60.0]
+    assert out["usable"] == [pytest.approx(96 / 136), pytest.approx(0.8)]
+    assert out["requests"] == [3, 1]
+    # A request that did not complete is left out of its slice.
+    req = requests()
+    req["status"] = arr(["completed", "failed", "completed", "completed"], OBJ)
+    assert st.timeline(req, 30.0, 60.0, 16)["usable"][1] is None

@@ -162,6 +162,7 @@ def build_data(s: Row) -> Row:
         "density": density,
         "evictions": evictions,
     }
+    data["mixRuns"] = mix_runs_view(s)
     sim = s.get("sim", {}).get("balanced-human")
     if sim:
         caps = sorted(int(k) for k in sim["lru"] if k != "ceiling")
@@ -205,6 +206,56 @@ def build_data(s: Row) -> Row:
         total = sum(gain.values()) or 1
         b["token_share_of_gain"] = {w: g / total for w, g in gain.items()}
     return data
+
+
+def mix_runs_view(s: Row) -> Optional[Row]:
+    """The whole mixed workload under each policy: every workload replayed
+    together through one cache, seen as one stream of requests."""
+    cfg = s["config"]
+    tl = s.get("timeline")
+    if not tl:
+        return None
+    pols = ["ceiling"] + list(cfg["policies"])
+    edges = tl["lru"]["edges"]
+    hb = s["q1"]["hit_by_interval"]
+    cdf = s["q1"].get("intervals_mix") or {}
+    ages = {
+        p: s["policy_views"][p]["eviction_ages"]["all"].get("cdf") or {}
+        for p in cfg["policies"]
+    }
+    return {
+        "seeds": cfg["reported_seeds"],
+        "bars": {p: s["headline"][p]["all"]["usable"]
+                 for p in pols},
+        "efficiency": {
+            p: s["headline"][p]["all"]["efficiency"]["mean"]
+            for p in cfg["policies"]
+        },
+        "minutes": [(a + b) / 120 for a, b in zip(edges[:-1], edges[1:])],
+        "w0": cfg["w0_s"] / 60,
+        "timeline": {p: tl[p]["usable"]
+                     for p in pols},
+        "interval": {
+            "edges": hb["lru"]["edges"],
+            "mids": mids(hb["lru"]["edges"]),
+            "served":
+            {p: hb[p]["all"]["usable_share"]
+             for p in cfg["policies"]},
+        },
+        "intervalCdf":
+        {k: cdf.get(k)
+         for k in ("x", "p", "quantiles", "within")},
+        "evictCdf":
+        {p: {
+            "x": a.get("x"),
+            "p": a.get("p")
+        }
+         for p, a in ages.items()},
+        "evictP50": {
+            p: s["policy_views"][p]["eviction_ages"]["all"]["quantiles"]["p50"]
+            for p in cfg["policies"]
+        },
+    }
 
 
 def ceiling_frequency(r: Row) -> Optional[Dict[str, float]]:
@@ -616,6 +667,7 @@ def render(s: Row, data: Row, sections: Dict[str, str]) -> str:
 {sections["example"]}
 {sections["glossary"]}
 {sections["mix"]}
+{sections["baselines"]}
 {sections["headline"]}
 {sections["q1"]}
 {sections["q2"]}

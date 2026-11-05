@@ -331,10 +331,14 @@ def come_back(rs: Columns, workloads: Sequence[str], grid: Sequence[float],
     return out
 
 
-def eviction_ages(rs: Columns, workloads: Sequence[str], w0: float,
-                  stop: float) -> Row:
+def eviction_ages(rs: Columns,
+                  workloads: Sequence[str],
+                  w0: float,
+                  stop: float,
+                  points: int = 0) -> Row:
     """Idle age at eviction (how long the policy kept a freed block), per
-    workload and pooled, and the share of stays that ended evicted."""
+    workload and pooled, and the share of stays that ended evicted. With
+    `points`, the pooled entry also carries the CDF of those ages."""
     m = residency_window(rs, w0, stop) & (rs["end"] != "censored")
     out: Row = {}
     for w in list(workloads) + ["all"]:
@@ -350,7 +354,32 @@ def eviction_ages(rs: Columns, workloads: Sequence[str], w0: float,
             ({f"p{p}": float(np.percentile(ages, p))
               for p in (10, 50, 90)} if len(ages) else None),
         }
+        if w == "all" and points:
+            out[w]["cdf"] = cdf_points(ages, points)
     return out
+
+
+def timeline(req: Columns, step: float, stop: float, block_size: int) -> Row:
+    """The whole mix's usable reuse in each `step`-second slice of the run,
+    by the requests' planned send time (warm-up included): token-weighted
+    over completed requests, every workload together."""
+    edges = np.arange(0.0, stop + step / 2, step)
+    ok = req["status"] == "completed" if "status" in req else np.ones(
+        len(req["planned_s"]), bool)
+    bins = np.searchsorted(edges, req["planned_s"], "right") - 1
+    keep = ok & (bins >= 0) & (bins < len(edges) - 1)
+    usable = np.minimum(req["prompt_tokens"],
+                        block_size * req["usable_hits"]).astype(float)
+    n = len(edges) - 1
+    tokens = np.bincount(bins[keep],
+                         weights=req["prompt_tokens"][keep].astype(float),
+                         minlength=n)
+    served = np.bincount(bins[keep], weights=usable[keep], minlength=n)
+    return {
+        "edges": edges.tolist(),
+        "usable": [share(a, b) for a, b in zip(served, tokens)],
+        "requests": np.bincount(bins[keep], minlength=n).tolist(),
+    }
 
 
 def frequency_outcomes(rs: Columns, workloads: Sequence[str], w0: float,
@@ -545,7 +574,9 @@ def per_run(run_dir: Path, cfg: Row, w0: float) -> Row:
         "hit_by_interval":
         hit_by_interval(lk, wl, cfg["interval_bins_s"], w0, stop),
         "eviction_ages":
-        eviction_ages(rs, wl, w0, stop),
+        eviction_ages(rs, wl, w0, stop, cfg["cdf_points"]),
+        "timeline":
+        timeline(req, cfg["timeline_step_s"], stop, bs),
         "frequency":
         frequency_outcomes(rs, wl, w0, stop),
         "hit_density":
@@ -585,12 +616,15 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
     distances: Dict[str, List[np.ndarray]] = defaultdict(list)
     example: Row = {}
     integrity: Row = {}
+    timelines: Row = {p: [] for p in policies + ["ceiling"]}
     for seed in seeds:
         cdir = runs / run_name(mix, pacing, seed, "ceiling", cap)
         creq = load_requests(cdir)
         clk = read(cdir, "lookups", LOOKUP_COLUMNS)
         crs = read(cdir, "residencies", RESIDENCY_COLUMNS)
         headline["ceiling"][seed] = usable_by_workload(creq, wl, w0, stop, bs)
+        timelines["ceiling"].append(
+            timeline(creq, cfg["timeline_step_s"], stop, bs))
         # Every policy must replay the same lookups, and the ceiling must
         # never evict.
         integrity[str(seed)] = {
@@ -622,6 +656,7 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
             position_inputs[policy].append(
                 np.array([pus.get(x, 0) for x in creq["req"][mwin]]))
             q1_hits[policy].append(r["hit_by_interval"])
+            timelines[policy].append(r["timeline"])
             integrity[str(seed)][f"{policy}_lookups"] = int(
                 len(r["_lk"]["req"]))
             integrity[str(seed)][f"{policy}_not_completed"] = int(
@@ -660,6 +695,7 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
             views[policy]["preempted"].append(r["preempted"])
     summary["headline"] = headline_summary(headline, wl, policies, seeds)
     summary["lost"] = lost
+    summary["timeline"] = {p: merge_seeds(v) for p, v in timelines.items()}
     summary["example"] = example
     summary["integrity"] = integrity
     summary["q1"] = {
@@ -682,7 +718,13 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
                 cfg["cdf_points"])
             for w in wl
         },
-        "come_back": merge_seeds(come_backs),
+        "intervals_mix":
+        cdf_points(
+            np.concatenate(
+                [np.concatenate(v) for v in interval_pool.values()
+                 if v]) if interval_pool else np.array([]), cfg["cdf_points"]),
+        "come_back":
+        merge_seeds(come_backs),
         "hit_by_interval": {p: merge_seeds(q1_hits[p])
                             for p in policies},
         "reuse_distance": {
