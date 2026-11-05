@@ -1,5 +1,6 @@
 """The runner's Milestone 3 policy runs (analysis/run_m3_task2.py): the
-``policies`` grid and the server settings of TTDF and RACE-RP runs.
+``policies`` grid and the server settings of TTDF, RACE-RP and Sampled
+LRFU runs.
 
 Grids run with the fake replay of tests/analysis/test_run_m3_task2.py,
 which records the arguments each run's replay got and writes its run.json.
@@ -41,27 +42,32 @@ def quiet_machine(monkeypatch):
 
 def test_the_policies_grid_is_known():
     assert "policies" in m3.GRIDS
-    assert m3.NEW_POLICIES == ("ttdf", "race_rp")
+    assert m3.NEW_POLICIES == ("ttdf", "race_rp", "sampled_lrfu")
     assert set(m3.NEW_POLICIES).isdisjoint(m3.BASELINES)
 
 
-def test_policies_grid_runs_ttdf_and_race_rp_on_the_reported_seeds():
+def test_policies_grid_runs_the_new_policies_on_the_reported_seeds():
     configs = m3.grid_configs("policies")
     assert [(c.mix, c.pacing, c.seed, c.policy, c.capacity_tokens)
             for c in configs] == [
                 ("balanced", "human", 2, "ttdf", 131072),
                 ("balanced", "human", 2, "race_rp", 131072),
+                ("balanced", "human", 2, "sampled_lrfu", 131072),
                 ("balanced", "human", 3, "ttdf", 131072),
                 ("balanced", "human", 3, "race_rp", 131072),
+                ("balanced", "human", 3, "sampled_lrfu", 131072),
                 ("balanced", "human", 4, "ttdf", 131072),
                 ("balanced", "human", 4, "race_rp", 131072),
+                ("balanced", "human", 4, "sampled_lrfu", 131072),
                 # Seed 2 at the capacity sweep's two ends.
                 ("balanced", "human", 2, "ttdf", 32768),
                 ("balanced", "human", 2, "race_rp", 32768),
+                ("balanced", "human", 2, "sampled_lrfu", 32768),
                 ("balanced", "human", 2, "ttdf", 393216),
                 ("balanced", "human", 2, "race_rp", 393216),
+                ("balanced", "human", 2, "sampled_lrfu", 393216),
             ]
-    assert len({c.name for c in configs}) == 10
+    assert len({c.name for c in configs}) == 15
     assert all(not c.ceiling and c.replicate == 0 and c.block_size == 16
                for c in configs)
     assert configs[1].name == "balanced-human-s2-race_rp-cap131072"
@@ -70,7 +76,7 @@ def test_policies_grid_runs_ttdf_and_race_rp_on_the_reported_seeds():
 def test_policies_grid_capacity_moves_only_the_main_runs():
     configs = m3.grid_configs("policies", 65536)
     assert [c.capacity_tokens
-            for c in configs] == [65536] * 6 + [32768, 32768, 393216, 393216]
+            for c in configs] == [65536] * 9 + [32768] * 3 + [393216] * 3
 
 
 def test_an_unknown_grid_names_the_policies_grid():
@@ -94,6 +100,16 @@ def test_ttdf_writes_its_counters_to_the_run(tmp_path):
     assert env == {
         "VLLM_EVICTION_PARAMS": f"stats={(run_dir / STATS).resolve()}"
     }
+
+
+def test_sampled_lrfu_writes_its_counters_to_the_run(tmp_path):
+    run_dir = tmp_path / "run"
+    # No sketch and no thread limit: only its counters.
+    env = m3.policy_env("sampled_lrfu", run_dir, tmp_path / "no-sketch.json")
+    assert env == {
+        "VLLM_EVICTION_PARAMS": f"stats={(run_dir / STATS).resolve()}"
+    }
+    assert m3.policy_env("sampled_lrfu", run_dir) == env  # default sketch
 
 
 def test_race_rp_loads_its_sketch(tmp_path):
@@ -150,7 +166,7 @@ def test_policy_env_defaults_to_the_trained_sketch(tmp_path, monkeypatch):
 def policy_configs():
     return [
         MixConfig("toy", "human", 1, policy, 64, block_size=BS)
-        for policy in ("lru", "ttdf", "race_rp")
+        for policy in ("lru", "ttdf", "race_rp", "sampled_lrfu")
     ]
 
 
@@ -170,10 +186,10 @@ def test_grid_passes_each_policys_settings_and_records_the_sketch(
     m3.RACE_SKETCH.parent.mkdir(parents=True)
     m3.RACE_SKETCH.write_bytes(b'{"L": 16, "P": 6}')
     make_plan(tmp_path / "data", "toy-human-s1")
-    lru, ttdf, race = policy_configs()
+    lru, ttdf, race, lrfu = policy_configs()
     replay = FakeReplay()
-    entries, _ = run_toy_grid(tmp_path, [lru, ttdf, race], replay)
-    assert [e["status"] for e in entries] == ["finished"] * 3
+    entries, _ = run_toy_grid(tmp_path, [lru, ttdf, race, lrfu], replay)
+    assert [e["status"] for e in entries] == ["finished"] * 4
     calls, runs = calls_and_runs(tmp_path, replay)
     # The baseline's replay gets no extra server settings at all.
     assert "extra_env" not in calls[lru.name]
@@ -181,20 +197,24 @@ def test_grid_passes_each_policys_settings_and_records_the_sketch(
     assert calls[ttdf.name]["extra_env"] == {
         "VLLM_EVICTION_PARAMS": f"stats={out / ttdf.name / STATS}"
     }
-    # TTDF's settings are its counters only; RACE-RP's add one thread.
+    assert calls[lrfu.name]["extra_env"] == {
+        "VLLM_EVICTION_PARAMS": f"stats={out / lrfu.name / STATS}"
+    }
+    # TTDF's and Sampled LRFU's settings are their counters only;
+    # RACE-RP's add its sketch and one thread.
     assert calls[race.name]["extra_env"] == {
         "VLLM_EVICTION_PARAMS":
         (f"sketch={tmp_path.resolve() / m3.RACE_SKETCH}"
          f",stats={out / race.name / STATS}"),
         **ONE_THREAD,
     }
-    assert [calls[c.name]["policy"]
-            for c in (lru, ttdf, race)] == ["lru", "ttdf", "race_rp"]
+    assert [calls[c.name]["policy"] for c in (lru, ttdf, race, lrfu)
+            ] == ["lru", "ttdf", "race_rp", "sampled_lrfu"]
     # Only RACE-RP's run.json names its sketch, with the file's hash.
     assert runs[race.name]["race_sketch"] == str(m3.RACE_SKETCH)
     assert runs[race.name]["race_sketch_sha256"] == hashlib.sha256(
         b'{"L": 16, "P": 6}').hexdigest()
-    for config in (lru, ttdf):
+    for config in (lru, ttdf, lrfu):
         assert not {"race_sketch", "race_sketch_sha256"} & set(
             runs[config.name])
     # The grid's own fields are still there.
@@ -205,12 +225,12 @@ def test_grid_passes_each_policys_settings_and_records_the_sketch(
 def test_a_race_rp_run_without_its_sketch_fails_alone(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # no results/m3-race here
     make_plan(tmp_path / "data", "toy-human-s1")
-    lru, ttdf, race = policy_configs()
+    lru, ttdf, race, lrfu = policy_configs()
     replay = FakeReplay()
-    entries, _ = run_toy_grid(tmp_path, [lru, ttdf, race], replay)
+    entries, _ = run_toy_grid(tmp_path, [lru, ttdf, race, lrfu], replay)
     status = {e["name"]: (e["status"], e["error"]) for e in entries}
-    assert status[lru.name] == ("finished", None)
-    assert status[ttdf.name] == ("finished", None)
+    for config in (lru, ttdf, lrfu):
+        assert status[config.name] == ("finished", None)
     assert status[race.name][0] == "failed"
     assert status[race.name][1].startswith(
         "RunnerError: race_rp needs its sketch")

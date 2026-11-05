@@ -96,8 +96,9 @@ DEFAULT_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 MAX_MODEL_LEN = 32768
 GRIDS = ("phase1", "smoke", "isolated", "policies")
 BASELINES = ("lru", "lfu", "fifo")
-# Milestone 3's two policies (vllm/core/reuse_evictors.py).
-NEW_POLICIES = ("ttdf", "race_rp")
+# Milestone 3's new policies (vllm/core/reuse_evictors.py,
+# vllm/core/sampled_lrfu.py).
+NEW_POLICIES = ("ttdf", "race_rp", "sampled_lrfu")
 # RACE-RP's sketches, trained on seed 1 (analysis/race_train.py).
 RACE_SKETCH = Path("results/m3-race/sketch-L16-P6.json")
 # Engine checks of the capacity sweep's replay at its two ends.
@@ -321,10 +322,10 @@ def grid_configs(name: str,
     on one seed), so these plans need no ceiling of their own: the study
     uses the mix's.
 
-    ``policies`` (10 runs) replays the balanced plans of the reported seeds
-    under TTDF and RACE-RP at `capacity_tokens` (6), and seed 2's at the
-    capacity sweep's two ends, 32K and 384K tokens (4), to check the
-    replay; the baselines' runs and ceilings are phase1's.
+    ``policies`` (15 runs) replays the balanced plans of the reported seeds
+    under TTDF, RACE-RP and Sampled LRFU at `capacity_tokens` (9), and seed
+    2's at the capacity sweep's two ends, 32K and 384K tokens (6), to check
+    the replay; the baselines' runs and ceilings are phase1's.
     """
 
     def plan(mix: str, pacing: str, seed: int) -> List[MixConfig]:
@@ -417,10 +418,10 @@ def parse_shard(text: str) -> Tuple[int, int]:
 def policy_env(policy: str,
                run_dir: Path,
                sketch: Path = RACE_SKETCH) -> Dict[str, str]:
-    """The server settings of an engine run of TTDF or RACE-RP: their
-    counters go to the run's ``evictor-stats.json``, and RACE-RP loads
-    `sketch` and uses one math thread (`ONE_THREAD`). Nothing for the other
-    policies."""
+    """The server settings of an engine run of a new policy (TTDF, RACE-RP,
+    Sampled LRFU): its counters go to the run's ``evictor-stats.json``, and
+    RACE-RP loads `sketch` and uses one math thread (`ONE_THREAD`). Nothing
+    for the baselines."""
     if policy not in NEW_POLICIES:
         return {}
     params = [f"stats={(run_dir / 'evictor-stats.json').resolve()}"]
