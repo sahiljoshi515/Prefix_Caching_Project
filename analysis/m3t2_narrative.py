@@ -4,7 +4,9 @@ Every number below is read from ``summary.json`` or from the chart data
 built from it, and every comparison is worded from the numbers: a
 difference counts only when all seeds agree on its sign and its mean is at
 least half a point (spec 007 SC-003); otherwise it is called a tie. The
-page answers six questions; `sections` returns them in order.
+page answers six questions, and a seventh on the two new policies (TTDF
+and RACE-RP) when the summary holds them; `sections` returns them in
+order.
 
 Words: an *engine run* is the real vLLM server (measured); the *cache
 replay* is our simulator of vLLM's cache code (simulated). "Replay" is kept
@@ -12,9 +14,11 @@ for the second.
 """
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from analysis.m3t2_policies import SPEC_SETTINGS
 from analysis.m3t2_report import (GROUPS, LABELS, MIN_OFFERED, MODELS,
-                                  POLICIES, POLICY_LABELS, esc, figure, mean,
-                                  pct, pts, secs, tokens)
+                                  NEW_POLICIES, POLICIES, POLICY_LABELS, esc,
+                                  figure, mean, mixed_policies, pct, pts,
+                                  q7_view, secs, tokens)
 from analysis.m3t2_study import MIN_GAP
 
 Row = Dict[str, Any]
@@ -260,14 +264,33 @@ def header(s: Row) -> str:
   environment), <b>CC-Bench</b> (a coding agent calling tools) and
   <b>Bailian</b> (four production traces from Alibaba's model service). They
   ran together on a KV cache of {cap:,} tokens, and then each one alone,
-  under three eviction policies: LRU, LFU and FIFO. This page answers six
-  questions about what each policy keeps.</p>
+  under three eviction policies: LRU, LFU and FIFO.{_new_header(s)} This page
+  answers {"seven" if _has_point7(s) else "six"} questions about what each
+  policy keeps.</p>
   <div class="meta"><span>Qwen2.5-0.5B-Instruct on vLLM v0, with the GPU
   replaced by a stand-in (see the last section)</span><span>{cap:,}-token
   cache ({cap // cfg["block_size"]:,} blocks of {cfg["block_size"]}
   tokens)</span><span>{stop:.0f}-minute runs, measured over minutes
   {w0:.0f}–{stop:.0f}</span><span>seeds {_seeds_txt(s)}</span></div>
 </header>"""
+
+
+def _has_point7(s: Row) -> bool:
+    """Whether point 7 is on the page (``q7_view``: a new policy's replay
+    curves)."""
+    return q7_view(s, [*POLICIES, *NEW_POLICIES]) is not None
+
+
+def _has_new(s: Row) -> bool:
+    """Whether TTDF or RACE-RP appear anywhere on the page: in the engine
+    views (points 1 and 2) or in point 7."""
+    return (any(p in NEW_POLICIES for p in mixed_policies(s))
+            or _has_point7(s))
+
+
+def _new_header(s: Row) -> str:
+    return (" On the shared cache we also tried two new policies, TTDF and "
+            "RACE-RP, which read no workload labels." if _has_new(s) else "")
 
 
 def answers(facts: Row) -> str:
@@ -279,12 +302,15 @@ def answers(facts: Row) -> str:
         ("5 · Each workload alone", facts["q5_answer"]),
         ("6 · Alone vs. sharing", facts["q6_answer"]),
     ]
+    if facts.get("q7_answer"):
+        cards.append((f"7 · {facts.get('q7_names', 'TTDF and RACE-RP')}",
+                      facts["q7_answer"]))
     body = "".join(f'<div class="answer"><span class="q">{q}</span><p>{a}</p>'
                    f'<a href="#point-{q[0]}">See point {q[0]}</a></div>'
                    for q, a in cards)
     return (f'<section class="section" aria-labelledby="answers-h">'
-            f'<h2 id="answers-h">The six answers</h2>'
-            f'<div class="answers">{body}</div></section>')
+            f'<h2 id="answers-h">The {"seven" if len(cards) == 7 else "six"}'
+            f' answers</h2><div class="answers">{body}</div></section>')
 
 
 def terms(s: Row) -> str:
@@ -311,6 +337,15 @@ def terms(s: Row) -> str:
          "those no running request is using) to throw out: the one used least "
          "recently (LRU), the one reused the fewest times (LFU), or the one "
          "cached earliest, whatever happened since (FIFO)."),
+        *([("TTDF", "Two-timescale decayed frequency: each cached block "
+            "counts its uses twice, in a count that fades within seconds and "
+            "one that fades over minutes; the idle block with the lowest "
+            "weighted sum goes first.")] if _has_new(s) else []),
+        *([("RACE-RP", "RACE-based reuse probability: for each idle block, "
+            "a small table learned on seed 1 says how soon blocks with a "
+            "similar history of use were needed again (a RACE sketch over "
+            "five measured features); the block least likely to be needed "
+            "soon goes first.")] if _has_new(s) else []),
         ("Belady", "An offline reference that knows the future: it throws out "
          "the block needed farthest ahead. No real server can do this. It is "
          "the best possible for plain hit counts; for usable prefix reuse it "
@@ -343,7 +378,7 @@ def part(title: str, text: str) -> str:
 def point(n: int, kind: str, question: str, body: str) -> str:
     return (f'<section class="section" id="point-{n}" '
             f'aria-labelledby="point-{n}-h"><span class="eyebrow">Point {n} '
-            f'of 6 · {kind}</span><h2 id="point-{n}-h">{question}</h2>'
+            f'· {kind}</span><h2 id="point-{n}-h">{question}</h2>'
             f'{body}</section>')
 
 
@@ -387,13 +422,16 @@ def q1(s: Row, facts: Row) -> str:
         "token cache. Blocks still in use by another running request are "
         "left out (no policy can throw those out), and waits with fewer than "
         f"{MIN_OFFERED:,} reuses are not drawn.")
+    mixed = mixed_policies(s)
+    new = [p for p in mixed if p in NEW_POLICIES]
+    coarse.update({p: _bins(mi[p]) for p in new})
     head = ["Policy", *[_range_label(b) for b in coarse["lru"]]]
     table = ('<div class="tablewrap"><table><thead><tr>' +
              "".join(f"<th>{h}</th>" for h in head) + "</tr></thead><tbody>" +
              "".join(f"<tr><td>{P[p]}</td>" +
                      "".join(f"<td>{pct(b['share'], 1)}</td>"
                              for b in coarse[p]) + "</tr>"
-                     for p in POLICIES) + "</tbody></table></div>")
+                     for p in mixed) + "</tbody></table></div>")
     why = [
         "Under LRU an unused block is thrown out once newer blocks have "
         "filled the cache behind it" +
@@ -407,8 +445,29 @@ def q1(s: Row, facts: Row) -> str:
         "FIFO throws out the block cached earliest, even one used a moment "
         "ago.",
     ]
+    new_txt = ""
+    if new:
+        far = {
+            p: (_served_beyond(mi[p]["curve"], lru_cut)
+                if lru_cut is not None else None)
+            for p in new
+        }
+        new_txt = ("Of the two new policies, " if len(
+            new) > 1 else "Of the new policies, ") + _list([
+                f"{P[p]} serves {pct(coarse[p][0]['share'] or 0.0, 1)} of the "
+                "quick reuses" +
+                (f" and {pct(far[p], 0)} of those that waited "
+                 f"over {secs(lru_cut)}" if far[p] is not None else "")
+                for p in new
+            ]) + "."
+        why.append(
+            "TTDF ranks a block by its recent uses, counted in a tally that "
+            "fades within seconds and one that fades over minutes, so it "
+            "keeps blocks used often lately; RACE-RP ranks it by how soon "
+            "similar blocks were needed again in the training run.")
     take = (f'<p class="prose">Share of reuses served, by how long the block '
-            f'waited:</p>{table}<p class="prose">{" ".join(why)}</p>')
+            f'waited:</p>{table}<p class="prose">'
+            f'{" ".join(x for x in [*why, new_txt] if x)}</p>')
     drawn = [
         i for i, b in enumerate(curves["lru"])
         if b["offered"] >= MIN_OFFERED and (b["share"] or 0) >= NONE_SHARE
@@ -439,31 +498,38 @@ def q1(s: Row, facts: Row) -> str:
             tail += (("," if keeps == ["lfu"] else ", LFU") +
                      f" but only {pct(quick['lfu'], 1)} of the quick ones")
         tail += "."
-    facts["q1_answer"] = " ".join(x for x in (head_txt, fifo_txt, tail) if x)
+    facts["q1_answer"] = " ".join(x
+                                  for x in (head_txt, fifo_txt, tail, new_txt)
+                                  if x)
     body = (f'<p class="prose">{intro}</p>' +
             figure("fig-q1", esc(claim), [badges(s)["engine"]], take))
     return point(
         1, "Mixed workload", "What is the difference in reuse time "
-        "interval between FIFO, LRU and LFU?", body)
+        "interval between FIFO, LRU and LFU" +
+        (f" (and {_list([P[p] for p in new])})?" if new else "?"), body)
 
 
 def q2(s: Row, facts: Row) -> str:
     mg = s["mixed_groups"]
+    mixed = mixed_policies(s)
+    new = [p for p in mixed if p in NEW_POLICIES]
     u = {
         k: {p: mean(mg[k][p]["usable"])
-            for p in (*POLICIES, "ceiling")}
+            for p in (*mixed, "ceiling")}
         for k in ("all", *GROUPS)
     }
     a = u["all"]
+    others = [p for p in mixed if p != "lru"]
     claim = (f"LRU serves {pct(a['lru'], 1)} of the mix's prompt tokens from "
-             f"the cache, LFU {pct(a['lfu'], 1)} and FIFO {pct(a['fifo'], 1)}"
+             "the cache, " + _list([f"{P[p]} {pct(a[p], 1)}"
+                                    for p in others]) +
              f", out of {pct(a['ceiling'], 1)} possible")
     gap, parts = lost_split(s)
     share = _token_shares(s)
     order = sorted(GROUPS, key=lambda g: -parts[g])
     eff = {g: u[g]["lru"] / u[g]["ceiling"] for g in GROUPS}
     least = min(GROUPS, key=lambda g: eff[g])
-    others = [g for g in sorted(GROUPS, key=lambda g: -eff[g]) if g != least]
+    rest = [g for g in sorted(GROUPS, key=lambda g: -eff[g]) if g != least]
     cfg = s["config"]
     window = f"minutes {cfg['w0_s'] / 60:.0f}–{cfg['stop_s'] / 60:.0f}"
     intro = (
@@ -471,7 +537,7 @@ def q2(s: Row, facts: Row) -> str:
         "the whole mix and for each workload inside it. The dashed tick in "
         "each row is the no-eviction ceiling: all the reuse that workload's "
         "traffic offers. The thin line at each bar's end spans the seeds.")
-    verdicts = {p: mg["all"][p]["verdict"] for p in ("lfu", "fifo")}
+    verdicts = {p: mg["all"][p]["verdict"] for p in others}
     agree = any(v != "tie" for v in verdicts.values())
     lines = [
         "Over the whole mix, " + _against_lru(verdicts) +
@@ -495,10 +561,10 @@ def q2(s: Row, facts: Row) -> str:
     lines.append(least_txt + ".")
     lines.append("The others under LRU: " + _list([
         f"{L[g]} {pct(u[g]['lru'], 0)} of {pct(u[g]['ceiling'], 0)}"
-        for g in others
+        for g in rest
     ]) + ".")
     by_policy = []
-    for p in ("lfu", "fifo"):
+    for p in others:
         groups = {
             v: [L[g] for g in GROUPS if mg[g][p]["verdict"] == v]
             for v in ("higher", "lower", "tie")
@@ -514,8 +580,9 @@ def q2(s: Row, facts: Row) -> str:
     lines.append("Workload by workload: " + "; ".join(by_policy) + ".")
     facts["q2_answer"] = (
         f"Of the mix's prompt tokens, LRU serves {pct(a['lru'], 1)} from the "
-        f"cache, LFU {pct(a['lfu'], 1)} and FIFO {pct(a['fifo'], 1)}, against "
-        f"{pct(a['ceiling'], 1)} with no eviction. The largest part of LRU's "
+        "cache, " + _list([f"{P[p]} {pct(a[p], 1)}" for p in others]) +
+        f", against {pct(a['ceiling'], 1)} with no eviction. The largest "
+        "part of LRU's "
         f"shortfall is {L[order[0]]}'s ({pts(parts[order[0]]).split()[0]} of "
         f"the {pts(gap)}). LRU serves {L[least]} only "
         f"{pct(u[least]['lru'], 0)} of its prompt tokens, out of "
@@ -524,7 +591,8 @@ def q2(s: Row, facts: Row) -> str:
             figure("fig-q2", esc(claim), [badges(s)["engine"]], _ul(lines)))
     return point(
         2, "Mixed workload", "What is the difference in reuse "
-        "portion between FIFO, LRU and LFU?", body)
+        "portion between FIFO, LRU and LFU" +
+        (f" (and {_list([P[p] for p in new])})?" if new else "?"), body)
 
 
 def q3(s: Row, facts: Row) -> str:
@@ -739,6 +807,20 @@ def q4(s: Row, data: Row, facts: Row) -> str:
         f"Belady's lead over LRU is {pts(gaps[0])} at {tokens(caps[0])} and "
         f"{pts(gaps[top])} at {tokens(caps[top])}: reuse a smarter policy "
         "could still win at these sizes.")
+    new = [p for p in NEW_POLICIES if p in data["q4"]["policies"]]
+    if new:
+        nv = {
+            p: _cap_verdicts(cv[p]["seeds"], cv["lru"]["seeds"])
+            for p in new
+        }
+        lines.append(f"The new policies at {tokens(fixed)}: " + _list([
+            f"{P[p]} {pct(hr_new, 1)}"
+            for p, hr_new in ((p, cv[p]["hit_rate"][i]) for p in new)
+        ]) + ". Against LRU, " +
+                     "; ".join(f"{P[p]} {_vs_lru_runs(caps, nv[p])}"
+                               for p in new) + ".")
+        facts["q4_new"] = "; ".join(f"{P[p]} {_vs_lru_runs(caps, nv[p])}"
+                                    for p in new)
     if worst is not None:
         note = (f"The engine runs land within {pts(worst)} of the cache "
                 "replay of the same seeds (× beside each marker).")
@@ -755,7 +837,9 @@ def q4(s: Row, data: Row, facts: Row) -> str:
         f"{pct(c['ceiling'], 0)} ceiling. {fifo_txt}; {lfu_txt}. " +
         (f"Belady with {tokens(fixed)} ({pct(hr['belady'][i], 0)}) beats LRU "
          f"with {tokens(caps[top])}." if belady_wins else
-         f"Belady stays {pts(gaps[top])} ahead at {tokens(caps[top])}."))
+         f"Belady stays {pts(gaps[top])} ahead at {tokens(caps[top])}.") +
+        (f" {facts['q4_new'][0].upper()}{facts['q4_new'][1:]}."
+         if facts.get("q4_new") else ""))
     body = (
         f'<p class="prose">{intro}</p>' +
         figure("fig-q4", esc(claim),
@@ -978,6 +1062,314 @@ def q6(s: Row, facts: Row) -> str:
                  "workload?", body)
 
 
+# --- Point 7: the new policies ------------------------------------------------
+
+
+def _vs_lru_runs(caps: List[int], verdicts: List[str]) -> str:
+    """A policy against LRU across cache sizes, in one clause."""
+    if all(v == "b" for v in verdicts):
+        return "trails LRU at every size"
+    if all(v == "a" for v in verdicts):
+        return "beats LRU at every size"
+    if all(v == "tie" for v in verdicts):
+        return "ties with LRU at every size"
+    runs = {k: _cap_runs(caps, verdicts, k) for k in ("a", "b", "tie")}
+    bits = []
+    if runs["a"]:
+        bits.append(f"beats LRU at {_list(runs['a'])}")
+    if runs["b"]:
+        bits.append(("trails it" if bits else "trails LRU") +
+                    f" at {_list(runs['b'])}")
+    if runs["tie"]:
+        bits.append(f"ties at {_list(runs['tie'])}")
+    return _list(bits)
+
+
+def _table(head: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    return ('<div class="tablewrap"><table><thead><tr>' +
+            "".join(f"<th>{h}</th>" for h in head) + "</tr></thead><tbody>" +
+            "".join("<tr>" + "".join(f"<td>{v}</td>" for v in r) + "</tr>"
+                    for r in rows) + "</tbody></table></div>")
+
+
+def _best_by_size(caps: List[int], cv: Row, pols: Sequence[str]) -> str:
+    """Which policy has the highest usable reuse at each size, with the
+    tie rule against the runner-up: 'LFU at 32K; LRU at 64K to 384K'."""
+    labels = []
+    for k in range(len(caps)):
+        order = sorted(pols, key=lambda p: -cv[p]["hit_rate"][k])
+        top, second = order[0], order[1]
+        v = _cap_verdicts([cv[top]["seeds"][k]], [cv[second]["seeds"][k]])[0]
+        labels.append(P[top] if v ==
+                      "a" else f"{P[top]} and {P[second]} (a tie)")
+    out, start = [], 0
+    for k in range(1, len(caps) + 1):
+        if k == len(caps) or labels[k] != labels[start]:
+            lo, hi = caps[start], caps[k - 1]
+            span = tokens(lo) if lo == hi else f"{tokens(lo)} to {tokens(hi)}"
+            out.append(f"{labels[start]} at {span}")
+            start = k
+    return "; ".join(out)
+
+
+def _per_s(v: Optional[float]) -> str:
+    if v is None:
+        return "–"
+    return f"{v:.1f}" if v < 10 else f"{v:,.0f}"
+
+
+def _overhead_table(s: Row, pols: Sequence[str], fixed: int) -> str:
+    oh = s["new_policies"]["overhead"]
+    rows = []
+    for p in pols:
+        rep = (oh["replay"].get(p) or {}).get(str(fixed)) or {}
+        eng = oh["engine"].get(p) or {}
+
+        def us(v: Optional[float]) -> str:
+            return "–" if v is None else f"{v:.1f} µs"
+
+        cand, meta = (eng.get(k) if eng.get(k) is not None else rep.get(k)
+                      for k in ("candidates_per_scan", "metadata_kib"))
+        rows.append([
+            P[p],
+            us(rep.get("evict_us")),
+            us(eng.get("evict_us")), "–" if cand is None else f"{cand:.0f}",
+            "–" if meta is None else f"{meta:,.0f} KiB"
+        ])
+    return _table([
+        "Policy", f"Time per eviction, cache replay ({tokens(fixed)})",
+        f"Time per eviction, engine ({tokens(fixed)})",
+        "Blocks scored per scan", "Policy metadata"
+    ], rows)
+
+
+def _tuning_block(s: Row, c: Row, new: Sequence[str]) -> str:
+    tune = s["new_policies"].get("tuning")
+    if not tune:
+        return ""
+    caps = c["capacities"]
+    rows, notes = [], []
+    for name in new:
+        pick = tune["selected"][name]
+        cands = tune["candidates"][name]
+        spec = next(x for x in cands if x["settings"] == SPEC_SETTINGS[name])
+        shown = cands[:3] + ([spec] if spec not in cands[:3] else [])
+        for x in shown:
+            role = [
+                r for r, ok in (("as specified", x is spec),
+                                ("picked", x["policy"] == pick["policy"]))
+                if ok
+            ]
+            rows.append([
+                P[name], x["label"],
+                pct(x["mean"], 1), ", ".join(role) or "–"
+            ])
+        tuned = f"{name}_tuned"
+        if pick["is_spec"]:
+            notes.append(f"For {P[name]} the specified setting was also the "
+                         "best on seed 1, so it is the one reported.")
+        elif tuned in c["curve"] and None not in c["curve"][tuned]["hit_rate"]:
+            v = _cap_verdicts(c["curve"][tuned]["seeds"],
+                              c["curve"][name]["seeds"])
+            gain = [
+                a - b for a, b in zip(c["curve"][tuned]["hit_rate"], c["curve"]
+                                      [name]["hit_rate"])
+            ]
+            word = {"a": "higher", "b": "lower", "tie": "tied"}
+            runs = {k: _cap_runs(caps, v, k) for k in ("a", "b", "tie")}
+            parts = [
+                f"{word[k]} at {_list(runs[k])}" for k in ("a", "b", "tie")
+                if runs[k]
+            ]
+            notes.append(
+                f"On seeds {_seeds_txt(s)} (run once, after the choice), "
+                f"{P[name]} with the seed-1 pick ({pick['label']}) is " +
+                _list(parts) + " than as specified, by at most " +
+                pts(max(abs(x) for x in gain)) + ".")
+    head = [
+        "Policy", "Setting", "Seed-1 usable reuse, mean of "
+        f"{len(tune['capacities'])} sizes", ""
+    ]
+    return ('<h3 class="sub">Tuning on seed 1</h3><p class="prose">Each '
+            "setting was replayed on seed 1 only, at " +
+            _list([tokens(x) for x in tune["capacities"]]) +
+            ", and the best average picked (a tie keeps the specified one). "
+            "The best three, and the specified setting:</p>" +
+            _table(head, rows) + _ul(notes))
+
+
+def q7(s: Row, data: Row, facts: Row) -> str:
+    q = data.get("q7")
+    if not q:
+        return ""
+    c = s["capacity_window"]
+    caps, fixed, cv = c["capacities"], c["fixed"], c["curve"]
+    i = caps.index(fixed)
+    gs = c["group_seeds"]
+    pols = q["policies"]
+    new = [p for p in pols if p in NEW_POLICIES]
+    mix_v = {p: _cap_verdicts(cv[p]["seeds"], cv["lru"]["seeds"]) for p in new}
+    grp_v = {
+        p: {g: _cap_verdicts(gs[p][g], gs["lru"][g])
+            for g in GROUPS}
+        for p in new
+    }
+    mg = s["mixed_groups"]
+    engine = [p for p in new if p in mg["all"]]
+    intro = (
+        "Two policies written for this mix, neither of which reads workload "
+        "labels. <b>TTDF</b> keeps, for each cached block, two tallies of "
+        "its uses: one that fades within seconds (a 5 s time constant) and "
+        "one that fades over minutes (120 s); when room is needed, the idle "
+        "block with the lowest weighted sum goes. <b>RACE-RP</b> describes "
+        "each idle block by five measured features (its uses in the last "
+        "10 s and 120 s, the time since its last use, its position in the "
+        "prompt, and how many requests in the last 120 s shared its first "
+        "two blocks) and looks up, in a sketch learned on seed 1, how soon "
+        "blocks like it were needed again; the block least likely to be "
+        "needed soon goes. Both only throw out a block that no running "
+        "request uses and that has no cached block after it in a prompt, so "
+        "a prompt's start never goes before its end.")
+    claim = ("Over the whole mix (cache replay), " +
+             "; ".join(f"{P[p]} {_vs_lru_runs(caps, mix_v[p])}" for p in new))
+    lines = []
+    for g in GROUPS:
+        at = ", ".join(f"{P[p]} {pct(c['groups'][p][g][i], 0)}" for p in pols)
+        lines.append(f"<b>{L[g]}</b>: " +
+                     "; ".join(f"{P[p]} {_vs_lru_runs(caps, grp_v[p][g])}"
+                               for p in new) + f". At {tokens(fixed)}: {at}.")
+    lines.append("Highest usable reuse over the whole mix, by size: " +
+                 _best_by_size(caps, cv, pols) + ".")
+    body = (f'<p class="prose">{intro}</p>' + figure(
+        "fig-q7-workloads", esc(claim), [badges(s)["replay"]], _ul(lines),
+        "Each panel is one workload inside the mix: the share of its "
+        "prompt tokens served from the cache as the shared cache grows, "
+        "with its no-eviction share dashed. A cache this size holds all four "
+        "workloads, so a policy that keeps more of one workload's blocks "
+        "keeps fewer of the others'."))
+    if engine:
+        lru_all = mean(mg["all"]["lru"]["usable"])
+        word = {
+            "higher": "higher than LRU on every seed",
+            "lower": "lower than LRU on every seed",
+            "tie": "a tie with LRU by the rule"
+        }
+        eng_lines = [
+            f"{P[p]}: {pct(mean(mg['all'][p]['usable']), 1)} of the mix's "
+            f"prompt tokens, against LRU's {pct(lru_all, 1)} "
+            f"({word[mg['all'][p]['verdict']]}); by workload, " + _list([
+                f"{L[g]} {pct(mean(mg[g][p]['usable']), 0)} (LRU "
+                f"{pct(mean(mg[g]['lru']['usable']), 0)})" for g in GROUPS
+            ]) + "." for p in engine
+        ]
+        E = q["evictions"]
+        epols = [p for p in mixed_policies(s) if p in E]
+        tops = {p: max(GROUPS, key=lambda g: E[p][g]["mean"]) for p in epols}
+        fewest = min(epols, key=lambda p: E[p]["all"]["mean"])
+        top = tops[epols[0]]
+        if all(t == top for t in tops.values()):
+            claim_e = (f"Under every policy most evicted blocks are "
+                       f"{L[top]}'s; {P[fewest]} evicts the fewest in all "
+                       f"({_per_s(E[fewest]['all']['mean'])} a second)")
+        else:
+            claim_e = (f"{P[fewest]} evicts the fewest blocks "
+                       f"({_per_s(E[fewest]['all']['mean'])} a second)")
+        ev_lines = [
+            f"{L[g]}: " +
+            ", ".join(f"{P[p]} {_per_s(E[p][g]['mean'])}/s" +
+                      (f" ({pct(E[p][g]['regretted'], 0)} needed again)"
+                       if E[p][g]["regretted"] is not None else "")
+                      for p in epols) + "." for g in GROUPS
+        ]
+        ev_lines.append(
+            "\"Needed again\" is the share of a workload's evicted blocks "
+            "that a later request looked up: those had to be computed again.")
+        body += figure(
+            "fig-q7-evictions", esc(claim_e), [badges(s)["engine"]],
+            _ul(ev_lines),
+            f"Engine runs at {tokens(fixed)}: " + " ".join(eng_lines) +
+            " The chart counts the blocks each policy threw out per second, "
+            "by the workload whose request used the block last.")
+    body += ('<h3 class="sub">What the new policies cost</h3>'
+             '<p class="prose">LRU, LFU and FIFO keep their idle blocks in a '
+             "heap ordered by one key, so an eviction takes the top. TTDF and "
+             "RACE-RP score every evictable block when the first eviction of "
+             "a scheduling step needs it, then reuse that order for the rest "
+             "of the step. Times are per eviction, averaged over seeds "
+             f"{_seeds_txt(s)}; metadata is the policy's own numbers at 8 "
+             "bytes each, at the run's peak.</p>" +
+             _overhead_table(s, pols, fixed))
+    body += _tuning_block(s, c, new)
+    eng_txt = ""
+    if engine:
+        eng_txt = (f" On the engine at {tokens(fixed)}: " + _list(
+            [f"{P[p]} {pct(mean(mg['all'][p]['usable']), 1)}"
+             for p in engine]) +
+                   f", LRU {pct(mean(mg['all']['lru']['usable']), 1)}.")
+    facts["q7_names"] = _list([P[p] for p in new])
+    facts["q7_answer"] = ("Over the whole mix (cache replay), " +
+                          "; ".join(f"{P[p]} {_vs_lru_runs(caps, mix_v[p])}"
+                                    for p in new) + "." + eng_txt +
+                          " Best by size: " + _best_by_size(caps, cv, pols) +
+                          ".")
+    return point(
+        7, "Mixed workload", f"{'Do ' if len(new) > 1 else 'Does '}"
+        f"{_list([P[p] for p in new])} keep more of the mix than LRU, LFU "
+        "and FIFO?", body)
+
+
+def _new_method(s: Row) -> List[str]:
+    npol = s["new_policies"]
+    items = [
+        "TTDF and RACE-RP (<code>vllm/core/reuse_evictors.py</code>) are "
+        "vLLM evictors beside LRU, LFU and FIFO, chosen with "
+        "<code>VLLM_EVICTION_POLICY</code>. The cache tells them each time "
+        "a request uses a cached block: a hit, or the block's first "
+        "computation (also after an eviction). Every use and eviction "
+        "during one call of the block manager carries that call's start "
+        "time. They evict only idle blocks with no cached block after them "
+        "in a prompt; ties go to the deeper block, then the older.",
+    ]
+    sk = npol.get("sketch")
+    if sk:
+        items.append(
+            "RACE-RP's sketch was learned on seed 1's no-eviction engine "
+            f"run: {sk['observations']:,} observations of idle blocks at "
+            "ages 0, 5, 30 and 120 s, each scored e<sup>−wait/60 s</sup> if "
+            "the block was needed again within 180 s and 0 otherwise "
+            f"({pct(sk['reused_within_horizon'], 0)} were). Its feature "
+            "scaling, 16 tables of 6 random-hyperplane bits (64 buckets "
+            "each), counts and α = 5 are then frozen.")
+    if npol.get("tuning"):
+        items.append(
+            "Settings were tuned on seed 1 only, in the cache replay: TTDF's "
+            "short and long time constants (1, 5 or 30 s; 60, 120 or 600 s) "
+            "and weights (0.3 or 0.7 on the short tally), and RACE-RP's "
+            "tables (16 or 64) and bits (1 to 8). Seeds " + _seeds_txt(s) +
+            " were run once with the specified and the picked settings.")
+    if npol.get("engine"):
+        fixed = s["config"]["capacity_tokens"]
+        checks = sorted({
+            (e["seed"], e["capacity"])
+            for e in (s.get("capacity_window") or {}).get("engine", [])
+            if e["policy"] in npol["engine"] and e["capacity"] != fixed
+        })
+        check_txt = ""
+        if checks:
+            by_seed: Dict[int, List[int]] = {}
+            for seed, cap in checks:
+                by_seed.setdefault(seed, []).append(cap)
+            check_txt = ", and " + "; ".join(
+                f"seed {seed} at {_list([tokens(c) for c in caps])}"
+                for seed, caps in by_seed.items()) + " to check the replay"
+        items.append(
+            f"Engine runs of {_list([P[p] for p in npol['engine']])}: "
+            f"{tokens(fixed)} on seeds {_seeds_txt(s)} (points 1, 2 and 7)" +
+            check_txt + ". The numbers behind every chart are also in CSV "
+            "files under <code>report/milestone3/data/task2</code>.")
+    return items
+
+
 def method(s: Row) -> str:
     cfg = s["config"]
     mix = s["mix"]
@@ -1053,6 +1445,8 @@ def method(s: Row) -> str:
         items.append(f"The cache replay agrees with the engine within "
                      f"{pts(agree)} on all {len(engine)} engine runs it was "
                      "checked against.")
+    if _has_new(s):
+        items += _new_method(s)
     items.append(
         "Reproduce: <code>python -m analysis.run_m3_task2 grid --grid phase1"
         "</code> and <code>--grid isolated</code>; <code>python -m "
@@ -1076,6 +1470,7 @@ def sections(s: Row, data: Row) -> List[str]:
         q5(s, facts),
         q6(s, facts),
     ]
+    seventh = q7(s, data, facts)
     return [
         header(s),
         answers(facts),
@@ -1085,5 +1480,9 @@ def sections(s: Row, data: Row) -> List[str]:
         part("Part B · Points 5 and 6",
              "Each workload alone, and against sharing"),
         *parts[4:],
+        *([
+            part("Part C · Point 7", "Two new policies on the shared cache"),
+            seventh
+        ] if seventh else []),
         method(s),
     ]

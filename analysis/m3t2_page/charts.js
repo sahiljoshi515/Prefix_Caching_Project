@@ -12,7 +12,7 @@
   const LABEL = D.labels;
   const POLICY = D.policyLabels;
   const SHAPE = { lru: "circle", lfu: "diamond", fifo: "square",
-                  belady: "triangle" };
+                  ttdf: "cross", race_rp: "star", belady: "triangle" };
 
   const pct = (x, d = 0) => (x == null || isNaN(x)) ? "–" :
     (100 * x).toFixed(d) + "%";
@@ -167,6 +167,7 @@
       }
     const refs = o.ref ? o.rows.map((r) => ({ row: r.label,
       v: (o.ref(r.id) || {}).mean })).filter((d) => d.v != null) : [];
+    const fmt = o.fmt || ((v) => pct(v, o.digits ?? 1));
     node.append(Plot.plot({
       width: width(node), height: o.rows.length * (o.series.length * 20 + 16)
         + 44, marginLeft: o.marginLeft || 108, marginRight: 58,
@@ -174,15 +175,15 @@
       fy: { domain: o.rows.map((r) => r.label), label: null, axis: "left",
             tickSize: 0, padding: 0.16 },
       y: { domain: o.series.map((s) => s.label), axis: null, padding: 0.14 },
-      x: { domain: [0, 1], label: o.xLabel, grid: true,
-           tickFormat: (v) => pct(v) },
+      x: { domain: o.xDomain || [0, 1], label: o.xLabel, grid: true,
+           tickFormat: o.tickFormat || ((v) => pct(v)) },
       marks: [
         Plot.barX(data, { fy: "row", y: "s", x: "v", fill: "color", rx: 2 }),
         Plot.ruleY(data.filter((d) => d.hi > d.lo), { fy: "row", y: "s",
           x1: "lo", x2: "hi", stroke: tok("--ink"), strokeOpacity: 0.6,
           strokeWidth: 1.5 }),
         Plot.text(data, { fy: "row", y: "s", x: (d) => Math.max(d.v, d.hi),
-          text: (d) => pct(d.v, o.digits ?? 1), dx: 5, textAnchor: "start",
+          text: (d) => fmt(d.v), dx: 5, textAnchor: "start",
           fill: tok("--ink"), fontSize: 11 }),
         Plot.tickX(refs, { fy: "row", x: "v", stroke: tok("--ink"),
           strokeWidth: 2, strokeDasharray: "4,3" }),
@@ -192,9 +193,9 @@
           y: "s", x: "v", stroke: tok("--ink"), strokeWidth: 2,
           strokeDasharray: "3,2" }),
         Plot.tip(data, Plot.pointer({ fy: "row", y: "s", x: "v",
-          title: (d) => d.row + " · " + d.s + ": " + pct(d.v, 1) +
-            (d.hi > d.lo ? "\nseeds " + pct(d.lo, 1) + " to " +
-              pct(d.hi, 1) : "") })),
+          title: (d) => d.row + " · " + d.s + ": " + fmt(d.v) +
+            (d.hi > d.lo ? "\nseeds " + fmt(d.lo) + " to " +
+              fmt(d.hi) : "") })),
       ],
     }));
   }
@@ -250,40 +251,43 @@
         y: keep.map((i) => curves[p][i].share) })),
     });
   }
-  const intervalTable = (curves, prefix) => [[...(prefix ? ["Workload"] :
-    []), "Block unused for", "Reuses on offer", ...P.map((p) => POLICY[p])],
-    curves[P[0]].map((b, i) => [...(prefix ? [prefix] : []), binLabel(b),
-      num(b.offered), ...P.map((p) => pct(curves[p][i].share, 1))])
+  const intervalTable = (curves, prefix, pols = P) => [[...(prefix ?
+    ["Workload"] : []), "Block unused for", "Reuses on offer",
+    ...pols.map((p) => POLICY[p])],
+    curves[pols[0]].map((b, i) => [...(prefix ? [prefix] : []), binLabel(b),
+      num(b.offered), ...pols.map((p) => pct(curves[p][i].share, 1))])
       .filter((r) => r[prefix ? 2 : 1] !== "0")];
 
   const draw = {};
   const tables = {};
   const P = D.policies;
+  // The mixed-workload engine views add TTDF and RACE-RP once they ran.
+  const M = D.mixedPolicies || P;
 
   /* 1. The mix: share of reuses served, by how long the block waited. */
   draw["fig-q1"] = (node) => {
-    policyLegend(node, P);
-    intervalChart(node, D.q1.curves, P, 320);
+    policyLegend(node, M);
+    intervalChart(node, D.q1.curves, M, 320);
   };
-  tables["fig-q1"] = () => intervalTable(D.q1.curves);
+  tables["fig-q1"] = () => intervalTable(D.q1.curves, null, M);
 
   /* 2 and 5. Usable prefix reuse per workload and policy. */
-  function portion(node, Q, rows) {
-    policyLegend(node, P, [CEILING_KEY(), { label: "Range over the seeds",
+  function portion(node, Q, rows, pols = P) {
+    policyLegend(node, pols, [CEILING_KEY(), { label: "Range over the seeds",
       color: tok("--ink"), kind: "line" }]);
     groupedBars(node, {
       rows: rows.map((r) => ({ id: r, label: LABEL[r] })),
-      series: P.map((p) => ({ id: p, label: POLICY[p], color: pol(p) })),
+      series: pols.map((p) => ({ id: p, label: POLICY[p], color: pol(p) })),
       value: (r, p) => Q.values[p][r], ref: (r) => Q.ceiling[r],
       xLabel: "Usable prefix reuse: share of prompt tokens served →",
     });
   }
-  const portionTable = (Q, rows) => [["Workload", ...P.map((p) => POLICY[p]),
-    "No eviction"], rows.map((r) => [LABEL[r],
-    ...P.map((p) => pct((Q.values[p][r] || {}).mean, 1)),
+  const portionTable = (Q, rows, pols = P) => [["Workload",
+    ...pols.map((p) => POLICY[p]), "No eviction"], rows.map((r) => [LABEL[r],
+    ...pols.map((p) => pct((Q.values[p][r] || {}).mean, 1)),
     pct((Q.ceiling[r] || {}).mean, 1)])];
-  draw["fig-q2"] = (node) => portion(node, D.q2, D.q2.rows);
-  tables["fig-q2"] = () => portionTable(D.q2, D.q2.rows);
+  draw["fig-q2"] = (node) => portion(node, D.q2, D.q2.rows, M);
+  tables["fig-q2"] = () => portionTable(D.q2, D.q2.rows, M);
 
   /* 3. Identification: accuracy per characteristic, and the confusion. */
   draw["fig-q3-acc"] = (node) => {
@@ -336,7 +340,7 @@
      with the engine runs as hollow markers. */
   draw["fig-q4"] = (node) => {
     const C = D.q4;
-    const pols = [...P, "belady"];
+    const pols = C.policies;
     legend(node, [...pols.map((p) => ({ label: POLICY[p], color: pol(p) })),
       { label: "No eviction", color: tok("--ink"), kind: "dash" },
       { label: "Measured engine run", color: tok("--ink-2"), hollow: true,
@@ -373,9 +377,9 @@
       ],
     });
   };
-  tables["fig-q4"] = () => [["Cache (tokens)", ...[...P, "belady"].map(
+  tables["fig-q4"] = () => [["Cache (tokens)", ...D.q4.policies.map(
     (p) => POLICY[p]), "Measured engine runs"], D.q4.capacities.map((c, i) =>
-    [tokens(c), ...[...P, "belady"].map((p) => pct(D.q4.curve[p][i], 1)),
+    [tokens(c), ...D.q4.policies.map((p) => pct(D.q4.curve[p][i], 1)),
      D.q4.engine.filter((e) => e.capacity === c).map((e) =>
        POLICY[e.policy] + " " + pct(e.engine, 1) + " (replay " +
        pct(e.replay, 1) + ", seed" + (e.seeds.length > 1 ? "s " : " ") +
@@ -451,6 +455,77 @@
     "Sharing the cache", "Change", "All 3 seeds agree"],
     D.q6.rows.map((r) => [LABEL[r.group], POLICY[r.policy], pct(r.alone, 1),
       pct(r.mixed, 1), pts(r.mixed - r.alone), r.agree])];
+
+  /* 7. The new policies: each workload's usable reuse against cache size
+     (cache replay), one panel per workload. */
+  draw["fig-q7-workloads"] = (node) => {
+    const Q = D.q7;
+    policyLegend(node, Q.policies, [{ label: "No eviction",
+      color: tok("--ink"), kind: "dash" }]);
+    const box = el("div", { class: "multiples two" });
+    node.append(box);
+    // Lay out every panel first, so each chart is drawn at its final width.
+    const panels = D.groups.map((g) => {
+      const panel = el("div", { class: "panel" });
+      panel.append(el("div", { class: "panel-title" }, LABEL[g] +
+        " in the mix"));
+      const plotNode = el("div", { class: "plot" });
+      panel.append(plotNode); box.append(panel);
+      return [g, plotNode];
+    });
+    const caps = Q.capacities;
+    for (const [g, plotNode] of panels) {
+      const C = Q.panels[g];
+      // Panels are narrow: label the doubling sizes only.
+      const ticks = caps.filter((c, i) => i === caps.length - 1 ||
+        Math.log2(c / caps[0]) % 1 === 0);
+      lines(plotNode, {
+        x: caps, xType: "log", xTicks: ticks, xTick: tokens,
+        xDomain: [caps[0] / 1.12, caps.at(-1) * 1.12],
+        xFmt: (v) => LABEL[g] + " · " + tokens(v) + " tokens of cache",
+        xLabel: "Cache (tokens, log scale) →", yDomain: C.yDomain,
+        yLabel: "↑ Usable prefix reuse", height: 250,
+        hrules: [{ y: C.ceiling, label: "No eviction " + pct(C.ceiling, 0) }],
+        series: Q.policies.map((p) => ({ id: p, label: POLICY[p],
+          color: pol(p), y: C.curve[p] })),
+      });
+    }
+  };
+  tables["fig-q7-workloads"] = () => [["Workload", "Cache (tokens)",
+    ...D.q7.policies.map((p) => POLICY[p]), "No eviction"],
+    D.groups.flatMap((g) => D.q7.capacities.map((c, i) => [LABEL[g],
+      tokens(c), ...D.q7.policies.map((p) =>
+        pct(D.q7.panels[g].curve[p][i], 1)),
+      pct(D.q7.panels[g].ceiling, 1)]))];
+
+  /* 7. Evicted blocks per second, by the workload that last used them. */
+  const perSec = (v) => (v == null || isNaN(v)) ? "–" :
+    v.toFixed(v < 10 ? 1 : 0) + "/s";
+  draw["fig-q7-evictions"] = (node) => {
+    const E = D.q7.evictions;
+    const pols = M.filter((p) => E[p]);
+    policyLegend(node, pols, [{ label: "Range over the seeds",
+      color: tok("--ink"), kind: "line" }]);
+    const rows = [...D.groups, "all"];
+    const top = Math.max(...pols.flatMap((p) => rows.map((r) =>
+      E[p][r].max)));
+    groupedBars(node, {
+      rows: rows.map((r) => ({ id: r, label: LABEL[r] })),
+      series: pols.map((p) => ({ id: p, label: POLICY[p], color: pol(p) })),
+      value: (r, p) => E[p][r], xDomain: [0, top * 1.15], fmt: perSec,
+      tickFormat: (v) => v.toLocaleString("en-US"),
+      xLabel: "Blocks evicted per second, by the workload that last used " +
+        "them →",
+    });
+  };
+  tables["fig-q7-evictions"] = () => {
+    const E = D.q7.evictions;
+    const pols = M.filter((p) => E[p]);
+    return [["Workload", ...pols.flatMap((p) => [POLICY[p] + " evicted/s",
+      POLICY[p] + ": needed again"])], [...D.groups, "all"].map((r) =>
+      [LABEL[r], ...pols.flatMap((p) => [perSec(E[p][r].mean),
+        pct(E[p][r].regretted, 0)])])];
+  };
 
   function renderAll() {
     for (const [id, fn] of Object.entries(draw)) {

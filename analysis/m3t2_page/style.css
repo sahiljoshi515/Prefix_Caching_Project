@@ -19,6 +19,8 @@
   --pol-lfu: #eb6834;
   --pol-fifo: #1baf7a;
   --pol-belady: #eda100;
+  --pol-ttdf: #6250d6;
+  --pol-race_rp: #e87ba4;
   /* One sequential hue for accuracy and the confusion matrix. */
   --seq-1: #cde2fb;
   --seq-2: #86b6ef;
@@ -39,6 +41,8 @@
     --pol-lfu: #d95926;
     --pol-fifo: #199e70;
     --pol-belady: #c98500;
+    --pol-ttdf: #9085e9;
+    --pol-race_rp: #d55181;
     --seq-1: #102a49;
     --seq-2: #184f95;
     --seq-4: #6da7ec;
@@ -59,6 +63,8 @@
   --pol-lfu: #d95926;
   --pol-fifo: #199e70;
   --pol-belady: #c98500;
+  --pol-ttdf: #9085e9;
+  --pol-race_rp: #d55181;
   --seq-1: #102a49;
   --seq-2: #184f95;
   --seq-4: #6da7ec;
@@ -150,3 +156,6 @@ dl.glossary dd { margin: 0; color: var(--ink-2); }
 }
 svg[class^="plot"] { --plot-background: var(--surface); }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+
+/* Point 7 sub-headings between figures and tables. */
+h3.sub { margin-top: 1.6rem; }
