@@ -273,6 +273,65 @@ alone against sharing). What this added after the Phase 1 freeze:
 - The capacity curve counts the measurement window ([600, 1800) s) like
   the engine numbers, so the page's points agree at 131,072 tokens.
 
+### TTDF and RACE-RP (2026-11-05)
+
+Two label-free policies, specified by the owners, implemented in
+`vllm/core/reuse_evictors.py` and compared with LRU, LFU and FIFO on the
+mixed workload only (points 1, 2, 4 and a new point 7). The definitions
+are implemented as given; where the request left a choice open, this is
+what the code does:
+
+- **Access.** A request using a cached block: a lookup hit, or the block's
+  insertion or deduplication when it fills (the allocator's new
+  `Evictor.record_access` hook, a no-op for LRU, LFU and FIFO). So each
+  request accesses each block of its prompt once, and a block computed
+  again after an eviction counts as accessed.
+- **Time.** The block manager's event time: `time.time()` when the
+  `allocate`, `append_slots` or `free` call began (`RequestContext.time`,
+  `cache_events.event_time`); in the cache replay, the simulated time. All
+  accesses and evictions of one call share it.
+- **Candidates.** Idle blocks (refcount 0) with no cached child. Because
+  the cache only ever drops such leaves, it stays prefix-closed, and an
+  ancestor never goes before its descendants. Ties: greater depth, then
+  older last access, then lower block id.
+- **Windows.** "In the previous 10 / 120 s" counts accesses in
+  (t − 10, t] / (t − 120, t]. The family count is the access count of the
+  block's second block over (t − 120, t] (the block itself at depth 1 or
+  2): each request uses each block once, so those are the requests sharing
+  the first two blocks.
+- **Ghosts.** An evicted block's access times are kept until 180 s after
+  its last access (checked lazily); a cached block's are always kept, pruned
+  to the 120 s before its latest access, which changes no count.
+- **Training trace.** Seed 1's plan replayed through vLLM's allocator with
+  room for every block (nothing is evicted, so the trace does not depend on
+  a policy), timed by seed 1's no-eviction engine run
+  (`analysis/race_train.py`). Idle starts are refcount-0 frees; an
+  observation at age a needs no access in (start, start + a] and
+  start + a ≤ trace end − 180 s. Standardization uses the population
+  standard deviation; hyperplanes are `numpy.random.default_rng(0)`.
+- **Scan reuse.** The candidates are scored once per event time and kept as
+  a heap for the rest of that call; a block that becomes a leaf is scored
+  and pushed, and a RACE-RP access to a second block (a family count
+  change) forces a fresh scan. Tests check every victim against a
+  brute-force scan.
+- **Tuning (seed 1 only).** Cache replay at 32K, 64K, 128K, 256K and 384K
+  tokens over the window: TTDF's τ_short ∈ {1, 5, 30} s, τ_long ∈
+  {60, 120, 600} s, w_short ∈ {0.3, 0.7} (w_long = 1 − w_short); RACE-RP's
+  L ∈ {16, 64} and P ∈ {1, 2, 3, 4, 6, 8} (bandwidth and repetitions, as
+  in Coleman and Shrivastava's RACE paper), α = 5. The best mean picks the
+  setting; a tie keeps the specified one. Seeds 2–4 are then run once with
+  the specified and the picked settings.
+- **Runs.** The `policies` grid: both policies at 131,072 tokens on seeds
+  2–4, and seed 2 at 32K and 384K to check the replay. The capacity sweep
+  adds both policies to the windowed replay. `m3t2_config.json` gains
+  `new_policies`; nothing earlier changes, and the alone runs (points 5
+  and 6) stay with the baselines.
+- **Instrumentation.** Besides the hook and the event time: the
+  `VLLM_EVICTION_PARAMS` variable; in the cache replay, settings after a
+  colon in the policy name, a timer on every policy's `evict` and the
+  workload of each evicted block's last request. LRU, LFU and FIFO behave
+  as before.
+
 ## Phases
 
 Target dates are proposals for the owners to confirm; the project is due
