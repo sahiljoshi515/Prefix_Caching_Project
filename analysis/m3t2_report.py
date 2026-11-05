@@ -321,6 +321,7 @@ def q7_view(s: Row, pols: Sequence[str]) -> Optional[Row]:
                     "mean": ev[p][k]["per_s"],
                     "min": min(ev[p][k]["seeds"]),
                     "max": max(ev[p][k]["seeds"]),
+                    "seeds": ev[p][k]["seeds"],
                     "regretted": ev[p][k]["regretted"],
                 }
                 for k in ("all", *GROUPS)

@@ -181,6 +181,8 @@ cython_debug/
 
 # Results
 *.csv
+# COMP 536: the small summary tables behind the Milestone 3 Task 2 page.
+!report/milestone3/data/task2/*.csv
 
 # Python pickle files
 *.pkl

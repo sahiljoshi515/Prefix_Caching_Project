@@ -11,6 +11,8 @@
   const pol = (p) => tok("--pol-" + p);
   const LABEL = D.labels;
   const POLICY = D.policyLabels;
+  // Sampled LRFU's green sits near FIFO's teal: a dotted line tells them apart.
+  const DASH = { belady: "5,3", sampled_lrfu: "2,3" };
   const SHAPE = { lru: "circle", lfu: "diamond", fifo: "square",
                   ttdf: "cross", race_rp: "star", sampled_lrfu: "wye",
                   belady: "triangle" };
@@ -127,7 +129,7 @@
       ]),
       ...o.series.map((s) => Plot.line(rows.filter((r) => r.sid === s.id), {
         x: "x", y: "y", stroke: s.color, strokeWidth: 2,
-        strokeDasharray: s.dash || null })),
+        strokeDasharray: s.dash || DASH[s.id] || null })),
       ...o.series.map((s) => Plot.dot(rows.filter((r) => r.sid === s.id), {
         x: "x", y: "y", r: 3.5, fill: s.color, stroke: tok("--surface"),
         strokeWidth: 1.5, symbol: SHAPE[s.id] || "circle" })),
@@ -507,7 +509,7 @@
     const pols = M.filter((p) => E[p]);
     policyLegend(node, pols, [{ label: "Range over the seeds",
       color: tok("--ink"), kind: "line" }]);
-    const rows = [...D.groups, "all"];
+    const rows = ["all", ...D.groups];
     const top = Math.max(...pols.flatMap((p) => rows.map((r) =>
       E[p][r].max)));
     groupedBars(node, {
@@ -523,7 +525,7 @@
     const E = D.q7.evictions;
     const pols = M.filter((p) => E[p]);
     return [["Workload", ...pols.flatMap((p) => [POLICY[p] + " evicted/s",
-      POLICY[p] + ": needed again"])], [...D.groups, "all"].map((r) =>
+      POLICY[p] + ": needed again"])], ["all", ...D.groups].map((r) =>
       [LABEL[r], ...pols.flatMap((p) => [perSec(E[p][r].mean),
         pct(E[p][r].regretted, 0)])])];
   };

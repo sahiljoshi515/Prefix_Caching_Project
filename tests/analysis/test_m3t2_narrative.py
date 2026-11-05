@@ -36,7 +36,7 @@ def test_verdicts_against_lru_read_three_ways():
     assert nv._against_lru({"lfu": "lower", "fifo": "lower"}) == \
         "LFU and FIFO are lower than LRU"
     assert nv._against_lru({"lfu": "higher", "fifo": "tie"}) == \
-        "LFU beats LRU and FIFO ties with it"
+        "LFU beats LRU; FIFO ties with it"
     assert nv._against_lru({"lfu": "tie", "fifo": "tie"}) == \
         "LFU and FIFO tie with LRU"
 

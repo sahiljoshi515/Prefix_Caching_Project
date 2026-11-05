@@ -97,17 +97,17 @@ def settings(policy: str) -> Row:
 
 
 def label(policy: str) -> str:
-    """A setting in words: "tau 5 s / 120 s, w 0.7 / 0.3", "L 16, P 6" or
-    "half-life 512, 4 drawn"."""
+    """A setting in plain words: "time constants 5 s / 120 s, weights 0.7 /
+    0.3", "16 tables of 6 bits" or "half-life 512 uses, 4 drawn"."""
     s = settings(policy)
     if family(policy) == "ttdf":
-        return (f"tau {s['tau_short']:g} s / {s['tau_long']:g} s, "
-                f"w {s['w_short']:g} / {s['w_long']:g}")
+        return (f"time constants {s['tau_short']:g} s / {s['tau_long']:g} s, "
+                f"weights {s['w_short']:g} / {s['w_long']:g}")
     if family(policy) == "race_rp":
-        return f"L {s['L']}, P {s['P']}"
+        return f"{s['L']} tables of {s['P']} bits"
     if family(policy) == "sampled_lrfu":
-        return (f"half-life {s['half_life']:,.0f}, {s['sample_size']} drawn" +
-                (f", seed {s['seed']}" if s["seed"] else ""))
+        return (f"half-life {s['half_life']:,.0f} uses, {s['sample_size']} "
+                "drawn" + (f", seed {s['seed']}" if s["seed"] else ""))
     return policy
 
 

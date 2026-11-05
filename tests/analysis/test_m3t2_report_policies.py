@@ -9,8 +9,8 @@ import copy
 
 import pytest
 
+from analysis import m3t2_policies as mp
 from analysis import m3t2_report as rp
-from analysis.m3t2_policies import SPEC_SETTINGS
 
 pytestmark = pytest.mark.m3
 
@@ -59,7 +59,8 @@ MIXED = {
     "fifo": 0.50,
     "ttdf": 0.57,
     "race_rp": 0.555,
-    "sampled_lrfu": 0.565,
+    # Sampled LRFU keeps the least on the engine, as in the real runs.
+    "sampled_lrfu": 0.45,
     "ceiling": 0.78,
 }
 MIXED_OFFSET = {
@@ -87,13 +88,8 @@ VERDICTS = {
     },
     "race_rp": {k: "tie"
                 for k in ("all", *rp.GROUPS)},
-    "sampled_lrfu": {
-        "all": "tie",
-        "sharegpt": "lower",
-        "agentbank": "tie",
-        "ccbench": "higher",
-        "bailian": "tie"
-    },
+    "sampled_lrfu": {k: "lower"
+                     for k in ("all", *rp.GROUPS)},
 }
 PROMPT_TOKENS = {
     "all": 1000,
@@ -127,8 +123,12 @@ EVICT_SCALE = {
 }
 WORKLOADS = ("sharegpt", "agentbank", "ccbench", "bailian-chat", "bailian-api",
              "bailian-thinking", "bailian-coder")
-TTDF_LABEL = "tau 5 s / 120 s, w 0.7 / 0.3"
-LRFU_LABEL = "half-life 512, 4 drawn"
+# Reuse lost against no eviction, per workload and seed: (evicted, cut off
+# behind a missing block). Sampled LRFU evicts as much as LRU and strands
+# blocks besides; the others evict a little less.
+LOST = {"lru": (100, 0), "sampled_lrfu": (100, 50)}
+# Requests per seed that hit a cached block behind a missing one.
+STRANDED = {"fifo": [3, 0, 1], "sampled_lrfu": [120, 150, 130]}
 
 
 def spread(v, offsets=OFFSETS):
@@ -252,11 +252,12 @@ def mixed_groups(engine):
     return out
 
 
-def candidate(policy, label, settings, mean):
+def candidate(policy, mean):
+    """A tuning candidate, labelled and parsed as ``m3t2_policies`` does."""
     return {
         "policy": policy,
-        "label": label,
-        "settings": settings,
+        "label": mp.label(policy),
+        "settings": mp.settings(policy),
         "usable": [mean] * 5,
         "mean": mean
     }
@@ -266,50 +267,23 @@ def tuning(names=NEW):
     """Seed-1 tuning of the policies in `names`: TTDF's pick differs from
     the specified setting (which ranks fourth); RACE-RP's and Sampled
     LRFU's specified settings are also the best."""
-    ttdf_spec = candidate("ttdf", TTDF_LABEL, SPEC_SETTINGS["ttdf"], 0.50)
     ttdf = [
-        candidate("ttdf:tau_short=1", "tau 1 s / 120 s, w 0.7 / 0.3", {
-            **SPEC_SETTINGS["ttdf"], "tau_short": 1.0
-        }, 0.53),
-        candidate("ttdf:tau_long=600", "tau 5 s / 600 s, w 0.7 / 0.3", {
-            **SPEC_SETTINGS["ttdf"], "tau_long": 600.0
-        }, 0.52),
-        candidate("ttdf:tau_short=30", "tau 30 s / 120 s, w 0.7 / 0.3", {
-            **SPEC_SETTINGS["ttdf"], "tau_short": 30.0
-        }, 0.51),
-        ttdf_spec,
-        candidate("ttdf:w_short=0.3", "tau 5 s / 120 s, w 0.3 / 0.7", {
-            **SPEC_SETTINGS["ttdf"], "w_short": 0.3,
-            "w_long": 0.7
-        }, 0.49),
+        candidate("ttdf:tau_short=1", 0.53),
+        candidate("ttdf:tau_long=600", 0.52),
+        candidate("ttdf:tau_short=30", 0.51),
+        candidate("ttdf", 0.50),
+        candidate("ttdf:w_short=0.3,w_long=0.7", 0.49),
     ]
-    race_spec = candidate("race_rp:sketch=sketch-L16-P6.json", "L 16, P 6",
-                          SPEC_SETTINGS["race_rp"], 0.60)
     race = [
-        race_spec,
-        candidate("race_rp:sketch=sketch-L64-P6.json", "L 64, P 6", {
-            "L": 64,
-            "P": 6
-        }, 0.59),
-        candidate("race_rp:sketch=sketch-L16-P4.json", "L 16, P 4", {
-            "L": 16,
-            "P": 4
-        }, 0.58),
-        candidate("race_rp:sketch=sketch-L16-P8.json", "L 16, P 8", {
-            "L": 16,
-            "P": 8
-        }, 0.57),
+        candidate("race_rp:sketch=sketch-L16-P6.json", 0.60),
+        candidate("race_rp:sketch=sketch-L64-P6.json", 0.59),
+        candidate("race_rp:sketch=sketch-L16-P4.json", 0.58),
+        candidate("race_rp:sketch=sketch-L16-P8.json", 0.57),
     ]
-    lrfu_spec = candidate("sampled_lrfu", LRFU_LABEL,
-                          SPEC_SETTINGS["sampled_lrfu"], 0.62)
     lrfu = [
-        lrfu_spec,
-        candidate("sampled_lrfu:half_life=64", "half-life 64, 4 drawn", {
-            **SPEC_SETTINGS["sampled_lrfu"], "half_life": 64.0
-        }, 0.61),
-        candidate("sampled_lrfu:sample_size=16", "half-life 512, 16 drawn", {
-            **SPEC_SETTINGS["sampled_lrfu"], "sample_size": 16
-        }, 0.60),
+        candidate("sampled_lrfu", 0.62),
+        candidate("sampled_lrfu:half_life=64", 0.61),
+        candidate("sampled_lrfu:sample_size=16", 0.60),
     ]
     candidates = {"ttdf": ttdf, "race_rp": race, "sampled_lrfu": lrfu}
     selected = {
@@ -318,20 +292,56 @@ def tuning(names=NEW):
             "spec_mean": 0.50
         },
         "race_rp": {
-            **race_spec, "is_spec": True,
+            **race[0], "is_spec": True,
             "spec_mean": 0.60
         },
         "sampled_lrfu": {
-            **lrfu_spec, "is_spec": True,
+            **lrfu[0], "is_spec": True,
             "spec_mean": 0.62
         },
     }
     return {
         "capacities": [32768, 65536, 131072, 262144, 393216],
+        "lru": [0.45] * 5,
         "candidates": {p: candidates[p]
                        for p in names},
         "selected": {p: selected[p]
                      for p in names},
+    }
+
+
+def lost(policies):
+    """Reuse lost against no eviction per policy, seed and workload, with
+    "all" (their sum) as ``m3t2_study`` writes it."""
+    out = {}
+    for p in policies:
+        evicted, cut = LOST.get(p, (90, 0))
+        seeds = {}
+        for x in SEEDS:
+            ws = {
+                w: {
+                    "kept": 400,
+                    "evicted": evicted,
+                    "cut_off": cut
+                }
+                for w in WORKLOADS
+            }
+            ws["all"] = {
+                k: sum(v[k] for v in ws.values())
+                for k in ("kept", "evicted", "cut_off")
+            }
+            seeds[str(x)] = ws
+        out[p] = seeds
+    return out
+
+
+def policy_views(policies):
+    return {
+        p: {
+            "hits_after_miss": list(STRANDED.get(p, [0, 0, 0])),
+            "preempted": [0, 0, 0]
+        }
+        for p in policies
     }
 
 
@@ -600,6 +610,8 @@ def summary(engine=NEW, replay=NEW, tune=True, sketch=True):
         "provenance": {
             "commit": "0123456789abcdef"
         },
+        "lost": lost((*rp.POLICIES, *engine)),
+        "policy_views": policy_views((*rp.POLICIES, *engine)),
         "new_policies": {
             "engine":
             list(engine),
@@ -757,6 +769,7 @@ def test_q7_view_evictions_per_engine_policy_and_workload():
     bailian = ev["ttdf"]["bailian"]
     assert bailian["mean"] == pytest.approx(360.0)
     assert (bailian["min"], bailian["max"]) == pytest.approx((359.0, 362.0))
+    assert bailian["seeds"] == pytest.approx([359.0, 360.0, 362.0])
     assert bailian["regretted"] == 0.3
     assert ev["lru"]["all"]["mean"] == pytest.approx(517.0)
     # No evictions at all in the summary: an empty view.

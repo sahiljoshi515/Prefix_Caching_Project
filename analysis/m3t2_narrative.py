@@ -12,13 +12,15 @@ Words: an *engine run* is the real vLLM server (measured); the *cache
 replay* is our simulator of vLLM's cache code (simulated). "Replay" is kept
 for the second.
 """
+import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from analysis.m3t2_policies import SPEC_SETTINGS
 from analysis.m3t2_report import (GROUPS, LABELS, MIN_OFFERED, MODELS,
-                                  NEW_POLICIES, POLICIES, POLICY_LABELS, esc,
-                                  figure, mean, mixed_policies, pct, pts,
-                                  q7_view, secs, tokens)
+                                  NEW_POLICIES, POLICIES, POLICY_LABELS,
+                                  curve_policies, esc, figure, mean,
+                                  mixed_policies, pct, pts, q7_view, secs,
+                                  tokens)
 from analysis.m3t2_study import MIN_GAP
 
 Row = Dict[str, Any]
@@ -152,7 +154,7 @@ def _against_lru(verdicts: Dict[str, str]) -> str:
                      f"{_verb(by['tie'], 'ties', 'tie')} with it"
                      if parts else f"{_list(by['tie'])} "
                      f"{_verb(by['tie'], 'ties', 'tie')} with LRU")
-    return _list(parts)
+    return "; ".join(parts)
 
 
 def _best_text(vs: Row) -> str:
@@ -313,16 +315,16 @@ TERM = {
              "uses twice, in a count that fades within seconds and one that "
              "fades over minutes; the idle block with the lowest weighted "
              "sum goes first."),
-    "race_rp": ("RACE-based reuse probability: for each idle block, a small "
-                "table learned on seed 1 says how soon blocks with a similar "
-                "history of use were needed again (a RACE sketch over five "
-                "measured features); the block least likely to be needed "
-                "soon goes first."),
-    "sampled_lrfu": ("Sampled least recently / frequently used: each cached "
-                     "block keeps one score that every use raises by 1 and "
-                     "that halves every 512 block uses, so it counts uses "
-                     "like LFU but forgets them like LRU; to evict, it draws "
-                     "4 idle blocks at random and throws out the lowest."),
+    "race_rp": ("RACE-based reuse probability: it sorts each idle block, by "
+                "five measured features of its use, into the buckets of 16 "
+                "small hash tables (a 'RACE sketch', learned on seed 1); each "
+                "bucket records how soon such blocks were needed again, and "
+                "the block least likely to be needed soon goes first."),
+    "sampled_lrfu": ("Sampled least recently / frequently used: each use adds "
+                     "1 to a block's score and the score halves every 512 "
+                     "block uses (under a second of traffic here), so recent "
+                     "uses count most; to evict, it draws 4 idle blocks at "
+                     "random and throws out the lowest-scoring."),
 }
 WHY = {
     "ttdf": ("TTDF ranks a block by its recent uses, counted in a tally that "
@@ -330,10 +332,10 @@ WHY = {
              "keeps blocks used often lately."),
     "race_rp": ("RACE-RP ranks a block by how soon similar blocks were "
                 "needed again in the training run."),
-    "sampled_lrfu": ("Sampled LRFU's score halves every 512 block uses, "
-                     "under a second of this mix's traffic, so it ranks "
-                     "much like LRU, but among only 4 blocks drawn at "
-                     "random."),
+    "sampled_lrfu": ("Sampled LRFU throws out the lowest-scoring of only 4 "
+                     "idle blocks drawn at random, so the victim is often a "
+                     "block used a moment ago, or one in the middle of a "
+                     "prompt."),
 }
 ABOUT = {
     "ttdf": ("<b>TTDF</b> keeps, for each cached block, two tallies of its "
@@ -376,6 +378,17 @@ def answers(facts: Row) -> str:
             f' answers</h2><div class="answers">{body}</div></section>')
 
 
+def _hit_rate_note(s: Row) -> str:
+    """When usable reuse equals vLLM's prefix cache hit rate, naming only
+    the policies on the page."""
+    names = _new_names(s)
+    clean = ["LRU", "LFU"] + [P[p] for p in names if p in ("ttdf", "race_rp")]
+    loose = ["FIFO"] + [P[p] for p in names if p == "sampled_lrfu"]
+    return (f"Under {_list(clean)} this equals vLLM's own prefix cache hit "
+            f"rate; {_list(loose)} can leave cached blocks behind a missing "
+            "one, which vLLM's figure counts and this page does not.")
+
+
 def terms(s: Row) -> str:
     cfg = s["config"]
     bs = cfg["block_size"]
@@ -392,7 +405,7 @@ def terms(s: Row) -> str:
         ("Usable prefix reuse", "The share of prompt tokens served from the "
          "cache, counting only the unbroken run of cached blocks from the "
          "start of each prompt (the server stops at the first missing block). "
-         "Weighted by tokens. This is vLLM's prefix cache hit rate."),
+         "Weighted by tokens. " + _hit_rate_note(s)),
         ("Points", "Percentage points: 55.8% against 50.3% is 5.5 points."),
         ("No eviction (ceiling)", "An engine run of the same requests on a "
          "cache too large to ever evict: all the reuse the traffic offers."),
@@ -416,8 +429,9 @@ def terms(s: Row) -> str:
         ("Seeds and ties",
          f"Independent {cfg['stop_s'] / 60:.0f}-minute mixes (seeds "
          f"{_seeds_txt(s)}); numbers are their mean. A difference counts "
-         "only if every seed agrees on its direction and it is at least "
-         f"{100 * MIN_GAP:.1f} points; otherwise it is a tie."),
+         "only if all seeds put the two policies in the same order and the "
+         f"mean difference is at least {100 * MIN_GAP:.1f} points; otherwise "
+         "it is a tie."),
     ]
     dl = "".join(f"<dt>{t}</dt><dd>{d}</dd>" for t, d in rows)
     return (f'<section class="section" aria-labelledby="terms-h">'
@@ -439,22 +453,24 @@ def point(n: int, kind: str, question: str, body: str) -> str:
 
 def q1(s: Row, facts: Row) -> str:
     mi = s["mixed_intervals"]
-    curves = {p: mi[p]["curve"] for p in POLICIES}
-    coarse = {p: _bins(mi[p]) for p in POLICIES}
+    mixed = mixed_policies(s)
+    new = [p for p in mixed if p in NEW_POLICIES]
+    curves = {p: mi[p]["curve"] for p in mixed}
+    coarse = {p: _bins(mi[p]) for p in mixed}
     cut = {p: _cutoff(curves[p]) for p in POLICIES}
     long_share, quick_by, long_by = wait_split(s)
-    quick = {p: coarse[p][0]["share"] or 0.0 for p in POLICIES}
+    quick = {p: coarse[p][0]["share"] or 0.0 for p in mixed}
     lru_cut = cut["lru"]
     facts["lru_cut"] = lru_cut
     if lru_cut is None:
-        beyond: Dict[str, Optional[float]] = {p: None for p in POLICIES}
+        beyond: Dict[str, Optional[float]] = {p: None for p in mixed}
         none: List[str] = []
         keeps: List[str] = []
         claim = "LRU serves some reuse at every wait"
     else:
-        beyond = {p: _served_beyond(curves[p], lru_cut) for p in POLICIES}
-        none = [p for p in POLICIES if (beyond[p] or 0) < NONE_SHARE]
-        keeps = [p for p in POLICIES if p not in none]
+        beyond = {p: _served_beyond(curves[p], lru_cut) for p in mixed}
+        none = [p for p in mixed if (beyond[p] or 0) < NONE_SHARE]
+        keeps = [p for p in mixed if p not in none]
         names = [P[p] for p in none]
         claim = (f"{_list(names)} {_verb(names, 'serves', 'serve')} almost "
                  f"no reuse that waited longer than {secs(lru_cut)}")
@@ -477,16 +493,18 @@ def q1(s: Row, facts: Row) -> str:
         "token cache. Blocks still in use by another running request are "
         "left out (no policy can throw those out), and waits with fewer than "
         f"{MIN_OFFERED:,} reuses are not drawn.")
-    mixed = mixed_policies(s)
-    new = [p for p in mixed if p in NEW_POLICIES]
-    coarse.update({p: _bins(mi[p]) for p in new})
     head = ["Policy", *[_range_label(b) for b in coarse["lru"]]]
-    table = ('<div class="tablewrap"><table><thead><tr>' +
-             "".join(f"<th>{h}</th>" for h in head) + "</tr></thead><tbody>" +
-             "".join(f"<tr><td>{P[p]}</td>" +
-                     "".join(f"<td>{pct(b['share'], 1)}</td>"
-                             for b in coarse[p]) + "</tr>"
-                     for p in mixed) + "</tbody></table></div>")
+    # The waits past LRU's cut-off taken together, as the text quotes them.
+    if lru_cut is not None:
+        head.append(f"more than {secs(lru_cut)}, together")
+    table = (
+        '<div class="tablewrap"><table><thead><tr>' + "".join(f"<th>{h}</th>"
+                                                              for h in head) +
+        "</tr></thead><tbody>" + "".join(
+            f"<tr><td>{P[p]}</td>" + "".join(f"<td>{pct(b['share'], 1)}</td>"
+                                             for b in coarse[p]) +
+            (f"<td>{pct(beyond[p], 1)}</td>" if lru_cut is not None else "") +
+            "</tr>" for p in mixed) + "</tbody></table></div>")
     why = [
         "Under LRU an unused block is thrown out once newer blocks have "
         "filled the cache behind it" +
@@ -502,23 +520,13 @@ def q1(s: Row, facts: Row) -> str:
     ]
     new_txt = ""
     if new:
-        far = {
-            p: (_served_beyond(mi[p]["curve"], lru_cut)
-                if lru_cut is not None else None)
-            for p in new
-        }
-        new_txt = (f"Of the {_NUMBER[len(new)]} new policies, " if len(
-            new) > 1 else "Of the new policies, ") + _list([
-                f"{P[p]} serves {pct(coarse[p][0]['share'] or 0.0, 1)} of the "
-                "quick reuses" +
-                (f" and {pct(far[p], 0)} of those that waited "
-                 f"over {secs(lru_cut)}" if far[p] is not None else "")
-                for p in new
-            ]) + "."
+        first, *rest = new
+        new_txt = ("Of the new policies, " + _list(
+            [f"{P[first]} serves {pct(quick[first], 1)} of the quick reuses"] +
+            [f"{P[p]} {pct(quick[p], 1)}" for p in rest]) + ".")
         why += [WHY[p] for p in new]
     take = (f'<p class="prose">Share of reuses served, by how long the block '
-            f'waited:</p>{table}<p class="prose">'
-            f'{" ".join(x for x in [*why, new_txt] if x)}</p>')
+            f'waited:</p>{table}<p class="prose">{" ".join(why)}</p>')
     drawn = [
         i for i, b in enumerate(curves["lru"])
         if b["offered"] >= MIN_OFFERED and (b["share"] or 0) >= NONE_SHARE
@@ -816,7 +824,8 @@ def q4(s: Row, data: Row, facts: Row) -> str:
         lfu_bits.append(f"trails it at {_list(lfu_runs['b'])}")
     if lfu_runs["tie"]:
         lfu_bits.append(f"ties at {_list(lfu_runs['tie'])}, where the seeds "
-                        "disagree")
+                        "disagree or the gap is under "
+                        f"{100 * MIN_GAP:.1f} points")
     lfu_txt = "LFU " + _list(lfu_bits)
     intro = (
         f"The same mix on caches from {tokens(caps[0])} to {tokens(caps[top])} "
@@ -864,17 +873,30 @@ def q4(s: Row, data: Row, facts: Row) -> str:
             p: _cap_verdicts(cv[p]["seeds"], cv["lru"]["seeds"])
             for p in new
         }
-        lines.append(f"The new policies at {tokens(fixed)}: " + _list([
-            f"{P[p]} {pct(hr_new, 1)}"
-            for p, hr_new in ((p, cv[p]["hit_rate"][i]) for p in new)
-        ]) + ". Against LRU, " +
-                     "; ".join(f"{P[p]} {_vs_lru_runs(caps, nv[p])}"
+        lines.append(f"The new policies at {tokens(fixed)} (cache replay): " +
+                     _list([
+                         f"{P[p]} {pct(hr_new, 1)}"
+                         for p, hr_new in ((p, cv[p]["hit_rate"][i])
+                                           for p in new)
+                     ]) + ". Across sizes, " +
+                     "; ".join(f"{P[p]} is {_gap_text(cv, p)} LRU"
                                for p in new) + ".")
-        facts["q4_new"] = "; ".join(f"{P[p]} {_vs_lru_runs(caps, nv[p])}"
-                                    for p in new)
+        facts["q4_new"] = ("; ".join(
+            f"{P[p]} {_vs_lru_runs(caps, nv[p])} ({_gap_text(cv, p)})"
+            for p in new) + " (cache replay)")
     if worst is not None:
         note = (f"The engine runs land within {pts(worst)} of the cache "
-                "replay of the same seeds (× beside each marker).")
+                "replay of the same seeds (× beside each marker)")
+        far = max(engine, key=lambda e: abs(e["engine"] - e["replay"]))
+        rest = [abs(e["engine"] - e["replay"]) for e in engine if e is not far]
+        if rest and worst - max(rest) >= MIN_GAP:
+            note += (f": the largest gap is {P[far['policy']]} at "
+                     f"{tokens(far['capacity'])} (seed {far['seed']}" +
+                     ("; its random draws depend on the exact order of "
+                      "events, which differs between the engine and the "
+                      "replay" if far["policy"] == "sampled_lrfu" else "") +
+                     f"); the other runs are within {pts(max(rest))}")
+        note += "."
         if partial:
             note += (f" At {_list([tokens(x) for x in partial])} only seed"
                      f"{'s' if len(partial_seeds) > 1 else ''} "
@@ -1176,16 +1198,19 @@ def _overhead_table(s: Row, pols: Sequence[str], fixed: int) -> str:
         rep = (oh["replay"].get(p) or {}).get(str(fixed)) or {}
         eng = oh["engine"].get(p) or {}
 
-        def us(v: Optional[float]) -> str:
-            return "–" if v is None else f"{v:.1f} µs"
+        missing = "–" if p in NEW_POLICIES else "not measured"
+
+        def us(v: Optional[float], missing: str = missing) -> str:
+            return missing if v is None else f"{v:.1f} µs"
 
         cand, meta = (eng.get(k) if eng.get(k) is not None else rep.get(k)
                       for k in ("candidates_per_scan", "metadata_kib"))
         rows.append([
             P[p],
             us(rep.get("evict_us")),
-            us(eng.get("evict_us")), "–" if cand is None else f"{cand:.0f}",
-            "–" if meta is None else f"{meta:,.0f} KiB"
+            us(eng.get("evict_us")),
+            ("none (a heap)" if p in POLICIES else "–") if cand is None else
+            f"{cand:.0f}", missing if meta is None else _kib(meta)
         ])
     return _table([
         "Policy", f"Time per eviction, cache replay ({tokens(fixed)})",
@@ -1211,14 +1236,16 @@ def _lrfu_memory(s: Row, new: Sequence[str]) -> str:
            or {}).get("preempted")
     never = ""
     if pre and not any(pre):
-        never = (" No request was preempted in these runs, so that record "
-                 "never changed a count.")
+        never = (" No request was preempted in the "
+                 f"{tokens(s['config']['capacity_tokens'])} runs, so there "
+                 "that record never changed a count.")
     return (
         f'<p class="prose">Of Sampled LRFU\'s {_kib(eng["metadata_kib"])}, '
         f"its two numbers per cached block take {_kib(parts['lrfu'])}; the "
         f"rest ({_kib(parts['bookkeeping'])}) is mostly its record of "
-        "which blocks each of the last 4,096 requests counted, which keeps "
-        "a request that is computed again from counting a block twice."
+        "which blocks each of the last 4,096 requests counted. That record "
+        "stops a preempted request (one the server pauses when the cache is "
+        "full and computes again later) from counting a block twice."
         f"{never}</p>")
 
 
@@ -1247,10 +1274,17 @@ def _tuning_block(s: Row, c: Row, new: Sequence[str]) -> str:
                 pct(x["mean"], 1), ", ".join(role) or "–"
             ])
         tuned = f"{name}_tuned"
+        lead = pick["mean"] - pick["spec_mean"]
         if pick["is_spec"]:
             notes.append(f"For {P[name]} the specified setting was also the "
                          "best on seed 1, so it is the one reported.")
-        elif tuned in c["curve"] and None not in c["curve"][tuned]["hit_rate"]:
+            continue
+        if lead < MIN_GAP:
+            notes.append(f"{P[name]}'s pick led the specified setting by "
+                         f"{pts(lead)} on seed 1, less than the "
+                         f"{100 * MIN_GAP:.1f} points this page needs to call "
+                         "a difference.")
+        if tuned in c["curve"] and None not in c["curve"][tuned]["hit_rate"]:
             v = _cap_verdicts(c["curve"][tuned]["seeds"],
                               c["curve"][name]["seeds"])
             gain = [
@@ -1264,20 +1298,214 @@ def _tuning_block(s: Row, c: Row, new: Sequence[str]) -> str:
                 if runs[k]
             ]
             notes.append(
-                f"On seeds {_seeds_txt(s)} (run once, after the choice), "
-                f"{P[name]} with the seed-1 pick ({pick['label']}) is " +
-                _list(parts) + " than as specified, by at most " +
-                pts(max(abs(x) for x in gain)) + ".")
+                f"Then replayed once on seeds {_seeds_txt(s)} with no further "
+                f"changes (cache replay), {P[name]} with the seed-1 pick "
+                f"({pick['label']}) against as specified: " +
+                "; ".join(parts) +
+                f" (largest difference {pts(max(abs(x) for x in gain))}).")
+    fixed = c["fixed"]
+    i = caps.index(fixed)
+    at_fixed = [
+        f"{P[n]} {pct(c['curve'][f'{n}_tuned']['hit_rate'][i], 1)}"
+        for n in new if f"{n}_tuned" in c["curve"]
+        and None not in c["curve"][f"{n}_tuned"]["hit_rate"]
+    ]
+    if at_fixed:
+        notes.append(
+            f"With the seed-1 picks, at {tokens(fixed)} on seeds "
+            f"{_seeds_txt(s)} (cache replay): {_list(at_fixed)}, "
+            f"against LRU's {pct(c['curve']['lru']['hit_rate'][i], 1)}"
+            ".")
+    lru = tune.get("lru")
     head = [
         "Policy", "Setting", "Seed-1 usable reuse, mean of "
         f"{len(tune['capacities'])} sizes", ""
     ]
     return ('<h3 class="sub">Tuning on seed 1</h3><p class="prose">Each '
-            "setting was replayed on seed 1 only, at " +
+            "setting was replayed on seed 1 only (cache replay), at " +
             _list([tokens(x) for x in tune["capacities"]]) +
-            ", and the best average picked (a tie keeps the specified one). "
-            "The best three, and the specified setting:</p>" +
-            _table(head, rows) + _ul(notes))
+            (f"; LRU averages {pct(sum(lru) / len(lru), 1)} there"
+             if lru else "") + ". We picked the highest average and kept the "
+            "specified setting only on an exact tie. The best three, and the "
+            "specified setting:</p>" + _table(head, rows) + _ul(notes))
+
+
+def _num(v: Optional[float], missing: float = -math.inf) -> float:
+    """`v`, or `missing` when there is none (a real 0.0 stays 0.0)."""
+    return missing if v is None else v
+
+
+def _gap_text(cv: Row, p: str, base: str = "lru") -> str:
+    """How far `p`'s replay curve sits from `base`'s across sizes."""
+    d = [a - b for a, b in zip(cv[p]["hit_rate"], cv[base]["hit_rate"])]
+    lo, hi = min(d), max(d)
+    if lo >= 0:
+        return f"{_span(lo, hi)} above"
+    if hi <= 0:
+        return f"{_span(-hi, -lo)} below"
+    return f"from {pts(lo)} below to {pts(hi)} above"
+
+
+def _vs_best_baseline(caps: List[int], cv: Row, p: str) -> str:
+    """`p` against the best of LRU, LFU and FIFO at each size (the one
+    with the highest mean there), by the tie rule."""
+    verdicts = []
+    for k in range(len(caps)):
+        best = max(POLICIES, key=lambda b: cv[b]["hit_rate"][k])
+        verdicts.append(
+            _cap_verdicts([cv[p]["seeds"][k]], [cv[best]["seeds"][k]])[0])
+    if all(v == "a" for v in verdicts):
+        return "beats all three at every size"
+    if all(v == "b" for v in verdicts):
+        return "is below the best of them at every size"
+    runs = {k: _cap_runs(caps, verdicts, k) for k in ("a", "b", "tie")}
+    bits = []
+    if runs["a"]:
+        bits.append(f"beats all three at {_list(runs['a'])}")
+    if runs["tie"]:
+        bits.append(f"ties with the best of them at {_list(runs['tie'])}")
+    if runs["b"]:
+        bits.append(f"trails the best of them at {_list(runs['b'])}")
+    return _list(bits)
+
+
+def _lost_split(s: Row, p: str) -> Optional[Tuple[int, int]]:
+    """Blocks `p` evicted that no eviction would have served, and blocks
+    still cached but behind a missing one (cut off), over the seeds."""
+    lost = (s.get("lost") or {}).get(p)
+    if not lost:
+        return None
+    # Each seed holds its workloads and their total ("all").
+    rows = [
+        ws["all"] if "all" in ws else
+        {k: sum(v[k] for v in ws.values())
+         for k in ("evicted", "cut_off")} for ws in lost.values()
+    ]
+    return (sum(r["evicted"] for r in rows), sum(r["cut_off"] for r in rows))
+
+
+def _span_ints(values: Sequence[int]) -> str:
+    lo, hi = min(values), max(values)
+    return f"{lo:,}" if lo == hi else f"{lo:,}–{hi:,}"
+
+
+def _verdict(s: Row, c: Row, new: Sequence[str]) -> List[str]:
+    """The plain answer: the best policy and by how much, each new policy
+    against LRU and against the best baseline, where it loses, and why."""
+    caps, fixed, cv = c["capacities"], c["fixed"], c["curve"]
+    i = caps.index(fixed)
+    mg = s["mixed_groups"]
+    mixed = mixed_policies(s)
+    out = []
+    best = max(mixed, key=lambda p: _num(mean(mg["all"][p]["usable"])))
+    if best != "lru":
+        d = [
+            a - b for a, b in zip(mg["all"][best]["usable"]["seeds"], mg["all"]
+                                  ["lru"]["usable"]["seeds"])
+        ]
+        word = {
+            "higher": "higher on every seed",
+            "lower": "lower on every seed",
+            "tie": "a tie by the rule"
+        }[mg["all"][best]["verdict"]]
+        reals = curve_policies(c, [*POLICIES, *NEW_POLICIES])
+        top = max(reals, key=lambda p: cv[p]["hit_rate"][i])
+        out.append(
+            f"<b>Best overall: {P[best]}.</b> On the engine at "
+            f"{tokens(fixed)} it serves "
+            f"{pct(mean(mg['all'][best]['usable']), 1)} of the mix's prompt "
+            f"tokens from the cache, against LRU's "
+            f"{pct(mean(mg['all']['lru']['usable']), 1)} ({word}, by "
+            f"{_span(min(d), max(d))}). In the cache replay, the "
+            "best real policy at each size: " + _best_by_size(
+                caps, cv, curve_policies(c, [*POLICIES, *NEW_POLICIES])) +
+            ". " +
+            (f"Belady, which knows the future, is still "
+             f"{pts(cv['belady']['hit_rate'][i] - cv[top]['hit_rate'][i])} "
+             f"ahead at {tokens(fixed)} (cache replay)." if "belady" in
+             cv else ""))
+    for p in new:
+        line = (f"<b>{P[p]}</b> is {_gap_text(cv, p)} LRU across sizes "
+                f"(cache replay); against the best of LRU, LFU and FIFO it "
+                f"{_vs_best_baseline(caps, cv, p)}.")
+        if p in mg["all"]:
+            losses = [L[g] for g in GROUPS if mg[g][p]["verdict"] == "lower"]
+            if losses:
+                line += (f" On the engine at {tokens(fixed)} it keeps less "
+                         f"than LRU of {_list(losses)}.")
+        out.append(line)
+    lrfu_lower = (mg["all"].get("sampled_lrfu")
+                  or {}).get("verdict") == "lower"
+    split = (_lost_split(s, "sampled_lrfu")
+             if "sampled_lrfu" in new and lrfu_lower else None)
+    stranded = ((s.get("policy_views") or {}).get("sampled_lrfu")
+                or {}).get("hits_after_miss")
+    if split and split[1] and stranded:
+        evicted, cut = split
+        lru = _lost_split(s, "lru")
+        line = (
+            "<b>Why Sampled LRFU loses</b> (measured on the engine): of the "
+            "reuse it loses against no eviction, "
+            f"{pct(cut / (evicted + cut), 0)} was still in the cache behind a "
+            "missing block, which the server cannot use; "
+            f"{_span_ints(stranded)} requests per seed hit such stranded "
+            "blocks.")
+        if lru:
+            line += (f" It evicted about as much needed reuse as LRU "
+                     f"({evicted:,} block uses against {lru[0]:,}).")
+        others = [(q, (s["policy_views"].get(q) or {}).get("hits_after_miss"))
+                  for q in mixed if q != "sampled_lrfu"]
+        clean = [P[q] for q, v in others if v is not None and not any(v)]
+        if clean:
+            rule = [q for q in clean if q in (P["ttdf"], P["race_rp"])]
+            rank = [q for q in clean if q in (P["lru"], P["lfu"])]
+            why = []
+            if rule:
+                why.append(f"{_list(rule)} never evict"
+                           f"{'s' if len(rule) == 1 else ''} a prompt's start "
+                           "before its end")
+            if rank:
+                why.append(
+                    f"{_list(rank)} never rank"
+                    f"{'s' if len(rank) == 1 else ''} it lower, because "
+                    "it is used whenever the end is and ties go to the "
+                    "deeper block")
+            line += (f" {_list(clean)} stranded none" +
+                     (": " + ", and ".join(why) if why else "") + ".")
+        line += (" Choosing among only 4 random blocks also means the victim "
+                 "is often a block used a moment ago.")
+        tuned = cv.get("sampled_lrfu_tuned")
+        pick = (((s["new_policies"].get("tuning") or {}).get("selected")
+                 or {}).get("sampled_lrfu") or {}).get("label")
+        if tuned and None not in tuned["hit_rate"] and pick:
+            v = _cap_verdicts(tuned["seeds"], cv["lru"]["seeds"])
+            line += (f" The seed-1 pick ({pick}) {_vs_lru_runs(caps, v)} "
+                     "(cache replay).")
+        out.append(line)
+    slow = [
+        p for p in new if p in ("ttdf", "race_rp") and p in mg["all"]
+        and mg["sharegpt"][p]["verdict"] != "higher"
+    ]
+    if slow:
+        p50 = s["ceiling_intervals_by_group"]["sharegpt"]["served"][
+            "quantiles"]["p50"]
+        out.append(
+            f"<b>Why {_list([P[p] for p in slow])} "
+            f"{'does' if len(slow) == 1 else 'do'} not help ShareGPT</b> "
+            f"(a likely reason, which we did not test): half of ShareGPT's "
+            f"reuses wait more than {p50:.0f} s (point 2); by then a block's "
+            "recent-use counts have faded, so these scores rank it with "
+            "blocks that will not come back.")
+    scored = [
+        P[p] for p in new if p in ("ttdf", "race_rp") and (
+            mg["all"].get(p) or {}).get("verdict") == "higher"
+    ]
+    if scored:
+        out.append(
+            f"Part of the lead of {_list(scored)} may come from evicting only "
+            "a prompt's end rather than from the scores themselves; we did not "
+            "separate the two.")
+    return out
 
 
 def q7(s: Row, data: Row, facts: Row) -> str:
@@ -1285,12 +1513,11 @@ def q7(s: Row, data: Row, facts: Row) -> str:
     if not q:
         return ""
     c = s["capacity_window"]
-    caps, fixed, cv = c["capacities"], c["fixed"], c["curve"]
+    caps, fixed = c["capacities"], c["fixed"]
     i = caps.index(fixed)
     gs = c["group_seeds"]
     pols = q["policies"]
     new = [p for p in pols if p in NEW_POLICIES]
-    mix_v = {p: _cap_verdicts(cv[p]["seeds"], cv["lru"]["seeds"]) for p in new}
     grp_v = {
         p: {g: _cap_verdicts(gs[p][g], gs["lru"][g])
             for g in GROUPS}
@@ -1302,116 +1529,199 @@ def q7(s: Row, data: Row, facts: Row) -> str:
     eligible = ""
     if scored:
         eligible = (
-            f" {_list(scored)} only {'throw' if len(scored) > 1 else 'throws'}"
+            f"{_list(scored)} only {'throw' if len(scored) > 1 else 'throws'}"
             " out a block that no running request uses and that has no "
             "cached block after it in a prompt, so a prompt's start never "
-            "goes before its end.")
+            "goes before its end. ")
     if "sampled_lrfu" in new:
         eligible += (
-            " Sampled LRFU, as LRU, LFU and FIFO do, may throw out any block "
-            "no running request uses, even one in the middle of a prompt; "
-            "the cached blocks after it can then not be used, because the "
-            "server stops at a prompt's first missing block.")
+            "Like LRU, LFU and FIFO, Sampled LRFU may throw out any block no "
+            "running request uses, even one in the middle of a prompt; the "
+            "cached blocks after it can then no longer be used, because the "
+            "server stops at a prompt's first missing block. ")
     count = (f"{_NUMBER[len(new)].capitalize()} policies"
              if len(new) > 1 else "A policy")
-    intro = (f"{count} written for this mix, " +
-             ("none reading" if len(new) > 1 else "reading no") +
-             " workload labels. " + " ".join(ABOUT[p] for p in new) + eligible)
-    claim = ("Over the whole mix (cache replay), " +
-             "; ".join(f"{P[p]} {_vs_lru_runs(caps, mix_v[p])}" for p in new))
-    lines = []
+    intro = (
+        f'<p class="prose">{count} written for this mix, ' +
+        ("none reading" if len(new) > 1 else "reading no") +
+        " workload labels:</p>" + _ul([ABOUT[p] for p in new]) +
+        f'<p class="prose">{eligible}Every chart and number in this point '
+        "uses the specified settings; the settings tuned on seed 1 are "
+        "compared at the end.</p>")
+    verdict = ('<h3 class="sub">The verdict</h3>' + _ul(_verdict(s, c, new)))
+    gains = []
+    for p in new:
+        up = [L[g] for g in GROUPS if grp_v[p][g][i] == "a"]
+        down = [L[g] for g in GROUPS if grp_v[p][g][i] == "b"]
+        bits = []
+        if up:
+            bits.append("gains on all four" if len(up) ==
+                        len(GROUPS) else f"gains on {_list(up)}")
+        if down:
+            bits.append("loses on all four" if len(down) ==
+                        len(GROUPS) else f"loses on {_list(down)}")
+        gains.append(f"{P[p]} {' and '.join(bits) if bits else 'ties'}")
+    claim = (f"At {tokens(fixed)} inside the mix (cache replay), " +
+             "; ".join(gains))
+    lines = [
+        "Here a policy beats or trails LRU only when all three seeds put "
+        "them in the same order and the mean difference is at least "
+        f"{100 * MIN_GAP:.1f} points; otherwise it ties."
+    ]
     for g in GROUPS:
         at = ", ".join(f"{P[p]} {pct(c['groups'][p][g][i], 0)}" for p in pols)
         lines.append(f"<b>{L[g]}</b>: " +
                      "; ".join(f"{P[p]} {_vs_lru_runs(caps, grp_v[p][g])}"
-                               for p in new) + f". At {tokens(fixed)}: {at}.")
-    lines.append("Highest usable reuse over the whole mix, by size: " +
-                 _best_by_size(caps, cv, pols) + ".")
-    body = (f'<p class="prose">{intro}</p>' + figure(
+                               for p in new) +
+                     f". At {tokens(fixed)} (cache replay): {at}.")
+    body = (intro + verdict + figure(
         "fig-q7-workloads", esc(claim), [badges(s)["replay"]], _ul(lines),
         "Each panel is one workload inside the mix: the share of its "
         "prompt tokens served from the cache as the shared cache grows, "
-        "with its no-eviction share dashed. A cache this size holds all four "
-        "workloads, so a policy that keeps more of one workload's blocks "
-        "keeps fewer of the others'."))
+        "with its no-eviction share dashed. The four workloads share one "
+        "cache, so a policy that keeps more of one workload's blocks keeps "
+        "fewer of the others'."))
     if engine:
-        lru_all = mean(mg["all"]["lru"]["usable"])
-        word = {
-            "higher": "higher than LRU on every seed",
-            "lower": "lower than LRU on every seed",
-            "tie": "a tie with LRU by the rule"
-        }
-        eng_lines = [
-            f"{P[p]}: {pct(mean(mg['all'][p]['usable']), 1)} of the mix's "
-            f"prompt tokens, against LRU's {pct(lru_all, 1)} "
-            f"({word[mg['all'][p]['verdict']]}); by workload, " + _list([
-                f"{L[g]} {pct(mean(mg[g][p]['usable']), 0)} (LRU "
-                f"{pct(mean(mg[g]['lru']['usable']), 0)})" for g in GROUPS
-            ]) + "." for p in engine
-        ]
         E = q["evictions"]
         epols = [p for p in mixed_policies(s) if p in E]
         tops = {p: max(GROUPS, key=lambda g: E[p][g]["mean"]) for p in epols}
         fewest = min(epols, key=lambda p: E[p]["all"]["mean"])
+        every = all(
+            all(a < b for a, b in zip(E[fewest]["all"]["seeds"], E[o]["all"]
+                                      ["seeds"])) for o in epols
+            if o != fewest) if all(E[p]["all"].get("seeds")
+                                   for p in epols) else False
         top = tops[epols[0]]
-        if all(t == top for t in tops.values()):
-            claim_e = (f"Under every policy most evicted blocks are "
-                       f"{L[top]}'s; {P[fewest]} evicts the fewest in all "
-                       f"({_per_s(E[fewest]['all']['mean'])} a second)")
-        else:
-            claim_e = (f"{P[fewest]} evicts the fewest blocks "
-                       f"({_per_s(E[fewest]['all']['mean'])} a second)")
+        fewest_txt = (f"{P[fewest]} evicts the fewest "
+                      f"({_per_s(E[fewest]['all']['mean'])} a second"
+                      f"{', on every seed' if every else ''})")
+        claim_e = (f"Under every policy most evicted blocks are {L[top]}'s; "
+                   f"{fewest_txt}" if all(
+                       t == top for t in tops.values()) else fewest_txt)
         ev_lines = [
             f"{L[g]}: " +
             ", ".join(f"{P[p]} {_per_s(E[p][g]['mean'])}/s" +
                       (f" ({pct(E[p][g]['regretted'], 0)} needed again)"
                        if E[p][g]["regretted"] is not None else "")
-                      for p in epols) + "." for g in GROUPS
+                      for p in epols) + "." for g in ("all", *GROUPS)
         ]
-        ev_lines.append(
-            "\"Needed again\" is the share of a workload's evicted blocks "
-            "that a later request looked up: those had to be computed again.")
+        least_regret = min(
+            epols, key=lambda p: _num(E[p]["all"]["regretted"], math.inf))
+        if least_regret == fewest:
+            ev_lines.append(
+                f"Fewer evictions and fewer blocks needed again go with more "
+                f"reuse: {P[fewest]} is lowest on both." +
+                (" Sampled LRFU is the exception: it evicts no more than LRU "
+                 "yet keeps less, because of the stranded blocks above."
+                 if "sampled_lrfu" in epols else ""))
         body += figure(
             "fig-q7-evictions", esc(claim_e), [badges(s)["engine"]],
             _ul(ev_lines),
-            f"Engine runs at {tokens(fixed)}: " + " ".join(eng_lines) +
-            " The chart counts the blocks each policy threw out per second, "
-            "by the workload whose request used the block last.")
+            f"Engine runs at {tokens(fixed)}. The chart counts the blocks "
+            "each policy threw out per second, by the workload whose request "
+            "used the block last (the whole mix first); <b>needed again</b> "
+            "is the share of those blocks that a later request looked up, "
+            "so they had to be computed again.")
     how = []
     if scored:
         how.append(
-            f"{_list(scored)} "
-            f"{'scores' if len(scored) == 1 else 'score'} every "
-            "evictable block when the first eviction of a scheduling "
-            f"step needs it, then {'reuses' if len(scored) == 1 else 'reuse'} "
-            "that order for the rest of the "
-            "step")
+            f"{_list(scored)} {'scores' if len(scored) == 1 else 'score'} "
+            "every evictable block (here: idle, with nothing cached after it "
+            "in a prompt) when the first eviction of a scheduling step needs "
+            f"it, then {'reuses' if len(scored) == 1 else 'reuse'} that order "
+            "for the rest of the step")
     if "sampled_lrfu" in new:
         how.append("Sampled LRFU scores only the 4 blocks it draws")
+    if "race_rp" in new:
+        costs = {
+            p: (s["new_policies"]["overhead"]["engine"].get(p)
+                or {}).get("evict_us")
+            for p in new
+        }
+        dearest = max((p for p in costs if costs[p] is not None),
+                      key=lambda p: costs[p],
+                      default=None)
+        how.append("each RACE-RP score hashes five features into 16 tables" +
+                   (", which is why it costs the most" if dearest ==
+                    "race_rp" else ""))
     body += ('<h3 class="sub">What the new policies cost</h3>'
              '<p class="prose">LRU, LFU and FIFO keep their idle blocks in a '
-             "heap ordered by one key, so an eviction takes the top. " +
-             "; ".join(how) + ". Times are per eviction, averaged over seeds "
-             f"{_seeds_txt(s)}; metadata is the policy's own numbers at 8 "
-             "bytes each, at the run's peak.</p>" +
-             _overhead_table(s, pols, fixed) + _lrfu_memory(s, new))
+             "priority queue (a heap) ordered by one key, so an eviction "
+             "takes the top. " + "; ".join(how) + ". Times are per eviction, "
+             f"averaged over seeds {_seeds_txt(s)}. Policy metadata is the "
+             "extra memory a policy keeps, counting each stored number as 8 "
+             "bytes, at its largest during the run; it was measured for the "
+             "new policies only.</p>" + _overhead_table(s, pols, fixed) +
+             _cost_scale(s, q, pols) + _lrfu_memory(s, new))
     body += _tuning_block(s, c, new)
-    eng_txt = ""
-    if engine:
-        eng_txt = (f" On the engine at {tokens(fixed)}: " + _list(
-            [f"{P[p]} {pct(mean(mg['all'][p]['usable']), 1)}"
-             for p in engine]) +
-                   f", LRU {pct(mean(mg['all']['lru']['usable']), 1)}.")
     facts["q7_names"] = _list([P[p] for p in new])
-    facts["q7_answer"] = ("Over the whole mix (cache replay), " +
-                          "; ".join(f"{P[p]} {_vs_lru_runs(caps, mix_v[p])}"
-                                    for p in new) + "." + eng_txt +
-                          " Best by size: " + _best_by_size(caps, cv, pols) +
-                          ".")
+    facts["q7_answer"] = _q7_answer(s, c, new)
     return point(
         7, "Mixed workload", f"{'Do ' if len(new) > 1 else 'Does '}"
         f"{_list([P[p] for p in new])} keep more of the mix than LRU, LFU "
         "and FIFO?", body)
+
+
+def _q7_answer(s: Row, c: Row, new: Sequence[str]) -> str:
+    caps, fixed, cv = c["capacities"], c["fixed"], c["curve"]
+    mg = s["mixed_groups"]
+    mixed = mixed_policies(s)
+    best = max(mixed, key=lambda p: _num(mean(mg["all"][p]["usable"])))
+    worst = min(mixed,
+                key=lambda p: _num(mean(mg["all"][p]["usable"]), math.inf))
+    bits = []
+    if best != "lru":
+        bits.append(
+            f"{P[best]} keeps the most: on the engine at {tokens(fixed)}, "
+            f"{pct(mean(mg['all'][best]['usable']), 1)} of the mix's prompt "
+            f"tokens against LRU's {pct(mean(mg['all']['lru']['usable']), 1)}"
+            ".")
+    for p in new:
+        if p in (best, worst):
+            continue
+        bits.append(f"{P[p]} is {_gap_text(cv, p)} LRU (cache replay).")
+    if worst in new:
+        why = (", mostly because it cuts prompts in the middle"
+               if worst == "sampled_lrfu" else "")
+        bits.append(f"{P[worst]} as specified keeps the least of all "
+                    f"({pct(mean(mg['all'][worst]['usable']), 1)} on the "
+                    f"engine){why}.")
+    bits.append("Best real policy by size (cache replay): " + _best_by_size(
+        caps, cv, curve_policies(c, [*POLICIES, *NEW_POLICIES])) + ".")
+    return " ".join(bits)
+
+
+def _cost_scale(s: Row, q: Row, pols: Sequence[str]) -> str:
+    """How much of each second goes to choosing victims, at the run's
+    eviction rate."""
+    E = q.get("evictions") or {}
+    oh = s["new_policies"]["overhead"]
+    fixed = s["capacity_window"]["fixed"]
+    parts = []
+    for p in pols:
+        if p not in E:
+            continue
+        eng = (oh["engine"].get(p) or {}).get("evict_us")
+        rep = ((oh["replay"].get(p) or {}).get(str(fixed))
+               or {}).get("evict_us")
+        us = eng if eng is not None else rep
+        if us is None:
+            continue
+        parts.append((P[p], us * E[p]["all"]["mean"] / 1000, eng is not None))
+    if not parts:
+        return ""
+
+    def group(engine: bool) -> str:
+        return _list(
+            [f"{name} {ms:.1f} ms" for name, ms, e in parts if e == engine])
+
+    timed = [(engine, label) for engine, label in ((False, "replay timing"),
+                                                   (True, "engine timing"))
+             if any(e == engine for _, _, e in parts)]
+    return ('<p class="prose">At these eviction rates, choosing what to '
+            "evict takes, of each second: " +
+            "; ".join(f"{group(engine)} ({label})"
+                      for engine, label in timed) + ".</p>")
 
 
 def _new_method(s: Row) -> List[str]:
@@ -1463,7 +1773,7 @@ def _new_method(s: Row) -> List[str]:
                      "120 or 600 s) and weights (0.3 or 0.7 on the short "
                      "tally)"),
             "race_rp":
-            "RACE-RP's tables (16 or 64) and bits (1 to 8)",
+            "RACE-RP's tables (16 or 64) and bits (1, 2, 3, 4, 6 or 8)",
             "sampled_lrfu": ("Sampled LRFU's half-life (64 to 2,097,152 block "
                              "uses) and sample size (4, 16 or 64)"),
         }
@@ -1471,6 +1781,11 @@ def _new_method(s: Row) -> List[str]:
                      "replay: " + _list([grids[p] for p in tuned]) +
                      ". Seeds " + _seeds_txt(s) + " were run once with the "
                      "specified and the picked settings.")
+    items.append(
+        "Seed 1, which trained RACE-RP and tuned all three, is another "
+        f"{s['config']['stop_s'] / 60:.0f}-minute draw of the same four "
+        "workloads, so seeds " + _seeds_txt(s) + " test new traffic of the "
+        "same kind, not a different mix.")
     if npol.get("engine"):
         fixed = s["config"]["capacity_tokens"]
         checks = sorted({
@@ -1601,12 +1916,17 @@ def sections(s: Row, data: Row) -> List[str]:
         terms(s),
         part("Part A · Points 1 to 4", "All four workloads sharing one cache"),
         *parts[:4],
-        part("Part B · Points 5 and 6",
-             "Each workload alone, and against sharing"),
+        part(
+            "Part B · Points 5 and 6",
+            "Each workload alone, and against sharing" +
+            (" (LRU, LFU and FIFO only)" if _has_new(s) else "")),
         *parts[4:],
         *([
-            part("Part C · Point 7", "Two new policies on the shared cache"),
-            seventh
+            part(
+                "Part C · Point 7",
+                f"{_NUMBER[len(_new_names(s))].capitalize()} new "
+                f"{'policy' if len(_new_names(s)) == 1 else 'policies'} on "
+                "the shared cache"), seventh
         ] if seventh else []),
         method(s),
     ]

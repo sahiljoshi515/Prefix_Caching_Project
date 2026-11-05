@@ -82,6 +82,38 @@ def test_terms_define_the_new_policies_before_belady():
     assert "RACE-RP" not in nv.terms(baseline())
 
 
+TIE_RULE = ("A difference counts only if all seeds put the two policies in "
+            "the same order and the mean difference is at least 0.5 points; "
+            "otherwise it is a tie.")
+
+
+@pytest.mark.parametrize("kw, clean, loose", [
+    ({
+        "engine": (),
+        "replay": ()
+    }, "LRU and LFU", "FIFO"),
+    ({}, "LRU, LFU, TTDF and RACE-RP", "FIFO"),
+    ({
+        "engine": ("sampled_lrfu", ),
+        "replay": ("sampled_lrfu", )
+    }, "LRU and LFU", "FIFO and Sampled LRFU"),
+    ({
+        "engine": ALL_NEW,
+        "replay": ALL_NEW
+    }, "LRU, LFU, TTDF and RACE-RP", "FIFO and Sampled LRFU"),
+],
+                         ids=["none", "pair", "lrfu", "three"])
+def test_glossary_names_the_policies_on_the_page(kw, clean, loose):
+    s = summary(**kw)
+    entries = dict(re.findall(r"<dt>(.*?)</dt><dd>(.*?)</dd>", nv.terms(s)))
+    assert entries["Usable prefix reuse"].endswith(
+        f"Weighted by tokens. Under {clean} this equals vLLM's own prefix "
+        f"cache hit rate; {loose} can leave cached blocks behind a missing "
+        "one, which vLLM's figure counts and this page does not.")
+    assert entries["Usable prefix reuse"].endswith(nv._hit_rate_note(s))
+    assert entries["Seeds and ties"].endswith(TIE_RULE)
+
+
 def test_point_eyebrow_has_no_total():
     html = nv.point(7, "Mixed workload", "Q?", "<p>b</p>")
     assert '<span class="eyebrow">Point 7 · Mixed workload</span>' in html
@@ -92,14 +124,14 @@ def test_method_describes_the_new_policies_before_reproduce():
     items = re.findall(r"<li>(.*?)</li>", nv.method(summary()))
     first = next(i for i, x in enumerate(items) if "reuse_evictors.py" in x)
     assert items[-1].startswith("Reproduce")
-    assert first == len(items) - 6  # five new items, then Reproduce
+    assert first == len(items) - 7  # six new items, then Reproduce
     base = nv.method(baseline())
     assert "reuse_evictors.py" not in base and "RACE-RP" not in base
 
 
 def test_new_method_items_follow_the_summary():
     items = [text(x) for x in nv._new_method(summary())]
-    assert len(items) == 5
+    assert len(items) == 6
     assert items[0].startswith("TTDF and RACE-RP ( vllm/core/reuse_evictors"
                                ".py ) are vLLM evictors beside LRU, LFU and "
                                "FIFO")
@@ -112,22 +144,29 @@ def test_new_method_items_follow_the_summary():
     assert "(39% were)" in items[2]
     assert items[3].startswith("Settings were tuned on seed 1 only")
     assert "TTDF's short and long time constants" in items[3]
-    assert "RACE-RP's tables (16 or 64) and bits (1 to 8)" in items[3]
+    assert "RACE-RP's tables (16 or 64) and bits (1, 2, 3, 4, 6 or 8)" in \
+        items[3]
     assert "Sampled LRFU" not in items[3]  # not tuned here
     assert "Seeds 2, 3 and 4 were run once" in items[3]
-    # No engine runs at other sizes: no check runs named.
     assert items[4] == (
+        "Seed 1, which trained RACE-RP and tuned all three, is another "
+        "30-minute draw of the same four workloads, so seeds 2, 3 and 4 test "
+        "new traffic of the same kind, not a different mix.")
+    # No engine runs at other sizes: no check runs named.
+    assert items[5] == (
         "Engine runs of TTDF and RACE-RP: 128K on seeds 2, 3 and 4 (points "
         "1, 2 and 7). The numbers behind every chart are also in CSV files "
         "under report/milestone3/data/task2 .")
-    # No sketch, no tuning, no engine runs: the two policy items only.
+    # No sketch, no tuning, no engine runs: the two policy items and the
+    # note on seed 1.
     s = summary(sketch=False, tune=False)
     s["new_policies"]["engine"] = []
     items = [text(x) for x in nv._new_method(s)]
-    assert len(items) == 2 and "VLLM_EVICTION_POLICY" in items[0]
+    assert len(items) == 3 and "VLLM_EVICTION_POLICY" in items[0]
+    assert items[2].startswith("Seed 1, which trained RACE-RP")
     s = summary(sketch=False)
     items = [text(x) for x in nv._new_method(s)]
-    assert len(items) == 4
+    assert len(items) == 5
     assert not any("sketch was learned" in x for x in items)
 
 
@@ -178,35 +217,52 @@ def test_new_method_engine_item_names_the_policies_and_check_runs():
 # --- Point 1 ----------------------------------------------------------------
 
 
+def claim(html):
+    """A finding's claim (its heading), as text."""
+    return text(re.search(r'<div class="claim"><h3>(.*?)</h3>', html)[1])
+
+
 def test_q1_adds_table_rows_and_a_clause_for_the_new_policies():
     facts = {}
     html = nv.q1(summary(), facts)
     rows = table_rows(html)
     assert [r[0] for r in rows] == ["LRU", "LFU", "FIFO", "TTDF", "RACE-RP"]
-    assert rows[3] == ["TTDF", "97.7%", "50.0%", "10.0%", "0.0%"]
-    assert rows[4] == ["RACE-RP", "95.0%", "40.0%", "30.0%", "20.0%"]
+    # The last column: the waits past LRU's cut-off (30 s) taken together.
+    assert "<th>more than 30 s, together</th>" in html
+    assert [r[-1] for r in rows] == ["0.0%", "15.0%", "0.0%", "5.0%", "25.0%"]
+    assert rows[3] == ["TTDF", "97.7%", "50.0%", "10.0%", "0.0%", "5.0%"]
+    assert rows[4] == ["RACE-RP", "95.0%", "40.0%", "30.0%", "20.0%", "25.0%"]
+    # The claim and the answer span every mixed policy.
+    assert claim(html) == (
+        "LRU and FIFO serve almost no reuse that waited longer than 30 s; LFU "
+        "still serves 15% of them, TTDF still serves 5% of them and RACE-RP "
+        "still serves 25% of them")
     t = text(html)
     assert "between FIFO, LRU and LFU (and TTDF and RACE-RP)?" in t
     assert "TTDF ranks a block by its recent uses" in t
-    new = ("Of the two new policies, TTDF serves 97.7% of the quick reuses "
-           "and 5% of those that waited over 30 s and RACE-RP serves 95.0% "
-           "of the quick reuses and 25% of those that waited over 30 s.")
-    assert new in t
-    assert facts["q1_answer"].endswith(new)
+    new = ("Of the new policies, TTDF serves 97.7% of the quick reuses and "
+           "RACE-RP 95.0%.")
+    assert new not in t  # in the answer card only
+    assert facts["q1_answer"].endswith(
+        "LFU, TTDF and RACE-RP still serve 15%, 5% and 25% of those that "
+        "waited over 30 s, LFU but only 94.0% of the quick ones. " + new)
     assert facts["lru_cut"] == 30
 
 
 def test_q1_new_clause_without_an_lru_cutoff():
-    # LRU serves some reuse at every wait: no "waited over" part.
+    # LRU serves some reuse at every wait: no column for the long waits.
     s = summary()
     bins = curve([1.0, 0.99, 0.95, 0.30, 0.05, 0.02])
     s["mixed_intervals"]["lru"] = {"curve": bins, "by_bin": coarse(bins)}
     facts = {}
-    nv.q1(s, facts)
+    html = nv.q1(s, facts)
     assert facts["lru_cut"] is None
+    assert "together" not in html
+    assert {len(r) for r in table_rows(html)} == {5}
+    assert claim(html) == "LRU serves some reuse at every wait"
     assert facts["q1_answer"].endswith(
-        "Of the two new policies, TTDF serves 97.7% of the quick reuses and "
-        "RACE-RP serves 95.0% of the quick reuses.")
+        "Of the new policies, TTDF serves 97.7% of the quick reuses and "
+        "RACE-RP 95.0%.")
 
 
 def test_q1_without_new_policies_keeps_the_three_rows():
@@ -225,9 +281,9 @@ def test_q1_one_new_policy():
     assert [r[0] for r in table_rows(html)][-1] == "RACE-RP"
     assert "TTDF serves" not in facts["q1_answer"]
     assert facts["q1_answer"].endswith(
-        "Of the new policies, RACE-RP serves 95.0% of the quick reuses and "
-        "25% of those that waited over 30 s.")
-    assert "of the two new" not in text(html)
+        "Of the new policies, RACE-RP serves 95.0% of the quick reuses.")
+    assert claim(html).endswith(
+        "; LFU still serves 15% of them and RACE-RP still serves 25% of them")
     assert "between FIFO, LRU and LFU (and RACE-RP)?" in text(html)
 
 
@@ -240,8 +296,8 @@ def test_q2_lists_the_new_policies_against_lru():
     assert ("LRU serves 56.0% of the mix's prompt tokens from the cache, LFU "
             "54.0%, FIFO 50.0%, TTDF 57.0% and RACE-RP 55.5%, out of 78.0% "
             "possible") in t
-    assert ("Over the whole mix, TTDF beats LRU, LFU and FIFO are lower than "
-            "LRU and RACE-RP ties with it, on every seed (2, 3 and 4).") in t
+    assert ("Over the whole mix, TTDF beats LRU; LFU and FIFO are lower than "
+            "LRU; RACE-RP ties with it, on every seed (2, 3 and 4).") in t
     assert ("TTDF beats LRU on ShareGPT and AgentBank, is lower than LRU on "
             "Bailian and ties with it on CC-Bench") in t
     assert "RACE-RP ties with it on ShareGPT, AgentBank, CC-Bench and " \
@@ -292,13 +348,115 @@ def test_q4_adds_the_new_policies_against_lru():
     s = summary()
     facts = {}
     t = text(nv.q4(s, rp.build_data(s), facts))
-    assert ("The new policies at 128K: TTDF 58.0% and RACE-RP 58.0%. Against "
-            "LRU, TTDF beats LRU at 32K to 64K, trails it at 128K and ties at "
-            "256K; RACE-RP trails LRU at every size.") in t
+    assert ("The new policies at 128K (cache replay): TTDF 58.0% and RACE-RP "
+            "58.0%. Across sizes, TTDF is from 2.0 points below to 2.0 points "
+            "above LRU; RACE-RP is 2.0 points below LRU.") in t
     assert facts["q4_new"] == (
-        "TTDF beats LRU at 32K to 64K, trails it at 128K and ties at 256K; "
-        "RACE-RP trails LRU at every size")
+        "TTDF beats LRU at 32K to 64K, trails it at 128K and ties at 256K "
+        "(from 2.0 points below to 2.0 points above); RACE-RP trails LRU at "
+        "every size (2.0 points below) (cache replay)")
     assert facts["q4_answer"].endswith(" " + facts["q4_new"] + ".")
+    # LFU's tie at 256K (the same mean as LRU) says why it is a tie.
+    assert ("LFU beats LRU at 32K to 64K, trails it at 128K and ties at "
+            "256K, where the seeds disagree or the gap is under 0.5 points") \
+        in facts["q4_answer"]
+
+
+def gap_cv(diffs):
+    return {
+        "lru": {
+            "hit_rate": [0.5] * len(diffs)
+        },
+        "x": {
+            "hit_rate": [0.5 + d for d in diffs]
+        },
+    }
+
+
+@pytest.mark.parametrize("diffs, words", [
+    ([0.008, 0.011, 0.01], "0.8 to 1.1 points above"),
+    ([0.02, 0.02], "2.0 points above"),
+    ([0.0, 0.004], "0.0 to 0.4 points above"),
+    ([-0.03, -0.012], "1.2 to 3.0 points below"),
+    ([-0.01, 0.05], "from 1.0 point below to 5.0 points above"),
+])
+def test_gap_text(diffs, words):
+    assert nv._gap_text(gap_cv(diffs), "x") == words
+
+
+LAND = ("The engine runs land within {} of the cache replay of the same "
+        "seeds (× beside each marker)")
+
+
+def q4_text(s):
+    return text(nv.q4(s, rp.build_data(s), {}))
+
+
+def test_q4_engine_note_names_an_outlying_run():
+    s = summary()
+    # TTDF, seed 3, 64K: 2.0 points off; the others within 0.5 points.
+    s["capacity_window"]["engine"].append({
+        "seed": 3,
+        "policy": "ttdf",
+        "capacity": 65536,
+        "engine": 0.54,
+        "replay": 0.52
+    })
+    t = q4_text(s)
+    assert (LAND.format("2.0 points") + ": the largest gap is TTDF at 64K "
+            "(seed 3); the other runs are within 0.5 points.") in t
+
+
+def test_q4_engine_note_gives_a_reason_for_a_sampled_lrfu_outlier():
+    s = summary(**THREE)
+    s["capacity_window"]["engine"].append({
+        "seed": 3,
+        "policy": "sampled_lrfu",
+        "capacity": 65536,
+        "engine": 0.54,
+        "replay": 0.52
+    })
+    assert (LAND.format("2.0 points") + ": the largest gap is Sampled LRFU "
+            "at 64K (seed 3; its random draws depend on the exact order of "
+            "events, which differs between the engine and the replay); the "
+            "other runs are within 0.5 points.") in q4_text(s)
+
+
+def test_q4_engine_note_without_an_outlier():
+    # The worst gap (0.5 points, LRU at 32K) is under half a point above
+    # the next (0.2 points): no run named.
+    t = q4_text(summary())
+    assert LAND.format("0.5 points") + "." in t
+    assert "the largest gap is" not in t
+    # Two runs share the worst gap: none stands out.
+    s = summary()
+    s["capacity_window"]["engine"] += [{
+        "seed": x,
+        "policy": "lfu",
+        "capacity": 65536,
+        "engine": 0.53,
+        "replay": 0.51
+    } for x in (2, 3)]
+    t = q4_text(s)
+    assert LAND.format("2.0 points") + "." in t
+    assert "the largest gap is" not in t
+
+
+def test_q4_engine_note_with_a_single_engine_run():
+    s = summary()
+    s["capacity_window"]["engine"] = [{
+        "seed": 2,
+        "policy": "lru",
+        "capacity": FIXED,
+        "engine": 0.62,
+        "replay": 0.60
+    }]
+    t = q4_text(s)
+    assert LAND.format("2.0 points") + "." in t
+    assert "the largest gap is" not in t
+    # No engine run with a replay value: no note at all.
+    s["capacity_window"]["engine"][0]["replay"] = None
+    assert "The engine runs land within" not in q4_text(s)
 
 
 def test_q4_new_line_follows_the_drawn_curves():
@@ -306,8 +464,9 @@ def test_q4_new_line_follows_the_drawn_curves():
     s = summary(replay=("race_rp", ))
     facts = {}
     t = text(nv.q4(s, rp.build_data(s), facts))
-    assert "The new policies at 128K: RACE-RP 58.0%." in t
-    assert facts["q4_new"] == "RACE-RP trails LRU at every size"
+    assert "The new policies at 128K (cache replay): RACE-RP 58.0%." in t
+    assert facts["q4_new"] == ("RACE-RP trails LRU at every size (2.0 points "
+                               "below) (cache replay)")
     # No new curves: no line, and the answer is as before.
     facts = {}
     s = baseline()
@@ -373,11 +532,15 @@ def test_overhead_table_fills_gaps_with_dashes():
         nv._overhead_table(summary(), ["lru", "lfu", "ttdf", "race_rp"],
                            FIXED))
     assert rows == [
-        ["LRU", "1.5 µs", "–", "–", "–"],
-        ["LFU", "–", "–", "–", "–"],
-        ["TTDF", "10.0 µs", "12.3 µs", "250", "1,234 KiB"],
+        # Baselines: no engine timing or metadata, and a heap (no scan).
+        ["LRU", "1.5 µs", "not measured", "none (a heap)", "not measured"],
+        [
+            "LFU", "not measured", "not measured", "none (a heap)",
+            "not measured"
+        ],
+        ["TTDF", "10.0 µs", "12.3 µs", "250", "1.2 MiB"],
         # The engine has no count of blocks scored: the replay's.
-        ["RACE-RP", "25.0 µs", "30.0 µs", "300", "2,048 KiB"],
+        ["RACE-RP", "25.0 µs", "30.0 µs", "300", "2.0 MiB"],
     ]
     # A None engine value falls back to the replay's too.
     s = summary()
@@ -385,9 +548,21 @@ def test_overhead_table_fills_gaps_with_dashes():
     eng["candidates_per_scan"] = eng["metadata_kib"] = None
     assert table_rows(nv._overhead_table(s, ["ttdf"], FIXED)) == \
         [["TTDF", "10.0 µs", "12.3 µs", "240", "1,000 KiB"]]
+    # A new policy with nothing measured: dashes.
+    del s["new_policies"]["overhead"]["engine"]["ttdf"]
+    del s["new_policies"]["overhead"]["replay"]["ttdf"]
+    assert table_rows(nv._overhead_table(s, ["ttdf"], FIXED)) == \
+        [["TTDF", "–", "–", "–", "–"]]
     html = nv._overhead_table(summary(), ["ttdf"], 32768)
     assert "(32K)" in html
-    assert table_rows(html) == [["TTDF", "–", "12.3 µs", "250", "1,234 KiB"]]
+    assert table_rows(html) == [["TTDF", "–", "12.3 µs", "250", "1.2 MiB"]]
+
+
+TUNING_INTRO = (
+    "Each setting was replayed on seed 1 only (cache replay), at 32K, 64K, "
+    "128K, 256K and 384K; LRU averages 45.0% there. We picked the highest "
+    "average and kept the specified setting only on an exact tie. The best "
+    "three, and the specified setting:")
 
 
 def test_tuning_block_shows_the_top_three_and_the_specified_setting():
@@ -395,23 +570,59 @@ def test_tuning_block_shows_the_top_three_and_the_specified_setting():
     html = nv._tuning_block(s, s["capacity_window"], list(NEW))
     t = text(html)
     assert "Tuning on seed 1" in t
-    assert "at 32K, 64K, 128K, 256K and 384K" in t
+    assert TUNING_INTRO in t
     assert "Seed-1 usable reuse, mean of 5 sizes" in t
     assert table_rows(html) == [
-        ["TTDF", "tau 1 s / 120 s, w 0.7 / 0.3", "53.0%", "picked"],
-        ["TTDF", "tau 5 s / 600 s, w 0.7 / 0.3", "52.0%", "–"],
-        ["TTDF", "tau 30 s / 120 s, w 0.7 / 0.3", "51.0%", "–"],
-        ["TTDF", "tau 5 s / 120 s, w 0.7 / 0.3", "50.0%", "as specified"],
-        ["RACE-RP", "L 16, P 6", "60.0%", "as specified, picked"],
-        ["RACE-RP", "L 64, P 6", "59.0%", "–"],
-        ["RACE-RP", "L 16, P 4", "58.0%", "–"],
+        [
+            "TTDF", "time constants 1 s / 120 s, weights 0.7 / 0.3", "53.0%",
+            "picked"
+        ],
+        [
+            "TTDF", "time constants 5 s / 600 s, weights 0.7 / 0.3", "52.0%",
+            "–"
+        ],
+        [
+            "TTDF", "time constants 30 s / 120 s, weights 0.7 / 0.3", "51.0%",
+            "–"
+        ],
+        [
+            "TTDF", "time constants 5 s / 120 s, weights 0.7 / 0.3", "50.0%",
+            "as specified"
+        ],
+        ["RACE-RP", "16 tables of 6 bits", "60.0%", "as specified, picked"],
+        ["RACE-RP", "64 tables of 6 bits", "59.0%", "–"],
+        ["RACE-RP", "16 tables of 4 bits", "58.0%", "–"],
     ]
-    assert ("On seeds 2, 3 and 4 (run once, after the choice), TTDF with the "
-            "seed-1 pick (tau 1 s / 120 s, w 0.7 / 0.3) is higher at 32K to "
-            "64K and tied at 128K to 256K than as specified, by at most 1.0 "
-            "point.") in t
-    assert ("For RACE-RP the specified setting was also the best on seed 1, "
-            "so it is the one reported.") in t
+    notes = re.findall(r"<li>(.*?)</li>", html)
+    assert [text(n) for n in notes] == [
+        "Then replayed once on seeds 2, 3 and 4 with no further changes "
+        "(cache replay), TTDF with the seed-1 pick (time constants 1 s / "
+        "120 s, weights 0.7 / 0.3) against as specified: higher at 32K to "
+        "64K; tied at 128K to 256K (largest difference 1.0 point).",
+        "For RACE-RP the specified setting was also the best on seed 1, so it "
+        "is the one reported.",
+        "With the seed-1 picks, at 128K on seeds 2, 3 and 4 (cache replay): "
+        "TTDF 58.0%, against LRU's 60.0%.",
+    ]
+    # The pick's seed-1 lead (3 points) clears the tie rule: no note on it.
+    assert "less than the 0.5 points" not in t
+
+
+def test_tuning_block_notes_a_pick_inside_the_tie_rule():
+    s = summary()
+    pick = s["new_policies"]["tuning"]["selected"]["ttdf"]
+    pick["mean"] = pick["spec_mean"] + 0.003
+    t = text(nv._tuning_block(s, s["capacity_window"], ["ttdf"]))
+    lead = ("TTDF's pick led the specified setting by 0.3 points on seed 1, "
+            "less than the 0.5 points this page needs to call a difference.")
+    assert lead in t
+    # The held-out comparison still follows.
+    assert t.index(lead) < t.index("Then replayed once on seeds 2, 3 and 4")
+    # Without LRU's seed-1 values, the intro does not quote them.
+    del s["new_policies"]["tuning"]["lru"]
+    t = text(nv._tuning_block(s, s["capacity_window"], ["ttdf"]))
+    assert "LRU averages" not in t
+    assert "384K. We picked the highest average" in t
 
 
 def test_tuning_block_held_out_lower_and_missing():
@@ -422,15 +633,18 @@ def test_tuning_block_held_out_lower_and_missing():
         "seeds": [[v - 0.01, v, v + 0.01] for v in tuned]
     }
     t = text(nv._tuning_block(s, s["capacity_window"], ["ttdf"]))
-    assert ("is higher at 32K to 64K, lower at 128K and tied at 256K than as "
-            "specified, by at most 1.0 point.") in t
+    assert ("against as specified: higher at 32K to 64K; lower at 128K; tied "
+            "at 256K (largest difference 1.0 point).") in t
+    assert ("With the seed-1 picks, at 128K on seeds 2, 3 and 4 (cache "
+            "replay): TTDF 57.0%, against LRU's 60.0%.") in t
     # No complete held-out curve: no comparison, and no claim either way.
     s["capacity_window"]["curve"]["ttdf_tuned"]["hit_rate"][0] = None
     t = text(nv._tuning_block(s, s["capacity_window"], ["ttdf"]))
-    assert "On seeds" not in t and "was also the best" not in t
+    assert "Then replayed once" not in t and "was also the best" not in t
+    assert "With the seed-1 picks" not in t
     del s["capacity_window"]["curve"]["ttdf_tuned"]
-    assert "On seeds" not in text(
-        nv._tuning_block(s, s["capacity_window"], ["ttdf"]))
+    t = text(nv._tuning_block(s, s["capacity_window"], ["ttdf"]))
+    assert "Then replayed once" not in t and "With the seed-1 picks" not in t
 
 
 def test_tuning_block_specified_in_the_top_three_is_not_repeated():
@@ -455,8 +669,26 @@ def test_q7_is_empty_without_its_data():
     assert nv.q7(s, {}, facts) == "" and "q7_answer" not in facts
 
 
+def verdict_items(html):
+    """The bullets of point 7's verdict, as text."""
+    block = html.split('The verdict</h3>')[1].split("</ul>")[0]
+    return [text(x) for x in re.findall(r"<li>(.*?)</li>", block)]
+
+
+def claims(html):
+    return [
+        text(x) for x in re.findall(r'<div class="claim"><h3>(.*?)</h3>', html)
+    ]
+
+
+BEST_PAIR = "TTDF at 32K to 64K; LRU at 128K; TTDF and LRU (a tie) at 256K"
+
+
 def test_q7_with_engine_runs():
+    # TTDF and RACE-RP ran; Sampled LRFU has no runs (its replay curve is
+    # all None, as m3t2_study writes it).
     s = summary()
+    assert None in s["capacity_window"]["curve"]["sampled_lrfu"]["hit_rate"]
     facts = {}
     html = nv.q7(s, rp.build_data(s), facts)
     t = text(html)
@@ -465,47 +697,101 @@ def test_q7_with_engine_runs():
             "FIFO?") in t
     assert html.count('id="fig-q7-workloads"') == 1
     assert html.count('id="fig-q7-evictions"') == 1
-    claim = (
-        "Over the whole mix (cache replay), TTDF beats LRU at 32K to 64K, "
-        "trails it at 128K and ties at 256K; RACE-RP trails LRU at every "
-        "size")
-    assert claim in t
-    assert (
-        "ShareGPT : TTDF beats LRU at 32K to 64K, trails it at 128K and "
-        "ties at 256K; RACE-RP trails LRU at every size. At 128K: LRU 30%, "
-        "LFU 29%, FIFO 25%, TTDF 28%, RACE-RP 28%.") in t
-    best = ("TTDF at 32K to 64K; LRU at 128K; TTDF and LRU (a tie) at 256K")
-    assert f"Highest usable reuse over the whole mix, by size: {best}." in t
-    # Evictions (engine runs).
-    assert ("Under every policy most evicted blocks are Bailian's; TTDF "
-            "evicts the fewest in all (465 a second)") in t
+    assert "Every chart and number in this point uses the specified " \
+        "settings; the settings tuned on seed 1 are compared at the end." in t
+    assert verdict_items(html) == [
+        "Best overall: TTDF. On the engine at 128K it serves 57.0% of the "
+        "mix's prompt tokens from the cache, against LRU's 56.0% (higher on "
+        "every seed, by 1.0 point). In the cache replay, the best real "
+        f"policy at each size: {BEST_PAIR}. Belady, which knows the future, "
+        "is still 12.0 points ahead at 128K (cache replay).",
+        "TTDF is from 2.0 points below to 2.0 points above LRU across sizes "
+        "(cache replay); against the best of LRU, LFU and FIFO it beats all "
+        "three at 32K to 64K, ties with the best of them at 256K and trails "
+        "the best of them at 128K. On the engine at 128K it keeps less than "
+        "LRU of Bailian.",
+        "RACE-RP is 2.0 points below LRU across sizes (cache replay); against "
+        "the best of LRU, LFU and FIFO it is below the best of them at every "
+        "size.",
+        "Why RACE-RP does not help ShareGPT (a likely reason, which we did "
+        "not test): half of ShareGPT's reuses wait more than 120 s (point "
+        "2); by then a block's recent-use counts have faded, so these scores "
+        "rank it with blocks that will not come back.",
+        "Part of the lead of TTDF may come from evicting only a prompt's end "
+        "rather than from the scores themselves; we did not separate the "
+        "two.",
+    ]
+    assert claims(html) == [
+        "At 128K inside the mix (cache replay), TTDF loses on all four; "
+        "RACE-RP loses on all four",
+        "Under every policy most evicted blocks are Bailian's; TTDF evicts "
+        "the fewest (465 a second, on every seed)",
+    ]
+    assert ("Here a policy beats or trails LRU only when all three seeds put "
+            "them in the same order and the mean difference is at least 0.5 "
+            "points; otherwise it ties.") in t
+    assert ("ShareGPT : TTDF beats LRU at 32K to 64K, trails it at 128K and "
+            "ties at 256K; RACE-RP trails LRU at every size. At 128K (cache "
+            "replay): LRU 30%, LFU 29%, FIFO 25%, TTDF 28%, RACE-RP 28%.") in t
+    # Evictions: the whole mix first; "needed again" defined.
+    assert ("Whole mix: LRU 517/s (30% needed again), LFU 533/s (30% needed "
+            "again), FIFO 538/s (30% needed again), TTDF 465/s (30% needed "
+            "again), RACE-RP 491/s (30% needed again).") in t
+    assert t.index("Whole mix: LRU") < t.index("ShareGPT: LRU")
     assert ("AgentBank: LRU 7.0/s (30% needed again), LFU 7.2/s (30% needed "
             "again), FIFO 7.3/s (30% needed again), TTDF 6.3/s (30% needed "
             "again), RACE-RP 6.6/s.") in t
-    assert ("TTDF: 57.0% of the mix's prompt tokens, against LRU's 56.0% "
-            "(higher than LRU on every seed); by workload, ShareGPT 17% (LRU "
-            "16%)") in t
-    assert ("RACE-RP: 55.5% of the mix's prompt tokens, against LRU's 56.0% "
-            "(a tie with LRU by the rule)") in t
-    # Cost and tuning.
-    assert "What the new policies cost" in t
-    assert "Blocks scored per scan" in t
+    assert "needed again is the share of those blocks that a later request " \
+        "looked up" in t
+    assert "Fewer evictions and fewer blocks needed again" not in t
+    # The old per-policy engine paragraph is gone.
+    assert "of the mix's prompt tokens, against LRU's 56.0% (higher than" \
+        not in t
+    assert ("At these eviction rates, choosing what to evict takes, of each "
+            "second: LRU 0.8 ms (replay timing); TTDF 5.7 ms and RACE-RP "
+            "14.7 ms (engine timing).") in t
     assert "Tuning on seed 1" in t
     assert facts["q7_answer"] == (
-        f"{claim}. On the engine at 128K: TTDF 57.0% and RACE-RP 55.5%, LRU "
-        f"56.0%. Best by size: {best}.")
+        "TTDF keeps the most: on the engine at 128K, 57.0% of the mix's "
+        "prompt tokens against LRU's 56.0%. RACE-RP is 2.0 points below LRU "
+        f"(cache replay). Best real policy by size (cache replay): "
+        f"{BEST_PAIR}.")
     assert facts["q7_names"] == "TTDF and RACE-RP"
+
+
+def test_q7_with_engine_runs_for_a_policy_not_yet_replayed():
+    # Engine runs for all three, replay curves for TTDF and RACE-RP only.
+    s = summary(engine=ALL_NEW, replay=NEW)
+    facts = {}
+    html = nv.q7(s, rp.build_data(s), facts)
+    assert "Do TTDF and RACE-RP keep more" in text(html)
+    # Sampled LRFU has no curve to rank: the replay ranking leaves it out.
+    assert f"best real policy at each size: {BEST_PAIR}." in \
+        verdict_items(html)[0]
+    assert facts["q7_answer"].endswith(
+        f"Best real policy by size (cache replay): {BEST_PAIR}.")
+    # It keeps the least on the engine, but point 7 does not show it.
+    assert "keeps the least" not in facts["q7_answer"]
+    assert len(page(s)) == 14
 
 
 def test_q7_with_one_new_policy():
     s = summary(engine=("race_rp", ), replay=("race_rp", ))
     facts = {}
-    t = text(nv.q7(s, rp.build_data(s), facts))
+    html = nv.q7(s, rp.build_data(s), facts)
+    t = text(html)
     assert ("Does RACE-RP keep more of the mix than LRU, LFU and FIFO?") in t
-    assert "TTDF" not in facts["q7_answer"]
-    assert facts["q7_answer"].startswith(
-        "Over the whole mix (cache replay), RACE-RP trails LRU at every size."
-        " On the engine at 128K: RACE-RP 55.5%, LRU 56.0%.")
+    # LRU keeps the most on the engine: no "best overall", no lead to
+    # explain.
+    items = verdict_items(html)
+    assert not any(x.startswith("Best overall") for x in items)
+    assert not any(x.startswith("Part of the lead") for x in items)
+    assert items[0].startswith("RACE-RP is 2.0 points below LRU across sizes")
+    assert items[1].startswith("Why RACE-RP does not help ShareGPT")
+    assert facts["q7_answer"] == (
+        "RACE-RP is 2.0 points below LRU (cache replay). Best real policy by "
+        "size (cache replay): LFU at 32K to 64K; LRU at 128K; LRU and LFU (a "
+        "tie) at 256K.")
     assert facts["q7_names"] == "RACE-RP"
 
 
@@ -516,16 +802,35 @@ def test_one_new_policy_page_names_only_it():
     assert whole.count("(and RACE-RP)?") == 2  # points 1 and 2
     assert "(and TTDF" not in whole
     assert "Does RACE-RP keep more of the mix" in text(whole)
+    assert "<h2>One new policy on the shared cache</h2>" in secs[-3]
 
 
-def test_q7_evictions_claim_when_workloads_differ_and_lower_verdicts():
+def test_q7_evictions_claim_when_workloads_differ_or_seeds_cross():
     s = summary()
     s["new_policies"]["evictions"]["ttdf"]["ccbench"]["per_s"] = 1000.0
-    s["mixed_groups"]["all"]["race_rp"]["verdict"] = "lower"
+    # One LFU seed evicts fewer than TTDF's: not lowest "on every seed".
+    s["new_policies"]["evictions"]["lfu"]["all"]["seeds"] = [460.0, 540, 540]
+    assert claims(nv.q7(s, rp.build_data(s), {}))[1] == \
+        "TTDF evicts the fewest (465 a second)"
+
+
+def test_q7_evictions_link_fewer_evictions_to_fewer_needed_again():
+    s = summary()
+    s["new_policies"]["evictions"]["ttdf"]["all"]["regretted"] = 0.2
     t = text(nv.q7(s, rp.build_data(s), {}))
-    assert "TTDF evicts the fewest blocks (465 a second)" in t
-    assert "Under every policy" not in t
-    assert "(lower than LRU on every seed)" in t
+    assert ("Fewer evictions and fewer blocks needed again go with more "
+            "reuse: TTDF is lowest on both.") in t
+    assert "Sampled LRFU is the exception" not in t
+    # With Sampled LRFU among the engine runs, its exception; a real 0.0
+    # counts as the lowest share, and a missing one as none.
+    s = summary(**THREE)
+    ev = s["new_policies"]["evictions"]
+    ev["ttdf"]["all"]["regretted"] = 0.0
+    ev["race_rp"]["all"]["regretted"] = None
+    t = text(nv.q7(s, rp.build_data(s), {}))
+    assert ("TTDF is lowest on both. Sampled LRFU is the exception: it "
+            "evicts no more than LRU yet keeps less, because of the stranded "
+            "blocks above.") in t
 
 
 def test_q7_without_engine_runs_has_no_evictions_chart():
@@ -534,9 +839,14 @@ def test_q7_without_engine_runs_has_no_evictions_chart():
     html = nv.q7(s, rp.build_data(s), facts)
     assert 'id="fig-q7-workloads"' in html
     assert "fig-q7-evictions" not in html
-    assert "On the engine" not in facts["q7_answer"]
-    assert facts["q7_answer"].startswith("Over the whole mix (cache replay), "
-                                         "TTDF beats LRU")
+    items = verdict_items(html)
+    assert [x.split(" is ")[0] for x in items] == ["TTDF", "RACE-RP"]
+    assert not any("On the engine" in x for x in items)
+    # The replay ranking includes the new policies' curves.
+    assert facts["q7_answer"] == (
+        "TTDF is from 2.0 points below to 2.0 points above LRU (cache "
+        "replay). RACE-RP is 2.0 points below LRU (cache replay). Best real "
+        f"policy by size (cache replay): {BEST_PAIR}.")
     assert "Tuning on seed 1" in text(html)
 
 
@@ -547,6 +857,9 @@ def test_sections_add_part_c_and_point_7_before_the_method():
     secs = page(summary())
     assert len(secs) == 14
     assert "Part C · Point 7" in secs[-3]
+    assert "<h2>Two new policies on the shared cache</h2>" in secs[-3]
+    assert ("<h2>Each workload alone, and against sharing (LRU, LFU and FIFO "
+            "only)</h2>") in "".join(secs)
     assert 'id="point-7"' in secs[-2]
     assert 'aria-labelledby="method-h"' in secs[-1]
     assert "The seven answers" in secs[1]
@@ -565,7 +878,9 @@ def test_sections_without_new_policies_are_the_six_point_page():
     assert secs[1].count('class="answer"') == 6
     assert "answers six questions" in text(secs[0])
     assert "TTDF" not in whole and "RACE-RP" not in whole
+    assert "Sampled LRFU" not in whole
     assert "(and TTDF" not in whole
+    assert "<h2>Each workload alone, and against sharing</h2>" in whole
     eyebrows = re.findall(r'class="eyebrow">(Point [^<]*)<', whole)
     assert [e.split(" · ")[0] for e in eyebrows] == \
         [f"Point {n}" for n in range(1, 7)]
@@ -729,43 +1044,39 @@ def test_q1_explains_each_new_policy_present(kw):
     assert [r[0] for r in table_rows(html)][3:] == labels
     assert f"between FIFO, LRU and LFU (and {nv._list(labels)})?" in \
         text(html)
-    lead = {
-        1: "Of the new policies, ",
-        2: "Of the two new policies, ",
-        3: "Of the three new policies, "
-    }[len(names)]
-    assert lead + labels[0] + " serves" in facts["q1_answer"]
+    assert f"Of the new policies, {labels[0]} serves" in facts["q1_answer"]
+    assert "Of the new policies" not in html
 
 
 def test_q1_three_new_policies():
     facts = {}
     html = nv.q1(summary(**THREE), facts)
     assert table_rows(html)[-1] == \
-        ["Sampled LRFU", "96.3%", "35.0%", "0.0%", "0.0%"]
+        ["Sampled LRFU", "96.3%", "35.0%", "0.0%", "0.0%", "0.0%"]
+    assert claim(html).startswith(
+        "LRU, FIFO and Sampled LRFU serve almost no reuse that waited longer "
+        "than 30 s; LFU still serves 15% of them")
     assert facts["q1_answer"].endswith(
-        "Of the three new policies, TTDF serves 97.7% of the quick reuses "
-        "and 5% of those that waited over 30 s, RACE-RP serves 95.0% of the "
-        "quick reuses and 25% of those that waited over 30 s and Sampled "
-        "LRFU serves 96.3% of the quick reuses and 0% of those that waited "
-        "over 30 s.")
-    assert "under a second of this mix's traffic" in text(html)
+        "Of the new policies, TTDF serves 97.7% of the quick reuses, RACE-RP "
+        "95.0% and Sampled LRFU 96.3%.")
+    assert "the lowest-scoring of only 4 idle blocks drawn at random" in \
+        text(html)
 
 
 LEAF_ONLY = ("only {} out a block that no running request uses and that "
              "has no cached block after it in a prompt")
-ANY_BLOCK = ("Sampled LRFU, as LRU, LFU and FIFO do, may throw out any block "
-             "no running request uses, even one in the middle of a prompt")
-
-ONE_POLICY = "A policy written for this mix, reading no workload labels."
+ANY_BLOCK = ("Like LRU, LFU and FIFO, Sampled LRFU may throw out any block no "
+             "running request uses, even one in the middle of a prompt")
+ONE_POLICY = "A policy written for this mix, reading no workload labels:"
 
 
 @pytest.mark.parametrize("kw, count, leaf", [
     (ONLY_LRFU, ONE_POLICY, None),
     (ONLY_RACE, ONE_POLICY, "RACE-RP " + LEAF_ONLY.format("throws")),
-    (PAIR, "Two policies written for this mix, none reading workload labels.",
+    (PAIR, "Two policies written for this mix, none reading workload labels:",
      "TTDF and RACE-RP " + LEAF_ONLY.format("throw")),
     (THREE, "Three policies written for this mix, none reading workload "
-     "labels.", "TTDF and RACE-RP " + LEAF_ONLY.format("throw")),
+     "labels:", "TTDF and RACE-RP " + LEAF_ONLY.format("throw")),
 ],
                          ids=STATE_IDS)
 def test_q7_intro_counts_describes_and_says_what_each_may_evict(
@@ -775,41 +1086,90 @@ def test_q7_intro_counts_describes_and_says_what_each_may_evict(
     t = text(html)
     assert count in t
     assert ("none reading" in t) is (len(names) > 1)
+    # One list item per policy shown, describing it.
+    intro = html.split("The verdict")[0]
     for p in rp.NEW_POLICIES:
-        assert (nv.ABOUT[p] in html) is (p in names)
+        assert (f"<li>{nv.ABOUT[p]}</li>" in intro) is (p in names)
     if leaf is None:
         assert "only throw" not in t
     else:
         assert leaf in t
     assert (ANY_BLOCK in t) is ("sampled_lrfu" in names)
+    assert ("Every chart and number in this point uses the specified "
+            "settings") in t
     labels = nv._list([rp.POLICY_LABELS[p] for p in names])
     verb = "Does" if len(names) == 1 else "Do"
     assert f"{verb} {labels} keep more of the mix than LRU, LFU and FIFO?" \
         in t
 
 
-SCAN = ("every evictable block when the first eviction of a scheduling step "
-        "needs it")
+SCAN = ("every evictable block (here: idle, with nothing cached after it in "
+        "a prompt) when the first eviction of a scheduling step needs it")
 SAMPLE = "Sampled LRFU scores only the 4 blocks it draws"
+RACE = ("each RACE-RP score hashes five features into 16 tables, which is "
+        "why it costs the most")
+HEAP = ("LRU, LFU and FIFO keep their idle blocks in a priority queue (a "
+        "heap) ordered by one key, so an eviction takes the top. ")
 
 
 @pytest.mark.parametrize("kw, how", [
-    (ONLY_LRFU, f"takes the top. {SAMPLE}. Times are per eviction"),
-    (ONLY_RACE, f"takes the top. RACE-RP scores {SCAN}, then reuses that "
-     "order for the rest of the step. Times are per eviction"),
-    (PAIR, f"takes the top. TTDF and RACE-RP score {SCAN}, then reuse that "
-     "order for the rest of the step. Times are per eviction"),
-    (THREE, f"takes the top. TTDF and RACE-RP score {SCAN}, then reuse that "
-     f"order for the rest of the step; {SAMPLE}. Times are per eviction"),
+    (ONLY_LRFU, f"{SAMPLE}. Times are per eviction"),
+    (ONLY_RACE, f"RACE-RP scores {SCAN}, then reuses that order for the rest "
+     f"of the step; {RACE}. Times are per eviction"),
+    (PAIR, f"TTDF and RACE-RP score {SCAN}, then reuse that order for the "
+     f"rest of the step; {RACE}. Times are per eviction"),
+    (THREE, f"TTDF and RACE-RP score {SCAN}, then reuse that order for the "
+     f"rest of the step; {SAMPLE}; {RACE}. Times are per eviction"),
 ],
                          ids=STATE_IDS)
 def test_q7_cost_paragraph_names_the_present_policies(kw, how):
     s, names = present(kw)
     t = text(nv.q7(s, rp.build_data(s), {}))
-    assert how in t
+    assert HEAP + how in t
     assert ("TTDF and RACE-RP score" in t) is \
         ({"ttdf", "race_rp"} <= set(names))
     assert (SAMPLE in t) is ("sampled_lrfu" in names)
+    assert ("each RACE-RP score hashes" in t) is ("race_rp" in names)
+    assert ("Policy metadata is the extra memory a policy keeps, counting "
+            "each stored number as 8 bytes, at its largest during the run; "
+            "it was measured for the new policies only.") in t
+
+
+@pytest.mark.parametrize("costs", [{
+    "ttdf": 50.0
+}, {
+    "ttdf": None,
+    "race_rp": None
+}],
+                         ids=["ttdf-dearest", "no-engine-times"])
+def test_q7_cost_says_race_rp_costs_the_most_only_when_it_does(costs):
+    s = summary()
+    for p, us in costs.items():
+        s["new_policies"]["overhead"]["engine"][p]["evict_us"] = us
+    t = text(nv.q7(s, rp.build_data(s), {}))
+    assert "each RACE-RP score hashes five features into 16 tables. Times" \
+        in t
+    assert "costs the most" not in t
+
+
+def test_cost_scale_per_second():
+    s = summary(**THREE)
+    q = rp.build_data(s)["q7"]
+    pols = q["policies"]
+    assert text(nv._cost_scale(s, q, pols)) == (
+        "At these eviction rates, choosing what to evict takes, of each "
+        "second: LRU 0.8 ms (replay timing); TTDF 5.7 ms, RACE-RP 14.7 ms "
+        "and Sampled LRFU 0.4 ms (engine timing).")
+    # Only replay timing; only engine timing; no eviction rates at all.
+    assert text(nv._cost_scale(s, q, [
+        "lru", "lfu"
+    ])) == ("At these eviction rates, choosing what to evict takes, of each "
+            "second: LRU 0.8 ms (replay timing).")
+    assert text(nv._cost_scale(
+        s, q,
+        ["ttdf"])).endswith("of each second: TTDF 5.7 ms (engine timing).")
+    assert nv._cost_scale(s, {"evictions": {}}, pols) == ""
+    assert nv._cost_scale(s, {}, pols) == ""
 
 
 def test_kib_switches_to_mib_at_1024():
@@ -823,8 +1183,8 @@ def test_kib_switches_to_mib_at_1024():
 LRFU_MEMORY = ("Of Sampled LRFU's 1.5 MiB, its two numbers per cached block "
                "take 512 KiB; the rest (1.0 MiB) is mostly its record of "
                "which blocks each of the last 4,096 requests counted")
-NEVER = ("No request was preempted in these runs, so that record never "
-         "changed a count.")
+NEVER = ("No request was preempted in the 128K runs, so there that record "
+         "never changed a count.")
 
 
 def lrfu_summary(parts=None, preempted=None, views=True):
@@ -835,10 +1195,13 @@ def lrfu_summary(parts=None, preempted=None, views=True):
     eng["metadata_kib"] = 1536.0
     if parts is not None:
         eng["metadata_kib_parts"] = parts
-    if views:
-        s["policy_views"] = {"sampled_lrfu": {}}
-        if preempted is not None:
-            s["policy_views"]["sampled_lrfu"]["preempted"] = preempted
+    view = s["policy_views"]["sampled_lrfu"]
+    if preempted is None:
+        del view["preempted"]
+    else:
+        view["preempted"] = preempted
+    if not views:
+        del s["policy_views"]
     return s
 
 
@@ -868,11 +1231,12 @@ def test_lrfu_memory_needs_sampled_lrfu_on_the_page():
 @pytest.mark.parametrize("preempted, views, never", [
     ([0, 0, 0], True, True),
     ([0, 2, 0], True, False),
+    ([], True, False),
     (None, True, False),
     (None, False, False),
 ],
                          ids=[
-                             "none-preempted", "some-preempted",
+                             "none-preempted", "some-preempted", "no-seeds",
                              "no-preempted", "no-policy-views"
                          ])
 def test_lrfu_memory_and_the_preemption_sentence(preempted, views, never):
@@ -881,8 +1245,9 @@ def test_lrfu_memory_and_the_preemption_sentence(preempted, views, never):
     assert html.startswith('<p class="prose">') and html.endswith("</p>")
     t = text(html)
     assert t.startswith(LRFU_MEMORY)
-    assert ("which keeps a request that is computed again from counting a "
-            "block twice.") in t
+    assert ("counted. That record stops a preempted request (one the server "
+            "pauses when the cache is full and computes again later) from "
+            "counting a block twice.") in t
     assert (NEVER in t) is never
 
 
@@ -925,28 +1290,239 @@ def test_q7_without_tuning_of_its_policies_has_no_tuning_block():
     assert "Seed-1 usable reuse" not in point7
 
 
+WHY_LRFU = (
+    "Why Sampled LRFU loses (measured on the engine): of the reuse it loses "
+    "against no eviction, 33% was still in the cache behind a missing "
+    "block, which the server cannot use; 120–150 requests per seed hit such "
+    "stranded blocks. It evicted about as much needed reuse as LRU (2,100 "
+    "block uses against 2,100).")
+CLEAN = ("LRU, LFU, TTDF and RACE-RP stranded none: TTDF and RACE-RP never "
+         "evict a prompt's start before its end, and LRU and LFU never rank "
+         "it lower, because it is used whenever the end is and ties go to "
+         "the deeper block.")
+RANDOM = (" Choosing among only 4 random blocks also means the victim is "
+          "often a block used a moment ago.")
+
+
 def test_q7_three_new_policies():
     s = summary(**THREE)
     facts = {}
     html = nv.q7(s, rp.build_data(s), facts)
     t = text(html)
-    assert ("; Sampled LRFU beats LRU at 128K to 256K, trails it at 32K and "
-            "ties at 64K") in t
-    assert ("Highest usable reuse over the whole mix, by size: TTDF at 32K "
-            "to 64K; Sampled LRFU at 128K to 256K.") in t
+    items = verdict_items(html)
+    assert items[0].endswith(
+        "In the cache replay, the best real policy at each size: TTDF at 32K "
+        "to 64K; Sampled LRFU at 128K to 256K. Belady, which knows the "
+        "future, is still 10.0 points ahead at 128K (cache replay).")
+    assert items[3] == (
+        "Sampled LRFU is from 1.0 point below to 5.0 points above LRU across "
+        "sizes (cache replay); against the best of LRU, LFU and FIFO it "
+        "beats all three at 128K to 256K and trails the best of them at 32K "
+        "to 64K. On the engine at 128K it keeps less than LRU of ShareGPT, "
+        "AgentBank, CC-Bench and Bailian.")
+    # FIFO stranded blocks too, so it is not among the clean policies.
+    assert items[4] == f"{WHY_LRFU} {CLEAN}{RANDOM}"
+    assert claims(html)[0] == (
+        "At 128K inside the mix (cache replay), TTDF loses on all four; "
+        "RACE-RP loses on all four; Sampled LRFU gains on all four")
     assert "Sampled LRFU scores only the 4 blocks it draws" in t
     assert ["Sampled LRFU", "0.5 µs", "0.8 µs", "4", "64 KiB"] in \
         table_rows(html)
     assert [
-        "Sampled LRFU", "half-life 512, 4 drawn", "62.0%",
+        "Sampled LRFU", "half-life 512 uses, 4 drawn", "62.0%",
         "as specified, picked"
     ] in table_rows(html)
     assert ("For Sampled LRFU the specified setting was also the best on "
             "seed 1") in t
     assert "Bailian: LRU 400/s" in t and "Sampled LRFU 392/s" in t
     assert facts["q7_names"] == "TTDF, RACE-RP and Sampled LRFU"
-    assert "On the engine at 128K: TTDF 57.0%, RACE-RP 55.5% and Sampled " \
-        "LRFU 56.5%, LRU 56.0%." in facts["q7_answer"]
+    assert facts["q7_answer"] == (
+        "TTDF keeps the most: on the engine at 128K, 57.0% of the mix's "
+        "prompt tokens against LRU's 56.0%. RACE-RP is 2.0 points below LRU "
+        "(cache replay). Sampled LRFU as specified keeps the least of all "
+        "(45.0% on the engine), mostly because it cuts prompts in the "
+        "middle. Best real policy by size (cache replay): TTDF at 32K to "
+        "64K; Sampled LRFU at 128K to 256K.")
+
+
+def lrfu_why(s):
+    """The "Why Sampled LRFU loses" bullet, or None."""
+    items = nv._verdict(s, s["capacity_window"], ALL_NEW)
+    found = [text(x) for x in items if "Why Sampled LRFU loses" in x]
+    return found[0] if found else None
+
+
+def test_why_sampled_lrfu_loses_needs_a_loss_and_stranded_blocks():
+    assert lrfu_why(summary(**THREE)) is not None
+    # Not lower than LRU on the engine: nothing to explain.
+    s = summary(**THREE)
+    s["mixed_groups"]["all"]["sampled_lrfu"]["verdict"] = "tie"
+    assert lrfu_why(s) is None
+    # Nothing cut off behind a missing block.
+    s = summary(**THREE)
+    for ws in s["lost"]["sampled_lrfu"].values():
+        for v in ws.values():
+            v["cut_off"] = 0
+    assert lrfu_why(s) is None
+    # No count of stranded hits.
+    s = summary(**THREE)
+    del s["policy_views"]["sampled_lrfu"]["hits_after_miss"]
+    assert lrfu_why(s) is None
+    # No lost reuse for Sampled LRFU at all.
+    s = summary(**THREE)
+    del s["lost"]["sampled_lrfu"]
+    assert lrfu_why(s) is None
+
+
+def test_why_sampled_lrfu_loses_without_lru_and_with_fewer_clean():
+    s = summary(**THREE)
+    del s["lost"]["lru"]
+    why = lrfu_why(s)
+    assert "It evicted about as much" not in why
+    # Only LRU and FIFO strand none: LRU's reason alone, verb agreeing.
+    s = summary(**THREE)
+    views = s["policy_views"]
+    for p in ("lfu", "ttdf", "race_rp"):
+        views[p]["hits_after_miss"] = [1, 0, 0]
+    views["fifo"]["hits_after_miss"] = [0, 0, 0]
+    assert ("LRU and FIFO stranded none: LRU never ranks it lower, because "
+            "it is used whenever the end is and ties go to the deeper "
+            "block.") in lrfu_why(s)
+    # Only RACE-RP: its rule alone.
+    for p in ("lru", "fifo"):
+        views[p]["hits_after_miss"] = [1, 0, 0]
+    views["race_rp"]["hits_after_miss"] = [0, 0, 0]
+    assert ("RACE-RP stranded none: RACE-RP never evicts a prompt's start "
+            "before its end.") in lrfu_why(s)
+    # Only FIFO: named without a reason.
+    views["race_rp"]["hits_after_miss"] = [2, 0, 0]
+    views["fifo"]["hits_after_miss"] = [0, 0, 0]
+    assert " FIFO stranded none. Choosing among" in lrfu_why(s)
+    # None clean: no "stranded none" at all.
+    views["fifo"]["hits_after_miss"] = [1, 1, 1]
+    assert "stranded none" not in lrfu_why(s)
+    # A policy without the count is not called clean.
+    del views["fifo"]["hits_after_miss"]
+    assert "stranded none" not in lrfu_why(s)
+
+
+def test_why_sampled_lrfu_loses_names_the_tuned_pick():
+    s = summary(**THREE)
+    curve = s["capacity_window"]["curve"]
+    tuned = [0.41, 0.52, 0.63, 0.71]  # above LRU at 32K to 256K
+    curve["sampled_lrfu_tuned"] = {
+        "hit_rate": tuned,
+        "seeds": [[v - 0.01, v, v + 0.01] for v in tuned]
+    }
+    sel = s["new_policies"]["tuning"]["selected"]["sampled_lrfu"]
+    sel["label"] = "half-life 64 uses, 4 drawn"
+    assert ("The seed-1 pick (half-life 64 uses, 4 drawn) beats LRU at every "
+            "size (cache replay).") in lrfu_why(s)
+    # A tuned curve with a gap, or no pick label: no such sentence.
+    curve["sampled_lrfu_tuned"]["hit_rate"][0] = None
+    assert "The seed-1 pick" not in lrfu_why(s)
+    curve["sampled_lrfu_tuned"]["hit_rate"][0] = 0.41
+    s["new_policies"]["tuning"] = None
+    assert "The seed-1 pick" not in lrfu_why(s)
+
+
+def test_verdict_best_overall_and_its_seed_word():
+    s = summary()
+    s["mixed_groups"]["all"]["ttdf"]["verdict"] = "tie"
+    items = nv._verdict(s, s["capacity_window"], NEW)
+    assert "(a tie by the rule, by 1.0 point)" in text(items[0])
+    # Without Belady's curve, no Belady sentence.
+    del s["capacity_window"]["curve"]["belady"]
+    first = text(nv._verdict(s, s["capacity_window"], NEW)[0])
+    assert first.startswith("Best overall: TTDF.") and "Belady" not in first
+
+
+def test_verdict_sharegpt_and_lead_lines_follow_the_engine_verdicts():
+    s = summary()
+    mg = s["mixed_groups"]
+    mg["sharegpt"]["ttdf"]["verdict"] = "tie"
+    mg["all"]["race_rp"]["verdict"] = "higher"
+    items = [text(x) for x in nv._verdict(s, s["capacity_window"], NEW)]
+    assert any(
+        x.startswith("Why TTDF and RACE-RP do not help ShareGPT")
+        for x in items)
+    assert ("Part of the lead of TTDF and RACE-RP may come from evicting only "
+            "a prompt's end") in items[-1]
+    # Neither helps on ShareGPT's engine runs... or both do: no line.
+    mg["sharegpt"]["ttdf"]["verdict"] = "higher"
+    mg["sharegpt"]["race_rp"]["verdict"] = "higher"
+    mg["all"]["ttdf"]["verdict"] = mg["all"]["race_rp"]["verdict"] = "tie"
+    items = [text(x) for x in nv._verdict(s, s["capacity_window"], NEW)]
+    assert not any("do not help ShareGPT" in x or "does not help" in x
+                   for x in items)
+    assert not any(x.startswith("Part of the lead") for x in items)
+
+
+def test_q7_gains_claim_per_workload():
+    s = summary()
+    gs = s["capacity_window"]["group_seeds"]
+    lru = gs["lru"]
+    # At 128K (index 2): TTDF a point above LRU on ShareGPT, level on
+    # Bailian, below elsewhere; RACE-RP level with LRU everywhere.
+    gs["ttdf"]["sharegpt"][2] = [v + 0.01 for v in lru["sharegpt"][2]]
+    gs["ttdf"]["bailian"][2] = list(lru["bailian"][2])
+    for g in rp.GROUPS:
+        gs["race_rp"][g][2] = list(lru[g][2])
+    assert claims(nv.q7(s, rp.build_data(s), {}))[0] == (
+        "At 128K inside the mix (cache replay), TTDF gains on ShareGPT and "
+        "loses on AgentBank and CC-Bench; RACE-RP ties")
+
+
+def test_lost_split_reads_all_or_sums_the_workloads():
+    s = summary(**THREE)
+    # Each seed's "all": 700 evicted, 350 cut off; over three seeds.
+    assert nv._lost_split(s, "sampled_lrfu") == (2100, 1050)
+    # Without "all", the workloads summed: the same totals.
+    for ws in s["lost"]["sampled_lrfu"].values():
+        del ws["all"]
+    assert nv._lost_split(s, "sampled_lrfu") == (2100, 1050)
+    assert nv._lost_split(s, "belady") is None
+    del s["lost"]
+    assert nv._lost_split(s, "lru") is None
+
+
+def test_small_helpers():
+    assert nv._span_ints([120, 150, 130]) == "120–150"
+    assert nv._span_ints([1500, 1500]) == "1,500"
+    assert nv._num(None) == float("-inf")
+    assert nv._num(None, float("inf")) == float("inf")
+    assert nv._num(0.0) == 0.0 and nv._num(0.25, 1.0) == 0.25
+
+
+def best_base_cv(diffs):
+    """LRU, LFU, FIFO and `x` over four sizes, `x` `diffs` above the best."""
+    base = {
+        "lru": [0.5, 0.5, 0.6, 0.6],
+        "lfu": [0.52, 0.5, 0.55, 0.6],
+        "fifo": [0.4, 0.4, 0.4, 0.4]
+    }
+    top = [max(v[k] for v in base.values()) for k in range(4)]
+    cv = {
+        p: {
+            "hit_rate": v,
+            "seeds": [[x] * 3 for x in v]
+        }
+        for p, v in base.items()
+    }
+    xs = [t + d for t, d in zip(top, diffs)]
+    cv["x"] = {"hit_rate": xs, "seeds": [[x] * 3 for x in xs]}
+    return cv
+
+
+@pytest.mark.parametrize("diffs, words", [
+    ([0.01] * 4, "beats all three at every size"),
+    ([-0.01] * 4, "is below the best of them at every size"),
+    ([0.01, 0.0, -0.02, 0.01], "beats all three at 32K and 256K, ties with "
+     "the best of them at 64K and trails the best of them at 128K"),
+    ([0.0, 0.001, 0.0, 0.0], "ties with the best of them at 32K to 256K"),
+])
+def test_vs_best_baseline(diffs, words):
+    assert nv._vs_best_baseline(CAPS, best_base_cv(diffs), "x") == words
 
 
 def test_new_method_items_for_sampled_lrfu_alone():
@@ -1008,6 +1584,7 @@ def test_three_new_policy_page():
     secs = page(summary(**THREE))
     whole = "\n".join(secs)
     assert len(secs) == 14
+    assert "<h2>Three new policies on the shared cache</h2>" in secs[-3]
     assert "answers seven questions" in text(secs[0])
     assert ('<span class="q">7 · TTDF, RACE-RP and Sampled LRFU</span>'
             in secs[1])

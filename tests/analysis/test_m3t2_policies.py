@@ -94,16 +94,21 @@ def test_settings_of_other_policies_are_empty():
 
 
 def test_label_puts_a_setting_in_words():
-    assert mp.label("ttdf") == "tau 5 s / 120 s, w 0.7 / 0.3"
+    # TTDF: its two time constants and two weights.
+    assert mp.label("ttdf") == \
+        "time constants 5 s / 120 s, weights 0.7 / 0.3"
     assert mp.label("ttdf:tau_short=1,tau_long=600,w_short=0.25") == \
-        "tau 1 s / 600 s, w 0.25 / 0.3"
-    assert mp.label(RR_SPEC) == "L 16, P 6"
+        "time constants 1 s / 600 s, weights 0.25 / 0.3"
+    # RACE-RP: L tables of P bits.
+    assert mp.label(RR_SPEC) == "16 tables of 6 bits"
+    assert mp.label(RR_L64) == "64 tables of 3 bits"
     # Sampled LRFU: the seed only when it is not 0.
-    assert mp.label("sampled_lrfu") == "half-life 512, 4 drawn"
-    assert mp.label(LF_A) == "half-life 4,096, 16 drawn"
-    assert mp.label(LF_A + ",seed=0") == "half-life 4,096, 16 drawn"
-    assert mp.label(LF_A + ",seed=2") == "half-life 4,096, 16 drawn, seed 2"
-    assert mp.label(LF_B) == "half-life 512, 4 drawn, seed 1"
+    assert mp.label("sampled_lrfu") == "half-life 512 uses, 4 drawn"
+    assert mp.label(LF_A) == "half-life 4,096 uses, 16 drawn"
+    assert mp.label(LF_A + ",seed=0") == "half-life 4,096 uses, 16 drawn"
+    assert mp.label(LF_A + ",seed=2") == \
+        "half-life 4,096 uses, 16 drawn, seed 2"
+    assert mp.label(LF_B) == "half-life 512 uses, 4 drawn, seed 1"
     assert mp.label("lru") == "lru"
 
 
@@ -215,7 +220,7 @@ def test_tuning_picks_the_best_mean_per_policy_and_keeps_the_spec_on_a_tie():
                   pytest.approx(0.4),
                   pytest.approx(0.15)]
     assert tt[0]["usable"] == [0.4, 0.6]
-    assert tt[0]["label"] == "tau 1 s / 60 s, w 0.7 / 0.3"
+    assert tt[0]["label"] == "time constants 1 s / 60 s, weights 0.7 / 0.3"
     assert tt[0]["settings"] == {
         "tau_short": 1.0,
         "tau_long": 60.0,
@@ -235,7 +240,7 @@ def test_tuning_picks_the_best_mean_per_policy_and_keeps_the_spec_on_a_tie():
     sel = out["selected"]["race_rp"]
     assert sel["policy"] == RR_SPEC and sel["is_spec"] is True
     assert sel["mean"] == sel["spec_mean"] == pytest.approx(0.3)
-    assert sel["label"] == "L 16, P 6"
+    assert sel["label"] == "16 tables of 6 bits"
     # Sampled LRFU: a 4,096 half-life drawing 16 beats the spec.
     lf = out["candidates"]["sampled_lrfu"]
     assert [c["policy"] for c in lf] == [LF_A, "sampled_lrfu", LF_B]
@@ -243,7 +248,7 @@ def test_tuning_picks_the_best_mean_per_policy_and_keeps_the_spec_on_a_tie():
     assert sel["policy"] == LF_A and sel["is_spec"] is False
     assert sel["mean"] == pytest.approx(0.4)
     assert sel["spec_mean"] == pytest.approx(0.2)
-    assert sel["label"] == "half-life 4,096, 16 drawn"
+    assert sel["label"] == "half-life 4,096 uses, 16 drawn"
     assert sel["settings"] == {
         "half_life": 4096.0,
         "sample_size": 16,
@@ -759,13 +764,14 @@ def full_summary():
                 "capacities": [64, 128],
                 "candidates": {
                     "ttdf": [{
-                        "label": "tau 5 s / 120 s, w 0.7 / 0.3",
+                        "label":
+                        "time constants 5 s / 120 s, weights 0.7 / 0.3",
                         "policy": "ttdf",
                         "usable": [0.3, 0.5],
                         "mean": 0.4
                     }],
                     "sampled_lrfu": [{
-                        "label": "half-life 4,096, 16 drawn",
+                        "label": "half-life 4,096 uses, 16 drawn",
                         "policy": LF_A,
                         "usable": [0.3, 0.5],
                         "mean": 0.4
@@ -832,14 +838,17 @@ def test_write_csvs_writes_every_section_with_blank_none_cells(tmp_path):
             "policy", "setting", "replay_policy", "usable_64", "usable_128",
             "mean"
         ],
-        ["ttdf", "tau 5 s / 120 s, w 0.7 / 0.3", "ttdf", "0.3", "0.5", "0.4"],
         [
-            "sampled_lrfu", "half-life 4,096, 16 drawn", LF_A, "0.3", "0.5",
-            "0.4"
+            "ttdf", "time constants 5 s / 120 s, weights 0.7 / 0.3", "ttdf",
+            "0.3", "0.5", "0.4"
+        ],
+        [
+            "sampled_lrfu", "half-life 4,096 uses, 16 drawn", LF_A, "0.3",
+            "0.5", "0.4"
         ],
     ]
     # Settings with commas are quoted, so each row keeps six cells.
-    assert '"half-life 4,096, 16 drawn","sampled_lrfu:half_life=4096,' \
+    assert '"half-life 4,096 uses, 16 drawn","sampled_lrfu:half_life=4096,' \
         in (out / "tuning_seed1.csv").read_text()
 
 

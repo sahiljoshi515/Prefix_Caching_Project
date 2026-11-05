@@ -37,6 +37,8 @@ MARKER = {
     "sampled_lrfu": "X",
     "belady": "^"
 }
+# Sampled LRFU's green sits near FIFO's teal: a dotted line tells them apart.
+LINESTYLE = {"belady": "--", "sampled_lrfu": ":"}
 INK = "#111a1d"
 INK_2 = "#46555a"
 INTERVAL_TICKS = [0.1, 1, 10, 60, 300, 1200]
@@ -77,6 +79,7 @@ def _interval_axes(ax,
     ]
     for p in pols:
         ax.plot(x, [curves[p][i]["share"] for i in keep],
+                ls=LINESTYLE.get(p, "-"),
                 color=COLOR[p],
                 marker=MARKER[p],
                 ms=4,
@@ -252,7 +255,7 @@ def point4(data: Row, plt, out: Path) -> List[Path]:
                 marker=MARKER[p],
                 ms=4,
                 lw=2,
-                ls="--" if p == "belady" else "-",
+                ls=LINESTYLE.get(p, "-"),
                 label=POLICY_LABELS[p] +
                 (" (offline)" if p == "belady" else ""))
     for e in q["engine"]:
@@ -388,6 +391,7 @@ def point7(data: Row, plt, out: Path) -> List[Path]:
         for p in q["policies"]:
             ax.plot(caps,
                     panel["curve"][p],
+                    ls=LINESTYLE.get(p, "-"),
                     color=COLOR[p],
                     marker=MARKER[p],
                     ms=4,
@@ -435,7 +439,7 @@ def point7(data: Row, plt, out: Path) -> List[Path]:
     pols = [p for p in data["mixedPolicies"] if p in ev]
     # As on the page: only once a new policy has engine runs.
     if any(p in NEW_POLICIES for p in pols):
-        rows = [*GROUPS, "all"]
+        rows = ["all", *GROUPS]
         fig, ax = plt.subplots(figsize=(7.2, 5.4))
         top = max(ev[p][r]["max"] for p in pols for r in rows)
         ax.set_xlim(0, 1.15 * top)

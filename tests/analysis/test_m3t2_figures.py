@@ -141,7 +141,7 @@ def test_point7_draws_a_panel_per_workload(tmp_path):
               for r in ("all", *rp.GROUPS))
     assert ax.get_xlim() == pytest.approx((0, 1.15 * top))
     assert [t.get_text() for t in ax.get_yticklabels()] == \
-        ["ShareGPT", "AgentBank", "CC-Bench", "Bailian", "Whole mix"]
+        ["Whole mix", "ShareGPT", "AgentBank", "CC-Bench", "Bailian"]
     labels = {t.get_text() for t in ax.texts}
     assert "465/s" in labels and "360/s" in labels  # TTDF: all, Bailian
     assert legend_texts(ax.get_legend()) == \
@@ -323,6 +323,10 @@ def test_tick_seconds():
         ["0.1 s", "1 s", "10 s", "1 min", "5 min", "20 min"]
 
 
+def test_line_styles():
+    assert mf.LINESTYLE == {"belady": "--", "sampled_lrfu": ":"}
+
+
 def test_every_drawn_policy_has_a_colour_and_a_marker():
     for p in (*MIXED3, "belady"):
         assert p in mf.COLOR and p in mf.MARKER
@@ -340,6 +344,9 @@ def test_figures_with_three_new_policies(tmp_path):
     assert legend_texts(ax.get_legend()) == labels
     assert ax.get_lines()[-1].get_marker() == "X"
     assert ax.get_lines()[-1].get_color() == "#008300"
+    # Sampled LRFU dotted (its green is near FIFO's), the others solid.
+    assert [ln.get_linestyle() for ln in ax.get_lines()] == \
+        ["-"] * 5 + [":"]
     plt.close("all")
     mf.point2(data, plt, tmp_path)
     (fig, ) = figures()
@@ -348,13 +355,16 @@ def test_figures_with_three_new_policies(tmp_path):
     assert fig.axes[0].patches[0].get_height() == pytest.approx(0.9 * 0.13)
     plt.close("all")
     mf.point4(data, plt, tmp_path)
-    assert [ln.get_label() for ln in figures()[0].axes[0].get_lines()][:7] \
-        == [*labels, "Belady (offline)"]
+    lines = figures()[0].axes[0].get_lines()[:7]
+    assert [ln.get_label() for ln in lines] == [*labels, "Belady (offline)"]
+    assert [ln.get_linestyle() for ln in lines] == \
+        ["-"] * 5 + [":", "--"]
     plt.close("all")
     mf.point7(data, plt, tmp_path)
     panels, bars = figures()
     assert [ln.get_label() for ln in panels.axes[0].get_lines()] == \
         [*labels, "No eviction"]
+    assert panels.axes[0].get_lines()[5].get_linestyle() == ":"
     assert legend_texts(panels.legends[0]) == [*labels, "No eviction"]
     assert len(bars.axes[0].patches) == 5 * 6
     assert policy_keys(bars.axes[0]) == labels
