@@ -525,6 +525,71 @@ def test_overhead_view_engine_part_averages_each_policys_runs(tmp_path):
     # (2 + 4 + 6) KiB / 3 and (100 + 300 + 0) / 3.
     assert ttdf["metadata_kib"] == pytest.approx(4.0)
     assert ttdf["evictions"] == pytest.approx(400 / 3)
+    # No stats file splits its metadata by part: no parts.
+    assert ttdf["metadata_kib_parts"] == {}
+
+
+def stats(metadata_bytes, **words):
+    """An evictor-stats.json's numbers; `words`, if any, its
+    metadata_words (8-byte words per part)."""
+    out = dict(evict_us_mean=1.0,
+               candidates_per_scan=2.0,
+               max_candidates=3,
+               metadata_bytes=metadata_bytes,
+               evictions=10)
+    if words:
+        out["metadata_words"] = words
+    return out
+
+
+def test_overhead_view_splits_metadata_by_part_over_every_runs_parts(tmp_path):
+    # Seed 2: counters 128 words (1 KiB), history 256 (2 KiB). Seed 3:
+    # counters 384 (3 KiB), sketch 1024 (8 KiB). A part one run lacks
+    # counts 0 there: counters (1 + 3) / 2, history (2 + 0) / 2, sketch
+    # (0 + 8) / 2 KiB.
+    write_stats(tmp_path / "s2", **stats(3072, counters=128, history=256))
+    write_stats(tmp_path / "s3", **stats(11264, counters=384, sketch=1024))
+    out = mp.overhead_view(tmp_path, {"race_rp": ["s2", "s3"]}, [], mp.SPEC)
+    eng = out["engine"]["race_rp"]
+    parts = eng["metadata_kib_parts"]
+    assert list(parts) == ["counters", "history", "sketch"]  # sorted
+    assert parts == {
+        "counters": pytest.approx(2.0),
+        "history": pytest.approx(1.0),
+        "sketch": pytest.approx(4.0)
+    }
+    # The parts add up to the total metadata: (3 + 11) / 2 KiB.
+    assert eng["metadata_kib"] == pytest.approx(7.0)
+    assert sum(parts.values()) == pytest.approx(eng["metadata_kib"])
+    # Per policy: another policy's parts are its own.
+    write_stats(tmp_path / "t2", **stats(512, history=64))
+    out = mp.overhead_view(tmp_path, {
+        "race_rp": ["s2", "s3"],
+        "ttdf": ["t2"]
+    }, [], mp.SPEC)
+    assert out["engine"]["ttdf"]["metadata_kib_parts"] == {"history": 0.5}
+    assert list(out["engine"]["race_rp"]["metadata_kib_parts"]) == [
+        "counters", "history", "sketch"
+    ]
+
+
+def test_overhead_view_parts_count_zero_for_stats_without_parts(tmp_path):
+    # Seed 2 splits its metadata (counters 1 KiB, history 2 KiB); seed 3's
+    # stats file has no metadata_words: it adds no part and counts 0 for
+    # seed 2's parts, in either run order.
+    write_stats(tmp_path / "s2", **stats(3072, counters=128, history=256))
+    write_stats(tmp_path / "s3", **stats(1024))
+    for names in (["s2", "s3"], ["s3", "s2"]):
+        out = mp.overhead_view(tmp_path, {"ttdf": names}, [], mp.SPEC)
+        eng = out["engine"]["ttdf"]
+        assert list(eng["metadata_kib_parts"]) == ["counters", "history"]
+        assert eng["metadata_kib_parts"] == {
+            "counters": pytest.approx(0.5),
+            "history": pytest.approx(1.0)
+        }
+        # Both runs still count in the total: (3 + 1) / 2 KiB.
+        assert eng["metadata_kib"] == pytest.approx(2.0)
+        assert eng["runs"] == 2
 
 
 def replay_row(policy, cap, **summary):

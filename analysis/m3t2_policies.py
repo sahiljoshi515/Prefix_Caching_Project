@@ -246,6 +246,16 @@ def overhead_view(runs: Path, run_names: Dict[str, List[str]],
             _mean([s["candidates_per_scan"] for s in stats]),
             "max_candidates": max(s["max_candidates"] for s in stats),
             "metadata_kib": _mean([s["metadata_bytes"] / 1024 for s in stats]),
+            # The same, by part (counters, history, sketch, bookkeeping).
+            "metadata_kib_parts": {
+                part: _mean([
+                    8 * s.get("metadata_words", {}).get(part, 0) / 1024
+                    for s in stats
+                ])
+                for part in sorted(
+                    {k
+                     for s in stats for k in s.get("metadata_words", {})})
+            },
             "evictions": _mean([s["evictions"] for s in stats]),
         }
     names = {v: k for k, v in specs.items()}

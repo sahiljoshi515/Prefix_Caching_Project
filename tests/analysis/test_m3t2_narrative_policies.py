@@ -812,6 +812,92 @@ def test_q7_cost_paragraph_names_the_present_policies(kw, how):
     assert (SAMPLE in t) is ("sampled_lrfu" in names)
 
 
+def test_kib_switches_to_mib_at_1024():
+    assert nv._kib(512) == "512 KiB"
+    assert nv._kib(1023.4) == "1,023 KiB"
+    assert nv._kib(1024) == "1.0 MiB"
+    assert nv._kib(1536) == "1.5 MiB"
+    assert nv._kib(2048000) == "2,000.0 MiB"
+
+
+LRFU_MEMORY = ("Of Sampled LRFU's 1.5 MiB, its two numbers per cached block "
+               "take 512 KiB; the rest (1.0 MiB) is mostly its record of "
+               "which blocks each of the last 4,096 requests counted")
+NEVER = ("No request was preempted in these runs, so that record never "
+         "changed a count.")
+
+
+def lrfu_summary(parts=None, preempted=None, views=True):
+    """All three new policies; Sampled LRFU's engine metadata split into
+    `parts` (KiB), and its preempted requests per seed."""
+    s = summary(**THREE)
+    eng = s["new_policies"]["overhead"]["engine"]["sampled_lrfu"]
+    eng["metadata_kib"] = 1536.0
+    if parts is not None:
+        eng["metadata_kib_parts"] = parts
+    if views:
+        s["policy_views"] = {"sampled_lrfu": {}}
+        if preempted is not None:
+            s["policy_views"]["sampled_lrfu"]["preempted"] = preempted
+    return s
+
+
+PARTS = {"lrfu": 512.0, "bookkeeping": 1024.0}
+
+
+@pytest.mark.parametrize("parts",
+                         [None, {}, {
+                             "lrfu": 512.0
+                         }, {
+                             "bookkeeping": 1024.0
+                         }],
+                         ids=["none", "empty", "no-bookkeeping", "no-lrfu"])
+def test_lrfu_memory_needs_both_parts(parts):
+    s = lrfu_summary(parts, [0, 0, 0])
+    assert nv._lrfu_memory(s, ALL_NEW) == ""
+
+
+def test_lrfu_memory_needs_sampled_lrfu_on_the_page():
+    s = lrfu_summary(PARTS, [0, 0, 0])
+    assert nv._lrfu_memory(s, NEW) == ""
+    # Sampled LRFU on the page but without engine overhead: nothing.
+    del s["new_policies"]["overhead"]["engine"]["sampled_lrfu"]
+    assert nv._lrfu_memory(s, ALL_NEW) == ""
+
+
+@pytest.mark.parametrize("preempted, views, never", [
+    ([0, 0, 0], True, True),
+    ([0, 2, 0], True, False),
+    (None, True, False),
+    (None, False, False),
+],
+                         ids=[
+                             "none-preempted", "some-preempted",
+                             "no-preempted", "no-policy-views"
+                         ])
+def test_lrfu_memory_and_the_preemption_sentence(preempted, views, never):
+    s = lrfu_summary(PARTS, preempted, views)
+    html = nv._lrfu_memory(s, ALL_NEW)
+    assert html.startswith('<p class="prose">') and html.endswith("</p>")
+    t = text(html)
+    assert t.startswith(LRFU_MEMORY)
+    assert ("which keeps a request that is computed again from counting a "
+            "block twice.") in t
+    assert (NEVER in t) is never
+
+
+def test_q7_puts_the_lrfu_memory_after_the_overhead_table():
+    s = lrfu_summary(PARTS, [0, 0, 0])
+    t = text(nv.q7(s, rp.build_data(s), {}))
+    assert LRFU_MEMORY in t and NEVER in t
+    assert t.index("Policy metadata") < t.index(LRFU_MEMORY) < \
+        t.index("Tuning on seed 1")
+    # The default summary has no split of Sampled LRFU's metadata.
+    s = summary(**THREE)
+    assert "two numbers per cached block" not in text(
+        nv.q7(s, rp.build_data(s), {}))
+
+
 def test_q7_tuning_skips_policies_it_lacks():
     # Tuned before Sampled LRFU existed; point 7 shows all three.
     s = summary(**THREE)

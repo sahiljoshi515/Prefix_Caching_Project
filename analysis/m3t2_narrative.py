@@ -1194,6 +1194,34 @@ def _overhead_table(s: Row, pols: Sequence[str], fixed: int) -> str:
     ], rows)
 
 
+def _kib(v: float) -> str:
+    return f"{v / 1024:,.1f} MiB" if v >= 1024 else f"{v:,.0f} KiB"
+
+
+def _lrfu_memory(s: Row, new: Sequence[str]) -> str:
+    """What Sampled LRFU's metadata is made of (engine runs), and whether
+    its once-per-request record ever mattered (a preempted request)."""
+    if "sampled_lrfu" not in new:
+        return ""
+    eng = (s["new_policies"]["overhead"]["engine"].get("sampled_lrfu") or {})
+    parts = eng.get("metadata_kib_parts") or {}
+    if "lrfu" not in parts or "bookkeeping" not in parts:
+        return ""
+    pre = ((s.get("policy_views") or {}).get("sampled_lrfu")
+           or {}).get("preempted")
+    never = ""
+    if pre and not any(pre):
+        never = (" No request was preempted in these runs, so that record "
+                 "never changed a count.")
+    return (
+        f'<p class="prose">Of Sampled LRFU\'s {_kib(eng["metadata_kib"])}, '
+        f"its two numbers per cached block take {_kib(parts['lrfu'])}; the "
+        f"rest ({_kib(parts['bookkeeping'])}) is mostly its record of "
+        "which blocks each of the last 4,096 requests counted, which keeps "
+        "a request that is computed again from counting a block twice."
+        f"{never}</p>")
+
+
 def _tuning_block(s: Row, c: Row, new: Sequence[str]) -> str:
     tune = s["new_policies"].get("tuning")
     if not tune:
@@ -1366,7 +1394,7 @@ def q7(s: Row, data: Row, facts: Row) -> str:
              "; ".join(how) + ". Times are per eviction, averaged over seeds "
              f"{_seeds_txt(s)}; metadata is the policy's own numbers at 8 "
              "bytes each, at the run's peak.</p>" +
-             _overhead_table(s, pols, fixed))
+             _overhead_table(s, pols, fixed) + _lrfu_memory(s, new))
     body += _tuning_block(s, c, new)
     eng_txt = ""
     if engine:

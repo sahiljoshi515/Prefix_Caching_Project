@@ -7,7 +7,7 @@ notes, and each task's owner and status are in the
 [spec index](../../specs/README.md).
 
 Commit dates are the author's local date; merge dates are GitHub's (UTC).
-Last updated 2026-11-04. Each PR that adds to the milestone adds its entry
+Last updated 2026-11-05. Each PR that adds to the milestone adds its entry
 here.
 
 ## Repository
@@ -78,6 +78,21 @@ on branch `milestone3_task2`; the policy itself is Phase 2.
   together, accuracy and confusion matrix), usable reuse against cache size
   from 32K to 384K tokens with Belady, and each workload alone against
   sharing the cache.
+- **Added:** three label-free policies for the mixed workload, specified
+  by the owners. **TTDF** (two decayed use counts, 5 s and 120 s) and
+  **RACE-RP** (RACE sketches of reuse, trained on seed 1;
+  `analysis/race_train.py`) evict only idle blocks with no cached child
+  (`vllm/core/reuse_evictors.py`, `58cab544`, `dbde4253`). **Sampled LRFU**
+  (a score halving every 512 block uses; the lowest of 4 random idle
+  blocks goes) is O(1) per access and eviction
+  (`vllm/core/sampled_lrfu.py`, `1fd0ddc5`). vLLM gains only an
+  `Evictor.record_access` hook and a per-call event time; LRU, LFU and FIFO
+  evict as before.
+- **Ran:** seed-1 tuning in the cache replay; 15 engine runs (the three
+  policies at 131,072 tokens on seeds 2–4, and seed 2 at 32K and 384K);
+  the held-out capacity sweep for each policy as specified and as tuned.
+  The results page adds them to points 1, 2 and 4 and a new point 7
+  (`edad452a`, `a0314233`, `2f171e09`).
 
 ### Unreleased (branch `milestone3-marcus-mixed-workload-spec`)
 
