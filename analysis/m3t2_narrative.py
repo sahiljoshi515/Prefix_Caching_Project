@@ -423,11 +423,12 @@ def q1(s: Row, facts: Row) -> str:
         fifo_txt = "FIFO serves less than LRU at every wait LRU serves."
     else:
         fifo_txt = ""
-    head_txt = (f"With the four workloads sharing the cache, LRU serves "
-                f"{pct(quick['lru'], 1)} of reuses that happen within "
-                f"{secs(LONG_WAIT_S)} of the block's last use, but " +
-                (f"almost none after more than {secs(lru_cut)}." if lru_cut
-                 is not None else "also some at every longer wait."))
+    head_txt = (
+        f"With the four workloads sharing the cache, LRU serves "
+        f"{pct(quick['lru'], 1)} of reuses that happen within "
+        f"{secs(LONG_WAIT_S)} of the block's last use, but " +
+        (f"almost none of those that waited more than {secs(lru_cut)}."
+         if lru_cut is not None else "also some at every longer wait."))
     tail = ""
     if keeps:
         tail = (f"{_list([P[p] for p in keeps])} still "
@@ -883,7 +884,8 @@ def q6(s: Row, facts: Row) -> str:
         f"with the other three, with {SAME_TIMES}. So each workload's own "
         "traffic intensity, its requests and prompt tokens per second, is "
         "held fixed. What sharing adds is everyone else's traffic: in the "
-        f"mix the cache takes about {total:,.0f} prompt tokens per second, "
+        f"mix the cache takes about {round(total, -2):,.0f} prompt tokens per "
+        "second, "
         "against " +
         _list([f"{rate[g]:,.0f} for {L[g]} alone" for g in GROUPS]) +
         ". The difference below is the effect of that competition; it does "
