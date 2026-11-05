@@ -46,6 +46,18 @@ def _mids(edges: List[float]) -> List[float]:
     ]
 
 
+def _cap_ticks(ax, caps: List[int]) -> None:
+    """Cache-size ticks as 32K ... 4M (1K = 1,024 tokens)."""
+    ticks = [
+        t for t in (32768, 65536, 131072, 262144, 524288, 1048576, 2097152,
+                    4194304, 8388608) if caps[0] <= t <= caps[-1]
+    ]
+    ax.set_xticks(ticks, [
+        f"{t // 1048576}M" if t >= 1048576 else f"{t // 1024}K" for t in ticks
+    ])
+    ax.minorticks_off()
+
+
 def _save(fig, out: Path, name: str) -> List[Path]:
     paths = []
     for ext in ("pdf", "png"):
@@ -279,13 +291,7 @@ def capacity_hit_rate(s: Row, plt, out: Path) -> List[Path]:
                    label="No eviction")
     ax.axvline(c["fixed"], color="#7b878b", lw=0.8)
     ax.set_xscale("log", base=2)
-    ticks = [
-        t for t in (32768, 65536, 131072, 262144, 524288, 1048576, 2097152,
-                    4194304) if caps[0] <= t <= caps[-1]
-    ]
-    ax.set_xticks(ticks, [
-        f"{t // 1048576}M" if t >= 1048576 else f"{t // 1024}K" for t in ticks
-    ])
+    _cap_ticks(ax, caps)
     ax.set_xlabel("Cache size (tokens)")
     ax.set_ylabel("Hit rate (prompt tokens from cache)")
     ax.set_ylim(0.3, 0.8)
@@ -312,6 +318,7 @@ def capacity(s: Row, plt, out: Path) -> List[Path]:
     ax.axhline(ceil, color="#7b878b", lw=1, ls="--", label="No eviction")
     ax.axvline(s["config"]["capacity_tokens"], color="#7b878b", lw=0.8)
     ax.set_xscale("log", base=2)
+    _cap_ticks(ax, caps)
     ax.set_xlabel("Cache size (tokens)")
     ax.set_ylabel("Usable reuse (simulator)")
     ax.set_ylim(0, 1)
