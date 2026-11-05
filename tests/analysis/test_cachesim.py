@@ -217,3 +217,57 @@ def test_run_folder_is_read_by_the_task2_analysis(tmp_path, monkeypatch):
         result.summary["block_hit_rate"])
     assert summary["usable_reused_fraction"] == pytest.approx(
         result.summary["usable_reused_fraction"])
+
+
+def test_window_counts_only_requests_planned_inside_it():
+    early = req("w:a:0", range(1, 9), output=[9, 10], arrival=0.0)
+    later = req("w:a:1", range(1, 13), after=1.0)
+    later.meta["planned_s"] = 5.0
+    other = req("v:b:0", range(1, 9), arrival=6.0)
+    rows = [
+        {
+            "request_id": "w:a:0",
+            "workload": "w",
+            "prompt_tokens": 8,
+            "usable_cached_tokens": 0
+        },
+        {
+            "request_id": "w:a:1",
+            "workload": "w",
+            "prompt_tokens": 12,
+            "usable_cached_tokens": 8
+        },
+        {
+            "request_id": "v:b:0",
+            "workload": "v",
+            "prompt_tokens": 8,
+            "usable_cached_tokens": 8
+        },
+    ]
+    window = cachesim.window_summary(rows, [early, later, other], 5.0, 6.0)
+    # Planned at 5 s (the closed-loop turn's planned time) is in [5, 6);
+    # 0 s and 6 s are not.
+    assert window["requests"] == 1 and window["prompt_tokens"] == 12
+    assert window["usable_reused_fraction"] == pytest.approx(8 / 12)
+    assert set(window["workloads"]) == {"w"}
+    assert (window["w0_s"], window["stop_s"]) == (5.0, 6.0)
+
+
+def test_simulate_adds_the_window_to_its_summary(tmp_path):
+    from client_simulator.token_plan import write_plan
+    a0 = req("w:a:0", range(1, 9), output=[9, 10, 11, 12, 13])
+    a1 = req("w:a:1", list(range(1, 14)) + [60, 61, 62], after=1.0)
+    a1.meta["planned_s"] = 2.0
+    plan_dir = tmp_path / "plan"
+    write_plan([a0, a1], plan_dir / "plan.jsonl.gz",
+               plan_dir / "responses.jsonl")
+    whole = cachesim.simulate(plan_dir, "lru", 64 * BS, BS).summary
+    assert "window" not in whole
+    summary = cachesim.simulate(plan_dir,
+                                "lru",
+                                64 * BS,
+                                BS,
+                                window=(1.0, 10.0)).summary
+    w = summary["window"]
+    assert w["requests"] == 1 and w["prompt_tokens"] == 16
+    assert w["usable_tokens"] == summary["usable_tokens"]

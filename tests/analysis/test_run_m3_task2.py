@@ -306,6 +306,87 @@ def test_smoke_grid_and_unknown_grids():
         m3.grid_configs("nope")
 
 
+def test_isolated_grid_runs_each_workload_alone_under_each_policy():
+    configs = m3.grid_configs("isolated")
+    assert len(configs) == 36 and len({c.name for c in configs}) == 36
+    assert Counter((c.mix, c.seed) for c in configs) == {
+        (f"alone-{g}", s): 3
+        for g in ("sharegpt", "agentbank", "ccbench", "bailian")
+        for s in (2, 3, 4)
+    }
+    assert {c.policy for c in configs} == {"lru", "lfu", "fifo"}
+    assert not any(c.ceiling or c.replicate for c in configs)
+    assert {c.capacity_tokens for c in configs} == {131072}
+    assert configs[0].name == "alone-sharegpt-human-s2-lru-cap131072"
+
+
+def test_isolated_plans_are_cut_from_their_balanced_plan(tmp_path):
+    data = tmp_path / "data"
+    config = MixConfig("alone-bailian", "human", 3, "lfu", 131072)
+    assert m3.source_config(config).plan_name == "balanced-human-s3"
+    assert m3.source_config(MixConfig("balanced", "human", 3, "lru",
+                                      131072)) is None
+    assert m3.plan_command(config, data)[1:] == [
+        "-m", "analysis.isolate", "--group", "bailian", "--source",
+        str(data / "processed" / "m3" / "balanced-human-s3"), "--out",
+        str(data / "processed" / "m3" / "alone-bailian-human-s3")
+    ]
+    commands = []
+
+    def fake_run(command, check):
+        commands.append(command)
+        out = Path(command[command.index("--out") + 1])
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "manifest.json").write_text("{}")
+        return SimpleNamespace(returncode=0)
+
+    built = m3.build_plans([config], data, run=fake_run, log=lambda s: None)
+    # The source is built first when it is missing.
+    assert [p.name
+            for p in built] == ["balanced-human-s3", "alone-bailian-human-s3"]
+    assert [c[2] for c in commands] == ["analysis.mix", "analysis.isolate"]
+    # A forced rebuild redoes the isolated plan, never its source: the
+    # balanced runs record the source's manifest.
+    commands.clear()
+    built = m3.build_plans([config],
+                           data,
+                           force=True,
+                           run=fake_run,
+                           log=lambda s: None)
+    assert [p.name for p in built] == ["alone-bailian-human-s3"]
+
+
+def test_sim_window_is_passed_on_recorded_and_part_of_the_key(tmp_path):
+    plan = make_plan(tmp_path / "data", "toy-human-s1", CEILING_PLAN)
+    out = tmp_path / "rows.jsonl"
+    seen = []
+
+    def simulate(plan_dir,
+                 policy,
+                 capacity_tokens,
+                 block_size,
+                 timing,
+                 window=None):
+        seen.append(window)
+        return SimpleNamespace(summary={"usable_reused_fraction": 0.5})
+
+    def sweep(**kw):
+        return m3.run_sims([plan], ["lru"], [64],
+                           out,
+                           block_size=BS,
+                           jobs=1,
+                           simulate=simulate,
+                           log=lambda s: None,
+                           **kw)
+
+    assert sweep()[0].get("window") is None
+    rows = sweep(window=(600, 1800))
+    assert rows[0]["window"] == [600.0, 1800.0]
+    assert seen == [None, (600.0, 1800.0)]
+    # Each is done once.
+    assert sweep() == [] and sweep(window=(600, 1800)) == []
+
+
 @pytest.mark.parametrize("count", [1, 2, 3, 4, 5])
 def test_shards_are_disjoint_complete_and_keep_plans_together(count):
     configs = m3.grid_configs("phase1")

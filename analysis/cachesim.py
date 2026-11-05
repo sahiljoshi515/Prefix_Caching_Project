@@ -49,9 +49,10 @@ import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
+from typing import (TYPE_CHECKING, Any, Dict, Iterator, List, Optional,
+                    Sequence, Tuple)
 
-from client_simulator.plan_replay import group_sessions
+from client_simulator.plan_replay import group_sessions, planned_s
 from client_simulator.schema import TokenRequest
 from client_simulator.token_plan import read_plan
 
@@ -508,15 +509,54 @@ class CacheSim:
         }
 
 
+def window_summary(rows: Sequence[Dict[str,
+                                       Any]], requests: Sequence[TokenRequest],
+                   w0: float, stop: float) -> Dict[str, Any]:
+    """Prompt and usable tokens of the requests planned in [w0, stop),
+    overall and per workload, as the study's engine numbers count them
+    (``client_simulator.plan_replay.planned_s``)."""
+    planned = {r.request_id: planned_s(r) for r in requests}
+    per: Dict[str, Counter] = {}
+    for row in rows:
+        t = planned.get(row["request_id"])
+        if t is None or not w0 <= t < stop:
+            continue
+        c = per.setdefault(row["workload"], Counter())
+        c["requests"] += 1
+        c["prompt_tokens"] += row["prompt_tokens"]
+        c["usable_tokens"] += row["usable_cached_tokens"]
+
+    def fractions(c: Counter) -> Dict[str, Any]:
+        prompt = c["prompt_tokens"]
+        return {
+            **dict(c), "usable_reused_fraction":
+            c["usable_tokens"] / prompt if prompt else None
+        }
+
+    total: Counter = Counter()
+    for c in per.values():
+        total.update(c)
+    return {
+        "w0_s": w0,
+        "stop_s": stop,
+        **fractions(total),
+        "workloads": {w: fractions(c)
+                      for w, c in sorted(per.items())},
+    }
+
+
 def simulate(plan_dir: Path,
              policy: str,
              capacity_tokens: int,
              block_size: int = 16,
              timing: str = "model",
              env: Optional[Dict[str, str]] = None,
-             out: Optional[Path] = None) -> SimResult:
+             out: Optional[Path] = None,
+             window: Optional[Tuple[float, float]] = None) -> SimResult:
     """Replay `plan_dir`'s plan once; with `out`, also write a run folder
-    that `analysis/run_m2_task2.analyze_run` reads."""
+    that `analysis/run_m2_task2.analyze_run` reads. With `window`
+    (w0, stop), the summary's ``window`` holds the same counts over the
+    requests planned in [w0, stop) (`window_summary`)."""
     requests = list(read_plan(plan_dir / "plan.jsonl.gz"))
     sessions = group_sessions(requests)
     if timing == "model":
@@ -532,6 +572,9 @@ def simulate(plan_dir: Path,
     sim = CacheSim(capacity_tokens // block_size, block_size, policy, env,
                    event_log)
     result = sim.run(requests, times)
+    if window is not None:
+        result.summary["window"] = window_summary(result.rows, requests,
+                                                  *window)
     if out is not None:
         with (out / "client.jsonl").open("w") as f:
             for row in result.rows:

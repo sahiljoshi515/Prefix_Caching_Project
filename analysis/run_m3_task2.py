@@ -83,6 +83,7 @@ from typing import (IO, Any, Callable, Dict, Iterator, List, Optional,
                     Sequence, Set, Tuple, Union)
 
 from analysis import events as ev
+from analysis import isolate
 from analysis.cachesim import block_hashes  # noqa: F401 (re-exported)
 from analysis.run_m2_task2 import git_state
 from analysis.server import SimulatorServer, port_in_use
@@ -92,7 +93,7 @@ from client_simulator.token_plan import read_plan
 DEFAULT_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 # The plans drop turns longer than this (analysis/mix.py --max-model-len).
 MAX_MODEL_LEN = 32768
-GRIDS = ("phase1", "smoke")
+GRIDS = ("phase1", "smoke", "isolated")
 BASELINES = ("lru", "lfu", "fifo")
 # Phase 0's capacity (plan.md): there LRU's usable reuse fell 12.9 points
 # short of the no-eviction ceiling, so the mix is under pressure (FR-007).
@@ -296,6 +297,13 @@ def grid_configs(name: str,
     - noise: seed 2's LRU run once more (1), the run-to-run spread.
 
     ``smoke`` is one LRU run of a 180 s plan, to check the setup.
+
+    ``isolated`` (36 runs) replays each of the four workloads alone
+    (`analysis.isolate`: its requests of the reported seeds' balanced
+    plans, at the same times) under LRU, LFU and FIFO at `capacity_tokens`.
+    Under 1% of any workload's no-eviction reuse comes from another workload
+    (the system prompt ShareGPT, AgentBank and CC-Bench share), so these
+    plans need no ceiling of their own: the study uses the mix's.
     """
 
     def plan(mix: str, pacing: str, seed: int) -> List[MixConfig]:
@@ -316,6 +324,12 @@ def grid_configs(name: str,
         configs.append(dataclasses.replace(lru, replicate=1))
     elif name == "smoke":
         configs = [MixConfig("smoke", "human", 101, "lru", capacity_tokens)]
+    elif name == "isolated":
+        configs = [
+            MixConfig(isolate.isolated_mix(group), "human", seed, policy,
+                      capacity_tokens) for seed in (2, 3, 4)
+            for group in isolate.GROUPS for policy in BASELINES
+        ]
     else:
         raise ValueError(f"Unknown grid {name!r}; use one of "
                          f"{', '.join(GRIDS)}")
@@ -376,8 +390,26 @@ def plan_dir(data: Path, config: MixConfig) -> Path:
     return data / "processed" / "m3" / config.plan_name
 
 
+def source_config(config: MixConfig) -> Optional[MixConfig]:
+    """The balanced-mix configuration an isolated plan is cut from (same
+    pacing and seed), else None."""
+    if isolate.group_of_mix(config.mix) is None:
+        return None
+    return MixConfig("balanced", config.pacing, config.seed, "lru",
+                     config.capacity_tokens, config.block_size)
+
+
 def plan_command(config: MixConfig, data: Path) -> List[str]:
-    """The ``analysis.mix`` command that builds a configuration's plan."""
+    """The command that builds a configuration's plan: ``analysis.mix``,
+    or ``analysis.isolate`` for an ``alone-<group>`` plan."""
+    source = source_config(config)
+    if source is not None:
+        return [
+            sys.executable, "-m", "analysis.isolate", "--group",
+            str(isolate.group_of_mix(config.mix)), "--source",
+            str(plan_dir(data, source)), "--out",
+            str(plan_dir(data, config))
+        ]
     mix, extra = PLAN_RECIPES.get(config.mix, (config.mix, ()))
     return [
         sys.executable, "-m", "analysis.mix", "--mix", mix, "--pacing",
@@ -398,17 +430,25 @@ def build_plans(configs: Sequence[MixConfig],
 
     ``analysis.mix`` writes ``manifest.json`` last, so a plan without one
     was interrupted and is built again. With `force`, the manifest is
-    deleted first, so an interrupted rebuild is not taken for a plan.
+    deleted first, so an interrupted rebuild is not taken for a plan. An
+    isolated plan's source plan is built before it if it is missing, and
+    never rebuilt: the runs of that plan record its manifest.
     """
     built = []
     seen: Set[str] = set()
+    ordered: List[Tuple[MixConfig, bool]] = []
     for config in configs:
+        source = source_config(config)
+        if source is not None:
+            ordered.append((source, False))
+        ordered.append((config, force))
+    for config, rebuild in ordered:
         if config.plan_name in seen:
             continue
         seen.add(config.plan_name)
         out = plan_dir(data, config)
         manifest = out / "manifest.json"
-        if manifest.exists() and not force:
+        if manifest.exists() and not rebuild:
             log(f"{config.plan_name}: built earlier, kept")
             continue
         manifest.unlink(missing_ok=True)
@@ -416,7 +456,7 @@ def build_plans(configs: Sequence[MixConfig],
         log(f"{config.plan_name}: building ({' '.join(command[1:])})")
         result = run(command, check=False)
         if result.returncode != 0:
-            raise RunnerError(f"analysis.mix exited with {result.returncode} "
+            raise RunnerError(f"{command[2]} exited with {result.returncode} "
                               f"while building {config.plan_name}")
         built.append(out)
     return built
@@ -970,14 +1010,15 @@ def run_grid(configs: Sequence[MixConfig],
 # --- The cache-simulator sweep ---------------------------------------------
 
 
-def sim_key(row: Dict[str, Any]) -> Tuple[str, str, str, int, str]:
-    """What identifies a simulator run in the output file."""
+def sim_key(row: Dict[str, Any]) -> Tuple[str, str, str, int, str, str]:
+    """What identifies a simulator run in the output file (a run with a
+    measurement window is not the same as one without)."""
     return (str(row["plan"]), str(row["policy"]), str(row["capacity"]),
-            int(row["block_size"]), str(row["timing"]))
+            int(row["block_size"]), str(row["timing"]), str(row.get("window")))
 
 
 def _finished_sims(
-        out: Path) -> Tuple[Set[Tuple[str, str, str, int, str]], bool]:
+        out: Path) -> Tuple[Set[Tuple[str, str, str, int, str, str]], bool]:
     """The keys of `out`'s successful runs, and whether its last line was
     cut off (an interrupted write), so the next line must start afresh.
 
@@ -1013,8 +1054,9 @@ def _sim_task(task: Dict[str, Any],
         tokens = (ceiling_capacity(plan, task["block_size"])
                   if capacity == "ceiling" else int(capacity))
         row["capacity_tokens"] = tokens
+        extra = {"window": tuple(task["window"])} if task.get("window") else {}
         row["summary"] = run(plan, task["policy"], tokens, task["block_size"],
-                             task["timing"]).summary
+                             task["timing"], **extra).summary
     except Exception as exc:
         row["error"] = f"{type(exc).__name__}: {exc}"
     row["seconds"] = round(time.monotonic() - start, 3)
@@ -1037,6 +1079,7 @@ def run_sims(plans: Sequence[Path],
              timing: str = "model",
              jobs: int = 8,
              nice: int = 0,
+             window: Optional[Tuple[float, float]] = None,
              simulate: Optional[Callable[..., Any]] = None,
              log: Callable[[str], None] = _say) -> List[Dict[str, Any]]:
     """Simulate every (plan, capacity, policy) not yet in `out`.
@@ -1048,7 +1091,9 @@ def run_sims(plans: Sequence[Path],
     unchanged. Engine timing must come from finished engine runs. With
     `jobs` > 1 the runs go to a process pool whose workers lower their CPU
     priority by `nice`; `simulate` replaces ``cachesim.simulate`` (tests).
-    Returns the new rows.
+    With `window` (w0, stop), each row also records it, and its summary
+    gains the same counts over the requests planned in [w0, stop)
+    (``cachesim.simulate``'s ``window``). Returns the new rows.
     """
     if jobs < 1:
         raise ValueError("jobs must be at least 1")
@@ -1081,6 +1126,8 @@ def run_sims(plans: Sequence[Path],
                     "block_size": block_size,
                     "timing": plan_timing(timing, plan),
                 }
+                if window is not None:
+                    task["window"] = [float(window[0]), float(window[1])]
                 key = sim_key(task)
                 if key not in keys:  # a value given twice runs once
                     keys.add(key)
@@ -1235,6 +1282,12 @@ def parse_args(argv=None) -> argparse.Namespace:
                      default=10,
                      help="Lower the workers' CPU priority by this much, so "
                      "engine runs on this machine keep theirs (0: unchanged)")
+    sim.add_argument("--window",
+                     type=float,
+                     nargs=2,
+                     metavar=("W0", "STOP"),
+                     help="Also count only the requests planned in "
+                     "[W0, STOP) seconds, the study's measurement window")
     sim.add_argument("--out", type=Path, required=True)
 
     args = parser.parse_args(argv)
@@ -1298,7 +1351,8 @@ def main(argv=None) -> None:
                                 block_size=args.block_size,
                                 timing=args.timing,
                                 jobs=args.jobs,
-                                nice=args.nice)
+                                nice=args.nice,
+                                window=args.window)
             failed = sum("error" in row for row in rows)
             _say(f"Wrote {len(rows)} rows ({failed} with an error) to "
                  f"{args.out}")
