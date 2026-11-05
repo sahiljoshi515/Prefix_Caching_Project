@@ -1,6 +1,7 @@
-"""The results page's chart data with the new policies, TTDF and RACE-RP
-(``analysis/m3t2_report.py``): they join the mixed-workload views of
-points 1, 2 and 4 once their runs are in the summary, and get a point 7.
+"""The results page's chart data with the new policies, TTDF, RACE-RP and
+Sampled LRFU (``analysis/m3t2_report.py``): they join the mixed-workload
+views of points 1, 2 and 4 once their runs are in the summary, and get a
+point 7.
 
 `summary` builds a small but complete synthetic ``summary.json`` that the
 narrative and figure tests reuse."""
@@ -13,7 +14,10 @@ from analysis.m3t2_policies import SPEC_SETTINGS
 
 pytestmark = pytest.mark.m3
 
+# The new policies the synthetic summary holds by default; the third,
+# Sampled LRFU, only when a test asks for it.
 NEW = ("ttdf", "race_rp")
+ALL_NEW = ("ttdf", "race_rp", "sampled_lrfu")
 SEEDS = [2, 3, 4]
 CAPS = [32768, 65536, 131072, 262144]
 FIXED = 131072
@@ -23,7 +27,8 @@ OFFSETS = (-0.01, 0.0, 0.01)
 # Replay usable reuse at 32K, 64K, 128K and 256K. Against LRU: LFU beats
 # it at 32K to 64K, trails at 128K and ties at 256K; FIFO and RACE-RP
 # trail at every size; TTDF beats LRU at 32K to 64K, trails it at 128K
-# and ties at 256K (0.1 point).
+# and ties at 256K (0.1 point); Sampled LRFU beats LRU at 128K to 256K,
+# trails it at 32K and ties at 64K.
 CURVES = {
     "lru": [0.40, 0.50, 0.60, 0.65],
     "lfu": [0.41, 0.51, 0.59, 0.65],
@@ -31,6 +36,7 @@ CURVES = {
     "belady": [0.55, 0.65, 0.72, 0.75],
     "ttdf": [0.42, 0.52, 0.58, 0.651],
     "race_rp": [0.38, 0.48, 0.58, 0.63],
+    "sampled_lrfu": [0.39, 0.50, 0.62, 0.70],
     # Seed-1 pick: higher than TTDF as specified at 32K to 64K only.
     "ttdf_tuned": [0.43, 0.53, 0.58, 0.652],
 }
@@ -53,6 +59,7 @@ MIXED = {
     "fifo": 0.50,
     "ttdf": 0.57,
     "race_rp": 0.555,
+    "sampled_lrfu": 0.565,
     "ceiling": 0.78,
 }
 MIXED_OFFSET = {
@@ -80,6 +87,13 @@ VERDICTS = {
     },
     "race_rp": {k: "tie"
                 for k in ("all", *rp.GROUPS)},
+    "sampled_lrfu": {
+        "all": "tie",
+        "sharegpt": "lower",
+        "agentbank": "tie",
+        "ccbench": "higher",
+        "bailian": "tie"
+    },
 }
 PROMPT_TOKENS = {
     "all": 1000,
@@ -97,6 +111,7 @@ SHARES = {
     "fifo": [0.95, 0.90, 0.85, 0.20, 0.0, 0.0],
     "ttdf": [0.99, 0.98, 0.96, 0.50, 0.10, 0.0],
     "race_rp": [0.98, 0.97, 0.90, 0.40, 0.30, 0.20],
+    "sampled_lrfu": [0.99, 0.97, 0.93, 0.35, 0.0, 0.0],
     "ceiling": [1.0] * 6,
 }
 # Evicted blocks per second (engine) by workload, scaled per policy: every
@@ -107,11 +122,13 @@ EVICT_SCALE = {
     "lfu": 1.03,
     "fifo": 1.04,
     "ttdf": 0.9,
-    "race_rp": 0.95
+    "race_rp": 0.95,
+    "sampled_lrfu": 0.98
 }
 WORKLOADS = ("sharegpt", "agentbank", "ccbench", "bailian-chat", "bailian-api",
              "bailian-thinking", "bailian-coder")
 TTDF_LABEL = "tau 5 s / 120 s, w 0.7 / 0.3"
+LRFU_LABEL = "half-life 512, 4 drawn"
 
 
 def spread(v, offsets=OFFSETS):
@@ -166,10 +183,10 @@ def capacity_window(replay, engine=(), tuned=()):
     def none():
         return [None] * len(CAPS)
 
-    names = [*rp.POLICIES, "belady", *NEW, *tuned]
+    names = [*rp.POLICIES, "belady", *ALL_NEW, *tuned]
     cv, groups, gseeds = {}, {}, {}
     for p in names:
-        if p in replay or p not in NEW:
+        if p in replay or p not in ALL_NEW:
             cv[p] = {"hit_rate": list(CURVES[p]), "seeds": per_seed(CURVES[p])}
             groups[p] = {
                 g: [v + GROUP_OFFSET[g] for v in CURVES[p]]
@@ -190,7 +207,7 @@ def capacity_window(replay, engine=(), tuned=()):
         "engine":
         CURVES[p][2] + d + 0.002,
         "replay":
-        CURVES[p][2] + d if p in replay or p not in NEW else None,
+        CURVES[p][2] + d if p in replay or p not in ALL_NEW else None,
     } for p in (*rp.POLICIES, *engine) for x, d in zip(SEEDS, OFFSETS)]
     runs += [
         # A partial size: only seed 2 ran on the engine at 32K.
@@ -245,9 +262,10 @@ def candidate(policy, label, settings, mean):
     }
 
 
-def tuning():
-    """TTDF's seed-1 pick differs from the specified setting (which ranks
-    fourth); RACE-RP's specified setting is also the best."""
+def tuning(names=NEW):
+    """Seed-1 tuning of the policies in `names`: TTDF's pick differs from
+    the specified setting (which ranks fourth); RACE-RP's and Sampled
+    LRFU's specified settings are also the best."""
     ttdf_spec = candidate("ttdf", TTDF_LABEL, SPEC_SETTINGS["ttdf"], 0.50)
     ttdf = [
         candidate("ttdf:tau_short=1", "tau 1 s / 120 s, w 0.7 / 0.3", {
@@ -282,22 +300,38 @@ def tuning():
             "P": 8
         }, 0.57),
     ]
+    lrfu_spec = candidate("sampled_lrfu", LRFU_LABEL,
+                          SPEC_SETTINGS["sampled_lrfu"], 0.62)
+    lrfu = [
+        lrfu_spec,
+        candidate("sampled_lrfu:half_life=64", "half-life 64, 4 drawn", {
+            **SPEC_SETTINGS["sampled_lrfu"], "half_life": 64.0
+        }, 0.61),
+        candidate("sampled_lrfu:sample_size=16", "half-life 512, 16 drawn", {
+            **SPEC_SETTINGS["sampled_lrfu"], "sample_size": 16
+        }, 0.60),
+    ]
+    candidates = {"ttdf": ttdf, "race_rp": race, "sampled_lrfu": lrfu}
+    selected = {
+        "ttdf": {
+            **ttdf[0], "is_spec": False,
+            "spec_mean": 0.50
+        },
+        "race_rp": {
+            **race_spec, "is_spec": True,
+            "spec_mean": 0.60
+        },
+        "sampled_lrfu": {
+            **lrfu_spec, "is_spec": True,
+            "spec_mean": 0.62
+        },
+    }
     return {
         "capacities": [32768, 65536, 131072, 262144, 393216],
-        "candidates": {
-            "ttdf": ttdf,
-            "race_rp": race
-        },
-        "selected": {
-            "ttdf": {
-                **ttdf[0], "is_spec": False,
-                "spec_mean": 0.50
-            },
-            "race_rp": {
-                **race_spec, "is_spec": True,
-                "spec_mean": 0.60
-            },
-        },
+        "candidates": {p: candidates[p]
+                       for p in names},
+        "selected": {p: selected[p]
+                     for p in names},
     }
 
 
@@ -332,6 +366,11 @@ def overhead():
                 "evict_us": 30.0,
                 "metadata_kib": 2048.0
             },
+            "sampled_lrfu": {
+                "evict_us": 0.8,
+                "candidates_per_scan": 4.0,
+                "metadata_kib": 64.0
+            },
         },
         "replay": {
             "lru": {
@@ -353,6 +392,13 @@ def overhead():
                     "evict_us": 25.0,
                     "metadata_kib": 2000.0,
                     "candidates_per_scan": 300.0
+                }
+            },
+            "sampled_lrfu": {
+                str(FIXED): {
+                    "evict_us": 0.5,
+                    "metadata_kib": 60.0,
+                    "candidates_per_scan": 4.0
                 }
             },
         },
@@ -499,9 +545,12 @@ def ceiling_by_group():
 def summary(engine=NEW, replay=NEW, tune=True, sketch=True):
     """A synthetic summary.json: the baselines everywhere; the new policies
     in `engine` with engine runs at 128K (mixed views, evictions), those in
-    `replay` with replay curves; seed-1 tuning (with TTDF's tuned curve when
-    TTDF has replay curves) and RACE-RP's sketch when asked."""
+    `replay` with replay curves; seed-1 tuning of the new policies present
+    (with TTDF's tuned curve when TTDF has replay curves) and RACE-RP's
+    sketch when asked."""
     engine, replay = tuple(engine), tuple(replay)
+    present = [p for p in ALL_NEW if p in engine or p in replay]
+    tune = tune and bool(present)
     tuned = ("ttdf_tuned", ) if tune and "ttdf" in replay else ()
     mix = {
         str(x): {
@@ -556,20 +605,30 @@ def summary(engine=NEW, replay=NEW, tune=True, sketch=True):
             list(engine),
             "specs": {
                 "ttdf": "ttdf",
-                "race_rp": "race_rp:sketch=sketch-L16-P6.json"
+                "race_rp": "race_rp:sketch=sketch-L16-P6.json",
+                "sampled_lrfu": "sampled_lrfu"
             },
             "sketch": ({
                 "observations": 3639507,
                 "reused_within_horizon": 0.385884
             } if sketch else None),
             "tuning":
-            tuning() if tune else None,
+            tuning(present) if tune else None,
             "evictions":
             evictions((*rp.POLICIES, *engine)),
             "overhead":
             overhead(),
         },
     }
+
+
+# --- The new policies --------------------------------------------------------
+
+
+def test_three_new_policies_with_labels():
+    assert rp.NEW_POLICIES == ALL_NEW
+    assert rp.POLICY_LABELS["sampled_lrfu"] == "Sampled LRFU"
+    assert rp.POLICY_LABELS["sampled_lrfu_tuned"] == "Sampled LRFU, tuned"
 
 
 # --- mixed_policies, curve_policies ---------------------------------------
@@ -735,6 +794,24 @@ def test_build_data_adds_the_new_policies_to_the_mixed_views():
     assert data["policyLabels"]["ttdf_tuned"] == "TTDF, tuned"
     # The alone views stay on the baselines.
     assert list(data["q5"]["values"]) == list(rp.POLICIES)
+
+
+def test_build_data_with_sampled_lrfu():
+    data = rp.build_data(summary(engine=ALL_NEW, replay=ALL_NEW))
+    mixed = ["lru", "lfu", "fifo", *ALL_NEW]
+    assert data["mixedPolicies"] == mixed
+    assert list(data["q1"]["curves"]) == mixed
+    assert list(data["q2"]["values"]) == mixed
+    assert data["q4"]["policies"] == [*mixed, "belady"]
+    assert data["q7"]["policies"] == mixed
+    assert list(data["q7"]["evictions"]) == mixed
+    assert data["q7"]["panels"]["ccbench"]["curve"]["sampled_lrfu"] == \
+        pytest.approx([v + 0.2 for v in CURVES["sampled_lrfu"]])
+    # Engine runs of Sampled LRFU only: the mixed views, no point 7.
+    data = rp.build_data(summary(engine=("sampled_lrfu", ), replay=()))
+    assert data["mixedPolicies"] == ["lru", "lfu", "fifo", "sampled_lrfu"]
+    assert data["q7"] is None
+    assert data["q4"]["policies"] == [*rp.POLICIES, "belady"]
 
 
 def test_build_data_draws_replay_curves_before_engine_runs():

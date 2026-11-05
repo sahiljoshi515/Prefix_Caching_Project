@@ -11,7 +11,8 @@ import pytest
 
 from analysis import m3t2_figures as mf
 from analysis import m3t2_report as rp
-from tests.analysis.test_m3t2_report_policies import CAPS, NEW, curve, summary
+from tests.analysis.test_m3t2_report_policies import (ALL_NEW, CAPS, NEW,
+                                                      curve, summary)
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -24,6 +25,7 @@ BASE_FILES = ("point1_reuse_interval", "point2_reuse_portion",
               "point6_alone_vs_mixed")
 POINT7_FILES = ("point7_capacity_by_workload", "point7_evictions")
 MIXED = ["lru", "lfu", "fifo", "ttdf", "race_rp"]
+MIXED3 = ["lru", "lfu", "fifo", *ALL_NEW]
 
 
 @pytest.fixture(autouse=True)
@@ -322,7 +324,37 @@ def test_tick_seconds():
 
 
 def test_every_drawn_policy_has_a_colour_and_a_marker():
-    for p in (*MIXED, "belady"):
+    for p in (*MIXED3, "belady"):
         assert p in mf.COLOR and p in mf.MARKER
+    assert (mf.COLOR["sampled_lrfu"], mf.MARKER["sampled_lrfu"]) == \
+        ("#008300", "X")
     assert len(set(mf.COLOR.values())) == len(mf.COLOR)
     assert len(set(mf.MARKER.values())) == len(mf.MARKER)
+
+
+def test_figures_with_three_new_policies(tmp_path):
+    data = rp.build_data(summary(engine=ALL_NEW, replay=ALL_NEW))
+    labels = [rp.POLICY_LABELS[p] for p in MIXED3]
+    mf.point1(data, plt, tmp_path)
+    ax = figures()[0].axes[0]
+    assert legend_texts(ax.get_legend()) == labels
+    assert ax.get_lines()[-1].get_marker() == "X"
+    assert ax.get_lines()[-1].get_color() == "#008300"
+    plt.close("all")
+    mf.point2(data, plt, tmp_path)
+    (fig, ) = figures()
+    assert fig.get_figheight() == pytest.approx(4.6 + 0.5 * 3)
+    assert len(fig.axes[0].patches) == 5 * 6
+    assert fig.axes[0].patches[0].get_height() == pytest.approx(0.9 * 0.13)
+    plt.close("all")
+    mf.point4(data, plt, tmp_path)
+    assert [ln.get_label() for ln in figures()[0].axes[0].get_lines()][:7] \
+        == [*labels, "Belady (offline)"]
+    plt.close("all")
+    mf.point7(data, plt, tmp_path)
+    panels, bars = figures()
+    assert [ln.get_label() for ln in panels.axes[0].get_lines()] == \
+        [*labels, "No eviction"]
+    assert legend_texts(panels.legends[0]) == [*labels, "No eviction"]
+    assert len(bars.axes[0].patches) == 5 * 6
+    assert policy_keys(bars.axes[0]) == labels

@@ -332,6 +332,30 @@ what the code does:
   workload of each evicted block's last request. LRU, LFU and FIFO behave
   as before.
 
+### Sampled LRFU (2026-11-05)
+
+A third label-free policy, also specified by the owners
+(`vllm/core/sampled_lrfu.py`, policy `sampled_lrfu`), on the mixed workload
+only. Per cached block: a score s and the logical time τ of its last
+access; an access at t sets s ← 2^(−(t−τ)/H)·s + 1 and τ ← t (a new block
+starts at s = 1); to evict, up to k blocks are drawn without replacement
+from the idle ones and the lowest 2^(−(T−τ)/H)·s goes, ties to the lower
+block id. Choices the code makes:
+
+- **Clock.** One step per `record_access` (hit, insertion,
+  deduplication), in the order the block manager calls it; evictions do
+  not advance it. A block is counted at most once per request (the request
+  context names the request; a block the same request uses again, as after
+  a preemption, is not counted twice).
+- **Pool.** Every idle (refcount 0) block, as the definition says and as
+  LRU, LFU and FIFO choose from; unlike TTDF and RACE-RP there is no
+  leaf-only rule, so it can evict a block in the middle of a cached prompt.
+  An array with a position map and swap-removal; `random.Random(seed)`.
+- **Defaults** H = 512 block uses (under a second of this mix's traffic)
+  and k = 4. Seed-1 tuning: H ∈ {64, 512, 4096, 32768, 262144, 2097152},
+  k ∈ {4, 16, 64}, chosen as for TTDF and RACE-RP. The `policies` grid adds
+  its five engine runs (15 in all).
+
 ## Phases
 
 Target dates are proposals for the owners to confirm; the project is due

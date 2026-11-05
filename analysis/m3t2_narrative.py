@@ -4,9 +4,9 @@ Every number below is read from ``summary.json`` or from the chart data
 built from it, and every comparison is worded from the numbers: a
 difference counts only when all seeds agree on its sign and its mean is at
 least half a point (spec 007 SC-003); otherwise it is called a tie. The
-page answers six questions, and a seventh on the two new policies (TTDF
-and RACE-RP) when the summary holds them; `sections` returns them in
-order.
+page answers six questions, and a seventh on the new policies (TTDF,
+RACE-RP and Sampled LRFU) when the summary holds them; `sections` returns
+them in order.
 
 Words: an *engine run* is the real vLLM server (measured); the *cache
 replay* is our simulator of vLLM's cache code (simulated). "Replay" is kept
@@ -281,16 +281,79 @@ def _has_point7(s: Row) -> bool:
     return q7_view(s, [*POLICIES, *NEW_POLICIES]) is not None
 
 
+def _new_names(s: Row) -> List[str]:
+    """The new policies on the page: in the engine views (points 1 and 2)
+    or in point 7, in their usual order."""
+    q7 = q7_view(s, [*POLICIES, *NEW_POLICIES])
+    shown = set(mixed_policies(s)) | set(q7["policies"] if q7 else [])
+    return [p for p in NEW_POLICIES if p in shown]
+
+
 def _has_new(s: Row) -> bool:
-    """Whether TTDF or RACE-RP appear anywhere on the page: in the engine
-    views (points 1 and 2) or in point 7."""
-    return (any(p in NEW_POLICIES for p in mixed_policies(s))
-            or _has_point7(s))
+    """Whether any new policy appears on the page."""
+    return bool(_new_names(s))
+
+
+_NUMBER = {1: "one", 2: "two", 3: "three"}
 
 
 def _new_header(s: Row) -> str:
-    return (" On the shared cache we also tried two new policies, TTDF and "
-            "RACE-RP, which read no workload labels." if _has_new(s) else "")
+    names = _new_names(s)
+    if not names:
+        return ""
+    return (f" On the shared cache we also tried {_NUMBER[len(names)]} new "
+            f"{'policy' if len(names) == 1 else 'policies'}, "
+            f"{_list([P[p] for p in names])}, which "
+            f"{'reads' if len(names) == 1 else 'read'} no workload labels.")
+
+
+# What each new policy does, in plain words (terms, point 1, point 7).
+TERM = {
+    "ttdf": ("Two-timescale decayed frequency: each cached block counts its "
+             "uses twice, in a count that fades within seconds and one that "
+             "fades over minutes; the idle block with the lowest weighted "
+             "sum goes first."),
+    "race_rp": ("RACE-based reuse probability: for each idle block, a small "
+                "table learned on seed 1 says how soon blocks with a similar "
+                "history of use were needed again (a RACE sketch over five "
+                "measured features); the block least likely to be needed "
+                "soon goes first."),
+    "sampled_lrfu": ("Sampled least recently / frequently used: each cached "
+                     "block keeps one score that every use raises by 1 and "
+                     "that halves every 512 block uses, so it counts uses "
+                     "like LFU but forgets them like LRU; to evict, it draws "
+                     "4 idle blocks at random and throws out the lowest."),
+}
+WHY = {
+    "ttdf": ("TTDF ranks a block by its recent uses, counted in a tally that "
+             "fades within seconds and one that fades over minutes, so it "
+             "keeps blocks used often lately."),
+    "race_rp": ("RACE-RP ranks a block by how soon similar blocks were "
+                "needed again in the training run."),
+    "sampled_lrfu": ("Sampled LRFU's score halves every 512 block uses, "
+                     "under a second of this mix's traffic, so it ranks "
+                     "much like LRU, but among only 4 blocks drawn at "
+                     "random."),
+}
+ABOUT = {
+    "ttdf": ("<b>TTDF</b> keeps, for each cached block, two tallies of its "
+             "uses: one that fades within seconds (a 5 s time constant) and "
+             "one that fades over minutes (120 s); when room is needed, the "
+             "idle block with the lowest weighted sum goes."),
+    "race_rp": ("<b>RACE-RP</b> describes each idle block by five measured "
+                "features (its uses in the last 10 s and 120 s, the time "
+                "since its last use, its position in the prompt, and how "
+                "many requests in the last 120 s shared its first two "
+                "blocks) and looks up, in a sketch learned on seed 1, how "
+                "soon blocks like it were needed again; the block least "
+                "likely to be needed soon goes."),
+    "sampled_lrfu": ("<b>Sampled LRFU</b> keeps one score per cached block "
+                     "that each use raises by 1 and that halves every 512 "
+                     "block uses (a clock that counts uses, not seconds); "
+                     "to make room it draws 4 idle blocks at random and "
+                     "throws out the one with the lowest score, without "
+                     "scanning the cache."),
+}
 
 
 def answers(facts: Row) -> str:
@@ -337,15 +400,7 @@ def terms(s: Row) -> str:
          "those no running request is using) to throw out: the one used least "
          "recently (LRU), the one reused the fewest times (LFU), or the one "
          "cached earliest, whatever happened since (FIFO)."),
-        *([("TTDF", "Two-timescale decayed frequency: each cached block "
-            "counts its uses twice, in a count that fades within seconds and "
-            "one that fades over minutes; the idle block with the lowest "
-            "weighted sum goes first.")] if _has_new(s) else []),
-        *([("RACE-RP", "RACE-based reuse probability: for each idle block, "
-            "a small table learned on seed 1 says how soon blocks with a "
-            "similar history of use were needed again (a RACE sketch over "
-            "five measured features); the block least likely to be needed "
-            "soon goes first.")] if _has_new(s) else []),
+        *[(P[p], TERM[p]) for p in _new_names(s)],
         ("Belady", "An offline reference that knows the future: it throws out "
          "the block needed farthest ahead. No real server can do this. It is "
          "the best possible for plain hit counts; for usable prefix reuse it "
@@ -452,7 +507,7 @@ def q1(s: Row, facts: Row) -> str:
                 if lru_cut is not None else None)
             for p in new
         }
-        new_txt = ("Of the two new policies, " if len(
+        new_txt = (f"Of the {_NUMBER[len(new)]} new policies, " if len(
             new) > 1 else "Of the new policies, ") + _list([
                 f"{P[p]} serves {pct(coarse[p][0]['share'] or 0.0, 1)} of the "
                 "quick reuses" +
@@ -460,11 +515,7 @@ def q1(s: Row, facts: Row) -> str:
                  f"over {secs(lru_cut)}" if far[p] is not None else "")
                 for p in new
             ]) + "."
-        why.append(
-            "TTDF ranks a block by its recent uses, counted in a tally that "
-            "fades within seconds and one that fades over minutes, so it "
-            "keeps blocks used often lately; RACE-RP ranks it by how soon "
-            "similar blocks were needed again in the training run.")
+        why += [WHY[p] for p in new]
     take = (f'<p class="prose">Share of reuses served, by how long the block '
             f'waited:</p>{table}<p class="prose">'
             f'{" ".join(x for x in [*why, new_txt] if x)}</p>')
@@ -1149,7 +1200,10 @@ def _tuning_block(s: Row, c: Row, new: Sequence[str]) -> str:
         return ""
     caps = c["capacities"]
     rows, notes = [], []
-    for name in new:
+    shown = [n for n in new if n in tune["selected"]]
+    if not shown:
+        return ""
+    for name in shown:
         pick = tune["selected"][name]
         cands = tune["candidates"][name]
         spec = next(x for x in cands if x["settings"] == SPEC_SETTINGS[name])
@@ -1216,20 +1270,25 @@ def q7(s: Row, data: Row, facts: Row) -> str:
     }
     mg = s["mixed_groups"]
     engine = [p for p in new if p in mg["all"]]
-    intro = (
-        "Two policies written for this mix, neither of which reads workload "
-        "labels. <b>TTDF</b> keeps, for each cached block, two tallies of "
-        "its uses: one that fades within seconds (a 5 s time constant) and "
-        "one that fades over minutes (120 s); when room is needed, the idle "
-        "block with the lowest weighted sum goes. <b>RACE-RP</b> describes "
-        "each idle block by five measured features (its uses in the last "
-        "10 s and 120 s, the time since its last use, its position in the "
-        "prompt, and how many requests in the last 120 s shared its first "
-        "two blocks) and looks up, in a sketch learned on seed 1, how soon "
-        "blocks like it were needed again; the block least likely to be "
-        "needed soon goes. Both only throw out a block that no running "
-        "request uses and that has no cached block after it in a prompt, so "
-        "a prompt's start never goes before its end.")
+    scored = [P[p] for p in new if p in ("ttdf", "race_rp")]
+    eligible = ""
+    if scored:
+        eligible = (
+            f" {_list(scored)} only {'throw' if len(scored) > 1 else 'throws'}"
+            " out a block that no running request uses and that has no "
+            "cached block after it in a prompt, so a prompt's start never "
+            "goes before its end.")
+    if "sampled_lrfu" in new:
+        eligible += (
+            " Sampled LRFU, as LRU, LFU and FIFO do, may throw out any block "
+            "no running request uses, even one in the middle of a prompt; "
+            "the cached blocks after it can then not be used, because the "
+            "server stops at a prompt's first missing block.")
+    count = (f"{_NUMBER[len(new)].capitalize()} policies"
+             if len(new) > 1 else "A policy")
+    intro = (f"{count} written for this mix, " +
+             ("none reading" if len(new) > 1 else "reading no") +
+             " workload labels. " + " ".join(ABOUT[p] for p in new) + eligible)
     claim = ("Over the whole mix (cache replay), " +
              "; ".join(f"{P[p]} {_vs_lru_runs(caps, mix_v[p])}" for p in new))
     lines = []
@@ -1290,12 +1349,21 @@ def q7(s: Row, data: Row, facts: Row) -> str:
             f"Engine runs at {tokens(fixed)}: " + " ".join(eng_lines) +
             " The chart counts the blocks each policy threw out per second, "
             "by the workload whose request used the block last.")
+    how = []
+    if scored:
+        how.append(
+            f"{_list(scored)} "
+            f"{'scores' if len(scored) == 1 else 'score'} every "
+            "evictable block when the first eviction of a scheduling "
+            f"step needs it, then {'reuses' if len(scored) == 1 else 'reuse'} "
+            "that order for the rest of the "
+            "step")
+    if "sampled_lrfu" in new:
+        how.append("Sampled LRFU scores only the 4 blocks it draws")
     body += ('<h3 class="sub">What the new policies cost</h3>'
              '<p class="prose">LRU, LFU and FIFO keep their idle blocks in a '
-             "heap ordered by one key, so an eviction takes the top. TTDF and "
-             "RACE-RP score every evictable block when the first eviction of "
-             "a scheduling step needs it, then reuse that order for the rest "
-             "of the step. Times are per eviction, averaged over seeds "
+             "heap ordered by one key, so an eviction takes the top. " +
+             "; ".join(how) + ". Times are per eviction, averaged over seeds "
              f"{_seeds_txt(s)}; metadata is the policy's own numbers at 8 "
              "bytes each, at the run's peak.</p>" +
              _overhead_table(s, pols, fixed))
@@ -1320,18 +1388,38 @@ def q7(s: Row, data: Row, facts: Row) -> str:
 
 def _new_method(s: Row) -> List[str]:
     npol = s["new_policies"]
+    names = _new_names(s)
+    scored = [P[p] for p in names if p in ("ttdf", "race_rp")]
+    files = ([] if not scored else [
+        "<code>vllm/core/reuse_evictors.py</code>"
+    ]) + (["<code>vllm/core/sampled_lrfu.py</code>"]
+          if "sampled_lrfu" in names else [])
+    one = len(names) == 1
     items = [
-        "TTDF and RACE-RP (<code>vllm/core/reuse_evictors.py</code>) are "
-        "vLLM evictors beside LRU, LFU and FIFO, chosen with "
-        "<code>VLLM_EVICTION_POLICY</code>. The cache tells them each time "
-        "a request uses a cached block: a hit, or the block's first "
-        "computation (also after an eviction). Every use and eviction "
-        "during one call of the block manager carries that call's start "
-        "time. They evict only idle blocks with no cached block after them "
-        "in a prompt; ties go to the deeper block, then the older.",
+        f"{_list([P[p] for p in names])} ({', '.join(files)}) "
+        f"{'is a vLLM evictor' if one else 'are vLLM evictors'} beside LRU, "
+        "LFU and FIFO, chosen with <code>VLLM_EVICTION_POLICY</code>. The "
+        f"cache tells {'it' if one else 'them'} each time a request uses a "
+        "cached block: a hit, or the block's first computation (also after "
+        "an eviction).",
     ]
+    if scored:
+        many = len(scored) > 1
+        items.append(
+            f"{_list(scored)} {'stamp' if many else 'stamps'} every use and "
+            "eviction during one call of the block manager with that call's "
+            f"start time, and {'evict' if many else 'evicts'} only idle "
+            "blocks with no cached block after them in a prompt; ties go to "
+            "the deeper block, then the older.")
+    if "sampled_lrfu" in names:
+        items.append(
+            "Sampled LRFU's clock counts block uses (one step per hit or new "
+            "block, a block counted once per request); it keeps the idle "
+            "blocks in an array it can draw from without replacement, with "
+            "its own random generator (seed 0), and breaks ties by block "
+            "id.")
     sk = npol.get("sketch")
-    if sk:
+    if sk and "race_rp" in names:
         items.append(
             "RACE-RP's sketch was learned on seed 1's no-eviction engine "
             f"run: {sk['observations']:,} observations of idle blocks at "
@@ -1340,13 +1428,21 @@ def _new_method(s: Row) -> List[str]:
             f"({pct(sk['reused_within_horizon'], 0)} were). Its feature "
             "scaling, 16 tables of 6 random-hyperplane bits (64 buckets "
             "each), counts and α = 5 are then frozen.")
-    if npol.get("tuning"):
-        items.append(
-            "Settings were tuned on seed 1 only, in the cache replay: TTDF's "
-            "short and long time constants (1, 5 or 30 s; 60, 120 or 600 s) "
-            "and weights (0.3 or 0.7 on the short tally), and RACE-RP's "
-            "tables (16 or 64) and bits (1 to 8). Seeds " + _seeds_txt(s) +
-            " were run once with the specified and the picked settings.")
+    tuned = (npol.get("tuning") or {}).get("candidates") or {}
+    if tuned:
+        grids = {
+            "ttdf": ("TTDF's short and long time constants (1, 5 or 30 s; 60, "
+                     "120 or 600 s) and weights (0.3 or 0.7 on the short "
+                     "tally)"),
+            "race_rp":
+            "RACE-RP's tables (16 or 64) and bits (1 to 8)",
+            "sampled_lrfu": ("Sampled LRFU's half-life (64 to 2,097,152 block "
+                             "uses) and sample size (4, 16 or 64)"),
+        }
+        items.append("Settings were tuned on seed 1 only, in the cache "
+                     "replay: " + _list([grids[p] for p in tuned]) +
+                     ". Seeds " + _seeds_txt(s) + " were run once with the "
+                     "specified and the picked settings.")
     if npol.get("engine"):
         fixed = s["config"]["capacity_tokens"]
         checks = sorted({

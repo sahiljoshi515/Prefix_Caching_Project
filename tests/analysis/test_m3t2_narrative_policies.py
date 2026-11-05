@@ -1,14 +1,16 @@
-"""The results page's words with the new policies, TTDF and RACE-RP
-(``analysis/m3t2_narrative.py``): they join points 1, 2 and 4, get a point
-7, and leave the page as it was when the summary does not hold them."""
+"""The results page's words with the new policies, TTDF, RACE-RP and
+Sampled LRFU (``analysis/m3t2_narrative.py``): they join points 1, 2 and
+4, get a point 7, and leave the page as it was when the summary does not
+hold them."""
 import re
 
 import pytest
 
 from analysis import m3t2_narrative as nv
 from analysis import m3t2_report as rp
-from tests.analysis.test_m3t2_report_policies import (CAPS, FIXED, NEW, coarse,
-                                                      curve, summary, tuning)
+from tests.analysis.test_m3t2_report_policies import (ALL_NEW, CAPS, FIXED,
+                                                      NEW, coarse, curve,
+                                                      summary, tuning)
 
 pytestmark = pytest.mark.m3
 
@@ -90,34 +92,42 @@ def test_method_describes_the_new_policies_before_reproduce():
     items = re.findall(r"<li>(.*?)</li>", nv.method(summary()))
     first = next(i for i, x in enumerate(items) if "reuse_evictors.py" in x)
     assert items[-1].startswith("Reproduce")
-    assert first == len(items) - 5  # four new items, then Reproduce
+    assert first == len(items) - 6  # five new items, then Reproduce
     base = nv.method(baseline())
     assert "reuse_evictors.py" not in base and "RACE-RP" not in base
 
 
 def test_new_method_items_follow_the_summary():
     items = [text(x) for x in nv._new_method(summary())]
-    assert len(items) == 4
+    assert len(items) == 5
+    assert items[0].startswith("TTDF and RACE-RP ( vllm/core/reuse_evictors"
+                               ".py ) are vLLM evictors beside LRU, LFU and "
+                               "FIFO")
+    assert "sampled_lrfu.py" not in items[0]
     assert "VLLM_EVICTION_POLICY" in items[0]
-    assert "3,639,507 observations" in items[1]
-    assert "(39% were)" in items[1]
-    assert items[2].startswith("Settings were tuned on seed 1 only")
-    assert "Seeds 2, 3 and 4 were run once" in items[2]
-    assert items[3].startswith("Engine runs of TTDF and RACE-RP: 128K on "
-                               "seeds 2, 3 and 4")
+    assert "The cache tells them each time" in items[0]
+    assert items[1].startswith("TTDF and RACE-RP stamp every use")
+    assert "and evict only idle blocks" in items[1]
+    assert "3,639,507 observations" in items[2]
+    assert "(39% were)" in items[2]
+    assert items[3].startswith("Settings were tuned on seed 1 only")
+    assert "TTDF's short and long time constants" in items[3]
+    assert "RACE-RP's tables (16 or 64) and bits (1 to 8)" in items[3]
+    assert "Sampled LRFU" not in items[3]  # not tuned here
+    assert "Seeds 2, 3 and 4 were run once" in items[3]
     # No engine runs at other sizes: no check runs named.
-    assert items[3] == (
+    assert items[4] == (
         "Engine runs of TTDF and RACE-RP: 128K on seeds 2, 3 and 4 (points "
         "1, 2 and 7). The numbers behind every chart are also in CSV files "
         "under report/milestone3/data/task2 .")
-    # No sketch, no tuning, no engine runs: only the first item.
+    # No sketch, no tuning, no engine runs: the two policy items only.
     s = summary(sketch=False, tune=False)
     s["new_policies"]["engine"] = []
     items = [text(x) for x in nv._new_method(s)]
-    assert len(items) == 1 and "VLLM_EVICTION_POLICY" in items[0]
+    assert len(items) == 2 and "VLLM_EVICTION_POLICY" in items[0]
     s = summary(sketch=False)
     items = [text(x) for x in nv._new_method(s)]
-    assert len(items) == 3
+    assert len(items) == 4
     assert not any("sketch was learned" in x for x in items)
 
 
@@ -630,3 +640,291 @@ def test_engine_only_page_has_six_points_but_names_the_new_policies():
     assert "Engine runs of TTDF and RACE-RP" in text(secs[-1])
     # The engine views of points 1 and 2 hold them.
     assert whole.count("(and TTDF and RACE-RP)?") == 2
+
+
+# --- Sampled LRFU, and one, two or three new policies -----------------------
+
+ONLY_LRFU = {"engine": ("sampled_lrfu", ), "replay": ("sampled_lrfu", )}
+ONLY_RACE = {"engine": ("race_rp", ), "replay": ("race_rp", )}
+PAIR = {}
+THREE = {"engine": ALL_NEW, "replay": ALL_NEW}
+STATES = [ONLY_LRFU, ONLY_RACE, PAIR, THREE]
+STATE_IDS = ["lrfu", "race_rp", "ttdf+race_rp", "three"]
+
+
+def present(kw):
+    s = summary(**kw)
+    return s, nv._new_names(s)
+
+
+@pytest.mark.parametrize(
+    "kw, names", [
+        ({
+            "engine": ("sampled_lrfu", ),
+            "replay": ()
+        }, ["sampled_lrfu"]),
+        ({
+            "engine": (),
+            "replay": ("sampled_lrfu", )
+        }, ["sampled_lrfu"]),
+        ({
+            "engine": ("sampled_lrfu", ),
+            "replay": ("ttdf", )
+        }, ["ttdf", "sampled_lrfu"]),
+        ({
+            "engine": ("sampled_lrfu", "race_rp"),
+            "replay": ()
+        }, ["race_rp", "sampled_lrfu"]),
+        (THREE, list(ALL_NEW)),
+        ({
+            "engine": (),
+            "replay": ()
+        }, []),
+    ],
+    ids=["engine", "replay", "union", "order", "three", "none"])
+def test_new_names_are_the_engine_views_and_point_7(kw, names):
+    s = summary(**kw)
+    assert nv._new_names(s) == names
+    assert nv._has_new(s) is bool(names)
+
+
+@pytest.mark.parametrize("kw, sentence", [
+    (ONLY_LRFU, "we also tried one new policy, Sampled LRFU, which reads no "
+     "workload labels."),
+    (PAIR, "we also tried two new policies, TTDF and RACE-RP, which read no "
+     "workload labels."),
+    (THREE, "we also tried three new policies, TTDF, RACE-RP and Sampled "
+     "LRFU, which read no workload labels."),
+],
+                         ids=["one", "two", "three"])
+def test_header_counts_and_names_the_new_policies(kw, sentence):
+    t = text(nv.header(summary(**kw)))
+    assert sentence in t
+    assert "answers seven questions" in t
+
+
+@pytest.mark.parametrize("kw", STATES, ids=STATE_IDS)
+def test_terms_have_one_entry_per_new_policy(kw):
+    s, names = present(kw)
+    html = nv.terms(s)
+    entries = dict(re.findall(r"<dt>(.*?)</dt><dd>(.*?)</dd>", html))
+    terms = list(entries)
+    i = terms.index("LRU, LFU, FIFO")
+    labels = [rp.POLICY_LABELS[p] for p in names]
+    assert terms[i + 1:i + 2 + len(names)] == [*labels, "Belady"]
+    for p in names:
+        assert entries[rp.POLICY_LABELS[p]] == nv.TERM[p]
+    assert ("Sampled least recently / frequently used" in html) is \
+        ("sampled_lrfu" in names)
+
+
+@pytest.mark.parametrize("kw", STATES, ids=STATE_IDS)
+def test_q1_explains_each_new_policy_present(kw):
+    s, names = present(kw)
+    facts = {}
+    html = nv.q1(s, facts)
+    for p in rp.NEW_POLICIES:
+        assert (nv.WHY[p] in html) is (p in names)
+    labels = [rp.POLICY_LABELS[p] for p in names]
+    assert [r[0] for r in table_rows(html)][3:] == labels
+    assert f"between FIFO, LRU and LFU (and {nv._list(labels)})?" in \
+        text(html)
+    lead = {
+        1: "Of the new policies, ",
+        2: "Of the two new policies, ",
+        3: "Of the three new policies, "
+    }[len(names)]
+    assert lead + labels[0] + " serves" in facts["q1_answer"]
+
+
+def test_q1_three_new_policies():
+    facts = {}
+    html = nv.q1(summary(**THREE), facts)
+    assert table_rows(html)[-1] == \
+        ["Sampled LRFU", "96.3%", "35.0%", "0.0%", "0.0%"]
+    assert facts["q1_answer"].endswith(
+        "Of the three new policies, TTDF serves 97.7% of the quick reuses "
+        "and 5% of those that waited over 30 s, RACE-RP serves 95.0% of the "
+        "quick reuses and 25% of those that waited over 30 s and Sampled "
+        "LRFU serves 96.3% of the quick reuses and 0% of those that waited "
+        "over 30 s.")
+    assert "under a second of this mix's traffic" in text(html)
+
+
+LEAF_ONLY = ("only {} out a block that no running request uses and that "
+             "has no cached block after it in a prompt")
+ANY_BLOCK = ("Sampled LRFU, as LRU, LFU and FIFO do, may throw out any block "
+             "no running request uses, even one in the middle of a prompt")
+
+ONE_POLICY = "A policy written for this mix, reading no workload labels."
+
+
+@pytest.mark.parametrize("kw, count, leaf", [
+    (ONLY_LRFU, ONE_POLICY, None),
+    (ONLY_RACE, ONE_POLICY, "RACE-RP " + LEAF_ONLY.format("throws")),
+    (PAIR, "Two policies written for this mix, none reading workload labels.",
+     "TTDF and RACE-RP " + LEAF_ONLY.format("throw")),
+    (THREE, "Three policies written for this mix, none reading workload "
+     "labels.", "TTDF and RACE-RP " + LEAF_ONLY.format("throw")),
+],
+                         ids=STATE_IDS)
+def test_q7_intro_counts_describes_and_says_what_each_may_evict(
+        kw, count, leaf):
+    s, names = present(kw)
+    html = nv.q7(s, rp.build_data(s), {})
+    t = text(html)
+    assert count in t
+    assert ("none reading" in t) is (len(names) > 1)
+    for p in rp.NEW_POLICIES:
+        assert (nv.ABOUT[p] in html) is (p in names)
+    if leaf is None:
+        assert "only throw" not in t
+    else:
+        assert leaf in t
+    assert (ANY_BLOCK in t) is ("sampled_lrfu" in names)
+    labels = nv._list([rp.POLICY_LABELS[p] for p in names])
+    verb = "Does" if len(names) == 1 else "Do"
+    assert f"{verb} {labels} keep more of the mix than LRU, LFU and FIFO?" \
+        in t
+
+
+SCAN = ("every evictable block when the first eviction of a scheduling step "
+        "needs it")
+SAMPLE = "Sampled LRFU scores only the 4 blocks it draws"
+
+
+@pytest.mark.parametrize("kw, how", [
+    (ONLY_LRFU, f"takes the top. {SAMPLE}. Times are per eviction"),
+    (ONLY_RACE, f"takes the top. RACE-RP scores {SCAN}, then reuses that "
+     "order for the rest of the step. Times are per eviction"),
+    (PAIR, f"takes the top. TTDF and RACE-RP score {SCAN}, then reuse that "
+     "order for the rest of the step. Times are per eviction"),
+    (THREE, f"takes the top. TTDF and RACE-RP score {SCAN}, then reuse that "
+     f"order for the rest of the step; {SAMPLE}. Times are per eviction"),
+],
+                         ids=STATE_IDS)
+def test_q7_cost_paragraph_names_the_present_policies(kw, how):
+    s, names = present(kw)
+    t = text(nv.q7(s, rp.build_data(s), {}))
+    assert how in t
+    assert ("TTDF and RACE-RP score" in t) is \
+        ({"ttdf", "race_rp"} <= set(names))
+    assert (SAMPLE in t) is ("sampled_lrfu" in names)
+
+
+def test_q7_tuning_skips_policies_it_lacks():
+    # Tuned before Sampled LRFU existed; point 7 shows all three.
+    s = summary(**THREE)
+    s["new_policies"]["tuning"] = tuning(NEW)
+    rows = table_rows(nv._tuning_block(s, s["capacity_window"], ALL_NEW))
+    assert {r[0] for r in rows} == {"TTDF", "RACE-RP"}
+    secs = page(s)  # the whole page builds
+    t = text(secs[-2])
+    assert "Tuning on seed 1" in t
+    assert "For RACE-RP the specified setting was also the best" in t
+    assert "For Sampled LRFU" not in t
+    assert "Sampled LRFU's half-life" not in text(secs[-1])
+
+
+def test_q7_without_tuning_of_its_policies_has_no_tuning_block():
+    # Point 7 shows TTDF and RACE-RP; only Sampled LRFU was tuned.
+    s = summary()
+    s["new_policies"]["tuning"] = tuning(("sampled_lrfu", ))
+    assert nv._tuning_block(s, s["capacity_window"], list(NEW)) == ""
+    secs = page(s)
+    point7 = text(secs[-2])
+    assert 'id="point-7"' in secs[-2]
+    assert "Tuning on seed 1" not in point7
+    assert "Each setting was replayed on seed 1 only" not in point7
+    assert "Seed-1 usable reuse" not in point7
+
+
+def test_q7_three_new_policies():
+    s = summary(**THREE)
+    facts = {}
+    html = nv.q7(s, rp.build_data(s), facts)
+    t = text(html)
+    assert ("; Sampled LRFU beats LRU at 128K to 256K, trails it at 32K and "
+            "ties at 64K") in t
+    assert ("Highest usable reuse over the whole mix, by size: TTDF at 32K "
+            "to 64K; Sampled LRFU at 128K to 256K.") in t
+    assert "Sampled LRFU scores only the 4 blocks it draws" in t
+    assert ["Sampled LRFU", "0.5 µs", "0.8 µs", "4", "64 KiB"] in \
+        table_rows(html)
+    assert [
+        "Sampled LRFU", "half-life 512, 4 drawn", "62.0%",
+        "as specified, picked"
+    ] in table_rows(html)
+    assert ("For Sampled LRFU the specified setting was also the best on "
+            "seed 1") in t
+    assert "Bailian: LRU 400/s" in t and "Sampled LRFU 392/s" in t
+    assert facts["q7_names"] == "TTDF, RACE-RP and Sampled LRFU"
+    assert "On the engine at 128K: TTDF 57.0%, RACE-RP 55.5% and Sampled " \
+        "LRFU 56.5%, LRU 56.0%." in facts["q7_answer"]
+
+
+def test_new_method_items_for_sampled_lrfu_alone():
+    items = [text(x) for x in nv._new_method(summary(**ONLY_LRFU))]
+    assert items[0].startswith("Sampled LRFU ( vllm/core/sampled_lrfu.py ) is "
+                               "a vLLM evictor beside LRU, LFU and FIFO")
+    assert "reuse_evictors.py" not in items[0]
+    assert "The cache tells it each time" in items[0]
+    # The summary holds RACE-RP's sketch, but RACE-RP is not on the page.
+    assert not any("sketch was learned" in x for x in items)
+    assert not any(x.startswith("TTDF and RACE-RP stamp") for x in items)
+    assert sum(
+        x.startswith("Sampled LRFU's clock counts block uses")
+        for x in items) == 1
+    tuned = next(x for x in items if x.startswith("Settings were tuned"))
+    assert ("in the cache replay: Sampled LRFU's half-life (64 to 2,097,152 "
+            "block uses) and sample size (4, 16 or 64). Seeds") in tuned
+    assert "TTDF's" not in tuned and "RACE-RP's" not in tuned
+    assert items[-1].startswith("Engine runs of Sampled LRFU: 128K")
+
+
+def test_new_method_items_for_race_rp_alone():
+    items = [text(x) for x in nv._new_method(summary(**ONLY_RACE))]
+    assert items[0].startswith("RACE-RP ( vllm/core/reuse_evictors.py ) is a "
+                               "vLLM evictor beside")
+    assert "sampled_lrfu.py" not in items[0]
+    assert "The cache tells it each time" in items[0]
+    assert items[1].startswith("RACE-RP stamps every use and eviction")
+    assert "and evicts only idle blocks" in items[1]
+    assert not any("TTDF" in x for x in items)
+    assert not any(x.startswith("Sampled LRFU's clock") for x in items)
+    assert sum("RACE-RP's sketch was learned" in x for x in items) == 1
+
+
+def test_new_method_tuning_lists_the_tuned_policies_only():
+    s = summary(**THREE)
+    items = [text(x) for x in nv._new_method(s)]
+    assert items[0].startswith("TTDF, RACE-RP and Sampled LRFU ( vllm/core/"
+                               "reuse_evictors.py , vllm/core/sampled_lrfu.py"
+                               " ) are vLLM evictors")
+    assert "The cache tells them each time" in items[0]
+    assert sum("RACE-RP's sketch was learned" in x for x in items) == 1
+    assert sum(x.startswith("TTDF and RACE-RP stamp") for x in items) == 1
+    assert sum(x.startswith("Sampled LRFU's clock") for x in items) == 1
+    s["new_policies"]["tuning"] = tuning(("ttdf", "sampled_lrfu"))
+    tuned = next(
+        text(x) for x in nv._new_method(s)
+        if x.startswith("Settings were tuned"))
+    assert ("tally) and Sampled LRFU's half-life (64 to 2,097,152 block uses)"
+            " and sample size (4, 16 or 64).") in tuned
+    assert "RACE-RP's" not in tuned
+    # Tuning without candidates: no tuning item.
+    s["new_policies"]["tuning"] = {"candidates": {}}
+    assert not any(
+        x.startswith("Settings were tuned") for x in nv._new_method(s))
+
+
+def test_three_new_policy_page():
+    secs = page(summary(**THREE))
+    whole = "\n".join(secs)
+    assert len(secs) == 14
+    assert "answers seven questions" in text(secs[0])
+    assert ('<span class="q">7 · TTDF, RACE-RP and Sampled LRFU</span>'
+            in secs[1])
+    assert whole.count("(and TTDF, RACE-RP and Sampled LRFU)?") == 2
+    assert whole.count("<dt>Sampled LRFU</dt>") == 1
+    assert "Sampled LRFU's clock counts block uses" in secs[-1]

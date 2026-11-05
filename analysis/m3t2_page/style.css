@@ -21,6 +21,7 @@
   --pol-belady: #eda100;
   --pol-ttdf: #6250d6;
   --pol-race_rp: #e87ba4;
+  --pol-sampled_lrfu: #008300;
   /* One sequential hue for accuracy and the confusion matrix. */
   --seq-1: #cde2fb;
   --seq-2: #86b6ef;
@@ -43,6 +44,7 @@
     --pol-belady: #c98500;
     --pol-ttdf: #9085e9;
     --pol-race_rp: #d55181;
+    --pol-sampled_lrfu: #008300;
     --seq-1: #102a49;
     --seq-2: #184f95;
     --seq-4: #6da7ec;
@@ -65,6 +67,7 @@
   --pol-belady: #c98500;
   --pol-ttdf: #9085e9;
   --pol-race_rp: #d55181;
+  --pol-sampled_lrfu: #008300;
   --seq-1: #102a49;
   --seq-2: #184f95;
   --seq-4: #6da7ec;

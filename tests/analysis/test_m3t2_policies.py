@@ -1,6 +1,6 @@
-"""TTDF and RACE-RP analysis (analysis/m3t2_policies.py): policy strings,
-seed-1 tuning, per-workload evictions, overhead and the CSV export, each on
-a hand-made input whose answer is worked out beside it."""
+"""TTDF, RACE-RP and Sampled LRFU analysis (analysis/m3t2_policies.py):
+policy strings, seed-1 tuning, per-workload evictions, overhead and the CSV
+export, each on a hand-made input whose answer is worked out beside it."""
 import csv
 import json
 
@@ -19,6 +19,8 @@ RR_L64 = "race_rp:sketch=results/m3-race/tune/sketch-L64-P3.json"
 RR_P1 = "race_rp:sketch=results/m3-race/tune/sketch-L16-P1.json"
 TT_A = "ttdf:tau_short=1,tau_long=60"
 TT_B = "ttdf:tau_short=30"
+LF_A = "sampled_lrfu:half_life=4096,sample_size=16"
+LF_B = "sampled_lrfu:seed=1"
 
 
 def read_csv(path):
@@ -32,6 +34,7 @@ def read_csv(path):
 def test_family_is_the_text_before_the_first_colon():
     assert mp.family("ttdf:tau_short=2") == "ttdf"
     assert mp.family("race_rp:sketch=a:b.json") == "race_rp"
+    assert mp.family("sampled_lrfu:half_life=4096") == "sampled_lrfu"
     assert mp.family("lru") == "lru"
 
 
@@ -62,6 +65,29 @@ def test_settings_read_race_rp_tables_and_bits_from_the_sketch_name():
             mp.settings(bad)
 
 
+def test_settings_fill_sampled_lrfu_defaults():
+    assert mp.settings("sampled_lrfu") == {
+        "half_life": 512.0,
+        "sample_size": 4,
+        "seed": 0
+    }
+    got = mp.settings(LF_A)
+    assert got == {"half_life": 4096.0, "sample_size": 16, "seed": 0}
+    assert isinstance(got["half_life"], float)
+    assert isinstance(got["sample_size"], int)
+    assert isinstance(got["seed"], int)
+    assert mp.settings(LF_B) == {
+        "half_life": 512.0,
+        "sample_size": 4,
+        "seed": 1
+    }
+    # Spelled out in full, the specified setting is still the spec.
+    full = "sampled_lrfu:half_life=512,sample_size=4,seed=0"
+    assert mp.settings(full) == mp.SPEC_SETTINGS["sampled_lrfu"]
+    assert mp.settings(mp.SPEC["sampled_lrfu"]) == \
+        mp.SPEC_SETTINGS["sampled_lrfu"]
+
+
 def test_settings_of_other_policies_are_empty():
     assert mp.settings("lru") == {}
     assert mp.settings("lfu:x=1") == {}
@@ -72,6 +98,12 @@ def test_label_puts_a_setting_in_words():
     assert mp.label("ttdf:tau_short=1,tau_long=600,w_short=0.25") == \
         "tau 1 s / 600 s, w 0.25 / 0.3"
     assert mp.label(RR_SPEC) == "L 16, P 6"
+    # Sampled LRFU: the seed only when it is not 0.
+    assert mp.label("sampled_lrfu") == "half-life 512, 4 drawn"
+    assert mp.label(LF_A) == "half-life 4,096, 16 drawn"
+    assert mp.label(LF_A + ",seed=0") == "half-life 4,096, 16 drawn"
+    assert mp.label(LF_A + ",seed=2") == "half-life 4,096, 16 drawn, seed 2"
+    assert mp.label(LF_B) == "half-life 512, 4 drawn, seed 1"
     assert mp.label("lru") == "lru"
 
 
@@ -138,6 +170,9 @@ def sweep_rows():
     #   RR_SPEC  0.20 0.40  0.30  (specified)
     #   RR_L64   0.20 0.40  0.30  (ties the spec: the spec is kept)
     #   RR_P1    0.10 0.10  0.10
+    #   lrfu     0.20 0.20  0.20  (specified)
+    #   LF_A     0.30 0.50  0.40  (best Sampled LRFU)
+    #   LF_B     0.10 0.10  0.10
     return [
         *both("lru", 0.3, 0.5),
         *both("ttdf", 0.3, 0.5),
@@ -146,6 +181,9 @@ def sweep_rows():
         *both(RR_SPEC, 0.2, 0.4),
         *both(RR_L64, 0.2, 0.4),
         *both(RR_P1, 0.1, 0.1),
+        *both("sampled_lrfu", 0.2, 0.2),
+        *both(LF_A, 0.3, 0.5),
+        *both(LF_B, 0.1, 0.1),
         # Left out: another seed's plan (it would make TT_B the best),
         *both(TT_B, 0.99, 0.99, plan=S2),
         # rows without a window (null, or no key at all),
@@ -198,6 +236,19 @@ def test_tuning_picks_the_best_mean_per_policy_and_keeps_the_spec_on_a_tie():
     assert sel["policy"] == RR_SPEC and sel["is_spec"] is True
     assert sel["mean"] == sel["spec_mean"] == pytest.approx(0.3)
     assert sel["label"] == "L 16, P 6"
+    # Sampled LRFU: a 4,096 half-life drawing 16 beats the spec.
+    lf = out["candidates"]["sampled_lrfu"]
+    assert [c["policy"] for c in lf] == [LF_A, "sampled_lrfu", LF_B]
+    sel = out["selected"]["sampled_lrfu"]
+    assert sel["policy"] == LF_A and sel["is_spec"] is False
+    assert sel["mean"] == pytest.approx(0.4)
+    assert sel["spec_mean"] == pytest.approx(0.2)
+    assert sel["label"] == "half-life 4,096, 16 drawn"
+    assert sel["settings"] == {
+        "half_life": 4096.0,
+        "sample_size": 16,
+        "seed": 0
+    }
 
 
 def test_tuning_ties_keep_the_spec_whatever_the_row_order():
@@ -208,6 +259,9 @@ def test_tuning_ties_keep_the_spec_whatever_the_row_order():
     assert out["selected"]["ttdf"]["policy"] == "ttdf"
     assert out["selected"]["ttdf"]["is_spec"] is True
     assert out["selected"]["race_rp"]["policy"] == RR_SPEC
+    # No Sampled LRFU rows: no entry for it.
+    assert "sampled_lrfu" not in out["selected"]
+    assert "sampled_lrfu" not in out["candidates"]
     # Without LRU rows there is no LRU curve.
     assert out["lru"] is None
     # A setting a hair above the spec is picked.
@@ -258,23 +312,67 @@ def test_tuning_spec_wins_a_tie_with_a_smaller_policy_string():
     assert mp.policy_specs(out) == mp.SPEC
 
 
-def test_tuning_is_none_without_complete_rows_for_both_specs():
+def test_tuning_leaves_out_a_policy_whose_spec_lacks_complete_rows():
     rows = sweep_rows()
-    no_ttdf = [r for r in rows if r["policy"] != "ttdf"]
-    assert mp.tuning(no_ttdf, capacities=CAPS) is None
-    no_race = [r for r in rows if r["policy"] != RR_SPEC]
-    assert mp.tuning(no_race, capacities=CAPS) is None
-    # The specified TTDF setting lacks 128 tokens.
+
+    def kept(rows_):
+        out = mp.tuning(rows_, capacities=CAPS)
+        assert set(out["candidates"]) == set(out["selected"])
+        # The specified strings are listed whatever was tuned.
+        assert out["spec"] == mp.SPEC
+        return set(out["selected"])
+
+    everything = {"ttdf", "race_rp", "sampled_lrfu"}
+    assert kept(rows) == everything
+    assert kept([r for r in rows
+                 if r["policy"] != "ttdf"]) == everything - {"ttdf"}
+    assert kept([r for r in rows
+                 if r["policy"] != RR_SPEC]) == everything - {"race_rp"}
+    assert kept([r for r in rows if r["policy"] != "sampled_lrfu"
+                 ]) == everything - {"sampled_lrfu"}
+    # The specified TTDF setting lacks 128 tokens: TTDF is left out, its
+    # other complete settings (TT_A, TT_B) too.
     part = [
         r for r in rows
         if not (r["policy"] == "ttdf" and r["capacity_tokens"] == 128)
     ]
-    assert mp.tuning(part, capacities=CAPS) is None
+    assert kept(part) == everything - {"ttdf"}
     # The specified RACE-RP setting only on another seed's plan.
     other = [r for r in rows if r["policy"] != RR_SPEC]
     other += both(RR_SPEC, 0.2, 0.4, plan=S2)
-    assert mp.tuning(other, capacities=CAPS) is None
+    assert kept(other) == everything - {"race_rp"}
+    # The kept policies' picks do not change.
+    out = mp.tuning(part, capacities=CAPS)
+    assert out["selected"]["sampled_lrfu"]["policy"] == LF_A
+    assert out["selected"]["race_rp"]["policy"] == RR_SPEC
+    assert mp.policy_specs(out) == {**mp.SPEC, "sampled_lrfu_tuned": LF_A}
+
+
+def test_tuning_with_only_some_policies_tuned():
+    # A tuning file of Sampled LRFU alone: LF_A beats the spec.
+    rows = [*both("sampled_lrfu", 0.2, 0.2), *both(LF_A, 0.3, 0.5)]
+    out = mp.tuning(rows, capacities=CAPS)
+    assert list(out["selected"]) == ["sampled_lrfu"]
+    assert out["selected"]["sampled_lrfu"]["policy"] == LF_A
+    assert out["lru"] is None
+    assert mp.policy_specs(out) == {**mp.SPEC, "sampled_lrfu_tuned": LF_A}
+    # TTDF alone, its spec kept: nothing tuned to add.
+    out = mp.tuning(both("ttdf", 0.3, 0.5), capacities=CAPS)
+    assert list(out["selected"]) == ["ttdf"]
+    assert out["selected"]["ttdf"]["is_spec"] is True
+    assert mp.policy_specs(out) == mp.SPEC
+
+
+def test_tuning_is_none_when_no_policy_has_its_spec():
     assert mp.tuning([], capacities=CAPS) is None
+    # Only baselines and settings other than the specified ones.
+    rows = [*both("lru", 0.3, 0.5), *both(TT_A, 0.4, 0.6)]
+    rows += [*both(RR_L64, 0.2, 0.4), *both(LF_A, 0.3, 0.5)]
+    assert mp.tuning(rows, capacities=CAPS) is None
+    # Specified settings with a capacity missing, or on another plan.
+    rows += [row("ttdf", 64, 0.3), row("sampled_lrfu", 128, 0.2)]
+    rows += both(RR_SPEC, 0.2, 0.4, plan=S2)
+    assert mp.tuning(rows, capacities=CAPS) is None
 
 
 def test_tuning_defaults_to_the_seed1_plan_and_five_capacities():
@@ -299,7 +397,8 @@ def test_tuning_defaults_to_the_seed1_plan_and_five_capacities():
 def test_policy_specs_add_a_tuned_entry_only_when_the_pick_differs():
     assert mp.policy_specs(None) == {
         "ttdf": "ttdf",
-        "race_rp": "race_rp:sketch=results/m3-race/sketch-L16-P6.json"
+        "race_rp": "race_rp:sketch=results/m3-race/sketch-L16-P6.json",
+        "sampled_lrfu": "sampled_lrfu"
     }
     specs = mp.policy_specs(None)
     specs["x"] = "y"
@@ -307,8 +406,11 @@ def test_policy_specs_add_a_tuned_entry_only_when_the_pick_differs():
     assert mp.policy_specs({}) == mp.SPEC
     assert mp.policy_specs({"selected": {}}) == mp.SPEC
     tune = mp.tuning(sweep_rows(), capacities=CAPS)
-    # TTDF's pick differs (TT_A); RACE-RP kept its spec.
-    assert mp.policy_specs(tune) == {**mp.SPEC, "ttdf_tuned": TT_A}
+    # TTDF's and Sampled LRFU's picks differ; RACE-RP kept its spec.
+    assert mp.policy_specs(tune) == {
+        **mp.SPEC, "ttdf_tuned": TT_A,
+        "sampled_lrfu_tuned": LF_A
+    }
 
 
 # --- Evictions per workload ------------------------------------------------
@@ -596,6 +698,12 @@ def full_summary():
                         "policy": "ttdf",
                         "usable": [0.3, 0.5],
                         "mean": 0.4
+                    }],
+                    "sampled_lrfu": [{
+                        "label": "half-life 4,096, 16 drawn",
+                        "policy": LF_A,
+                        "usable": [0.3, 0.5],
+                        "mean": 0.4
                     }]
                 },
             },
@@ -660,7 +768,14 @@ def test_write_csvs_writes_every_section_with_blank_none_cells(tmp_path):
             "mean"
         ],
         ["ttdf", "tau 5 s / 120 s, w 0.7 / 0.3", "ttdf", "0.3", "0.5", "0.4"],
+        [
+            "sampled_lrfu", "half-life 4,096, 16 drawn", LF_A, "0.3", "0.5",
+            "0.4"
+        ],
     ]
+    # Settings with commas are quoted, so each row keeps six cells.
+    assert '"half-life 4,096, 16 drawn","sampled_lrfu:half_life=4096,' \
+        in (out / "tuning_seed1.csv").read_text()
 
 
 def test_write_csvs_leaves_out_a_group_cell_without_usable_reuse(tmp_path):
@@ -751,7 +866,8 @@ def test_write_csvs_skips_missing_sections(tmp_path):
 def test_main_select_prints_the_held_out_policy_strings(tmp_path, capsys):
     path = tmp_path / "tune.jsonl"
     rows = []
-    for policy, v in (("ttdf", 0.4), (TT_A, 0.5), (RR_SPEC, 0.3)):
+    for policy, v in (("ttdf", 0.4), (TT_A, 0.5), (RR_SPEC, 0.3),
+                      ("sampled_lrfu", 0.2), (LF_A, 0.25)):
         rows += [row(policy, c, v) for c in mp.TUNING_CAPACITIES]
     path.write_text("\n".join(json.dumps(r) for r in rows))
     mp.main(["select", "--tuning", str(path)])
@@ -759,14 +875,30 @@ def test_main_select_prints_the_held_out_policy_strings(tmp_path, capsys):
     assert lines == [
         "ttdf\tttdf",
         f"race_rp\t{mp.SPEC['race_rp']}",
+        "sampled_lrfu\tsampled_lrfu",
         f"ttdf_tuned\t{TT_A}",
+        f"sampled_lrfu_tuned\t{LF_A}",
     ]
 
 
-def test_main_select_stops_without_the_specified_rows(tmp_path, capsys):
+def test_main_select_needs_one_policys_specified_rows(tmp_path, capsys):
+    # Only TTDF's spec was tuned: every specified string is printed and
+    # nothing tuned is added.
     path = tmp_path / "tune.jsonl"
     path.write_text("\n".join(
         json.dumps(row("ttdf", c, 0.4)) for c in mp.TUNING_CAPACITIES))
+    mp.main(["select", "--tuning", str(path)])
+    assert capsys.readouterr().out.splitlines() == [
+        f"{name}\t{policy}" for name, policy in mp.SPEC.items()
+    ]
+
+
+def test_main_select_stops_without_any_specified_rows(tmp_path, capsys):
+    # Settings other than the specified ones only.
+    path = tmp_path / "tune.jsonl"
+    path.write_text("\n".join(
+        json.dumps(row(p, c, 0.4)) for p in (TT_A, LF_A)
+        for c in mp.TUNING_CAPACITIES))
     with pytest.raises(SystemExit) as stop:
         mp.main(["select", "--tuning", str(path)])
     assert str(path) in str(stop.value.code)

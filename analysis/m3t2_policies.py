@@ -31,10 +31,14 @@ import numpy as np
 
 Row = Dict[str, Any]
 
-NEW_POLICIES = ("ttdf", "race_rp")
+NEW_POLICIES = ("ttdf", "race_rp", "sampled_lrfu")
 SKETCH = "results/m3-race/sketch-L16-P6.json"
 # The specified settings, as replay policy strings.
-SPEC = {"ttdf": "ttdf", "race_rp": f"race_rp:sketch={SKETCH}"}
+SPEC = {
+    "ttdf": "ttdf",
+    "race_rp": f"race_rp:sketch={SKETCH}",
+    "sampled_lrfu": "sampled_lrfu"
+}
 SPEC_SETTINGS = {
     "ttdf": {
         "tau_short": 5.0,
@@ -45,6 +49,11 @@ SPEC_SETTINGS = {
     "race_rp": {
         "L": 16,
         "P": 6
+    },
+    "sampled_lrfu": {
+        "half_life": 512.0,
+        "sample_size": 4,
+        "seed": 0
     },
 }
 TUNING_PLAN = "balanced-human-s1"
@@ -63,7 +72,8 @@ def family(policy: str) -> str:
 
 def settings(policy: str) -> Row:
     """A policy string's settings, defaults filled in: TTDF's four numbers,
-    or RACE-RP's L and P read from its sketch file's name."""
+    RACE-RP's L and P read from its sketch file's name, or Sampled LRFU's
+    half-life, sample size and seed."""
     name, _, text = policy.partition(":")
     given = dict(item.split("=", 1) for item in text.split(",") if "=" in item)
     if name == "ttdf":
@@ -76,17 +86,28 @@ def settings(policy: str) -> Row:
         if m is None:
             raise ValueError(f"{policy!r} names no sketch-L<L>-P<P>.json")
         return {"L": int(m[1]), "P": int(m[2])}
+    if name == "sampled_lrfu":
+        spec = SPEC_SETTINGS["sampled_lrfu"]
+        return {
+            "half_life": float(given.get("half_life", spec["half_life"])),
+            "sample_size": int(given.get("sample_size", spec["sample_size"])),
+            "seed": int(given.get("seed", spec["seed"])),
+        }
     return {}
 
 
 def label(policy: str) -> str:
-    """A setting in words: "tau 5 s / 120 s, w 0.7 / 0.3" or "L 16, P 6"."""
+    """A setting in words: "tau 5 s / 120 s, w 0.7 / 0.3", "L 16, P 6" or
+    "half-life 512, 4 drawn"."""
     s = settings(policy)
     if family(policy) == "ttdf":
         return (f"tau {s['tau_short']:g} s / {s['tau_long']:g} s, "
                 f"w {s['w_short']:g} / {s['w_long']:g}")
     if family(policy) == "race_rp":
         return f"L {s['L']}, P {s['P']}"
+    if family(policy) == "sampled_lrfu":
+        return (f"half-life {s['half_life']:,.0f}, {s['sample_size']} drawn" +
+                (f", seed {s['seed']}" if s["seed"] else ""))
     return policy
 
 
@@ -107,8 +128,9 @@ def tuning(rows: Iterable[Row],
            plan: str = TUNING_PLAN,
            capacities: Sequence[int] = TUNING_CAPACITIES) -> Optional[Row]:
     """Seed-1 usable reuse (measurement window) of every setting tried, by
-    capacity, and the setting picked per policy (module docstring). None
-    without complete rows for both specified settings."""
+    capacity, and the setting picked per policy (module docstring). A
+    policy whose specified setting lacks complete rows is left out; None
+    when every policy is."""
     usable: Dict[str, Dict[int, float]] = {}
     for r in rows:
         if Path(r["plan"]).name != plan or not r.get("window"):
@@ -140,7 +162,7 @@ def tuning(rows: Iterable[Row],
         } for p, v in complete.items() if family(p) == name]
         spec = [c for c in rows_ if c["settings"] == SPEC_SETTINGS[name]]
         if not spec:
-            return None
+            continue
         # Best mean first; equal means by policy string, so the order of
         # the sweep's rows does not matter.
         rows_.sort(key=lambda c: (-c["mean"], c["policy"]))
@@ -151,7 +173,7 @@ def tuning(rows: Iterable[Row],
             **pick, "is_spec": pick is spec[0],
             "spec_mean": spec[0]["mean"]
         }
-    return out
+    return out if out["selected"] else None
 
 
 def policy_specs(tune: Optional[Row]) -> Dict[str, str]:

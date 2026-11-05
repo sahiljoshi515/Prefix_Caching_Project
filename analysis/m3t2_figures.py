@@ -25,6 +25,7 @@ COLOR = {
     "fifo": "#1baf7a",
     "ttdf": "#6250d6",
     "race_rp": "#e87ba4",
+    "sampled_lrfu": "#008300",
     "belady": "#eda100",
 }
 MARKER = {
@@ -33,6 +34,7 @@ MARKER = {
     "fifo": "s",
     "ttdf": "P",
     "race_rp": "*",
+    "sampled_lrfu": "X",
     "belady": "^"
 }
 INK = "#111a1d"

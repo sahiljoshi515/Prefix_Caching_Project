@@ -12,7 +12,8 @@
   const LABEL = D.labels;
   const POLICY = D.policyLabels;
   const SHAPE = { lru: "circle", lfu: "diamond", fifo: "square",
-                  ttdf: "cross", race_rp: "star", belady: "triangle" };
+                  ttdf: "cross", race_rp: "star", sampled_lrfu: "wye",
+                  belady: "triangle" };
 
   const pct = (x, d = 0) => (x == null || isNaN(x)) ? "–" :
     (100 * x).toFixed(d) + "%";

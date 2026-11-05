@@ -1,6 +1,7 @@
-"""TTDF and RACE-RP in the mixed-workload study (analysis/m3t2_study.py):
-which engine runs join, the per-group views, the windowed capacity curve
-by workload group, and the whole study on a tiny hand-made run grid."""
+"""TTDF, RACE-RP and Sampled LRFU in the mixed-workload study
+(analysis/m3t2_study.py): which engine runs join, the per-group views, the
+windowed capacity curve by workload group, and the whole study on a tiny
+hand-made run grid."""
 import json
 import math
 
@@ -487,7 +488,8 @@ def study_cfg(**kw):
         "block_size": 16,
         "capacity_tokens": CAP,
         "policies": ["lru"],
-        "new_policies": ["ttdf", "race_rp"],
+        # As in the real config; Sampled LRFU has no engine runs here.
+        "new_policies": ["ttdf", "race_rp", "sampled_lrfu"],
         "mix": "balanced",
         "pacing": "human",
         "sensitivity_pacing": "fast",
@@ -560,7 +562,8 @@ def build_grid(root):
 
 
 def tuning_rows():
-    # The tuning sweep: TT_A beats TTDF's spec; RACE-RP keeps its spec.
+    # The tuning sweep: TT_A beats TTDF's spec; RACE-RP keeps its spec;
+    # Sampled LRFU was not tuned (no rows), so it has no pick.
     rows = []
     for policy, v in (("lru", 0.1), ("ttdf", 0.4), (TT_A, 0.5),
                       ("race_rp:sketch=t/sketch-L16-P6.json", 0.3)):
@@ -582,8 +585,8 @@ def window_rows():
     # The capacity sweep over [10, 110): every page name at 64 tokens.
     rows = []
     for x in (2, 3):
-        for policy, v in (("lru", 0.5), ("ttdf", 0.7), (RACE, 0.6), (TT_A,
-                                                                     0.8)):
+        for policy, v in (("lru", 0.5), ("ttdf", 0.7), (RACE, 0.6),
+                          ("sampled_lrfu", 0.65), (TT_A, 0.8)):
             rows.append(
                 wrow(x,
                      policy,
@@ -644,7 +647,8 @@ def test_study_adds_the_new_policies_to_the_mixed_views_only(grid):
     cfg = study_cfg()
     out = st.study(grid["runs"], cfg, None, None, grid["plans"],
                    grid["window"], grid["tune"], grid["overhead"])
-    # TTDF has runs for both seeds; RACE-RP only for seed 2, so it is out.
+    # TTDF has runs for both seeds; RACE-RP only for seed 2 and Sampled
+    # LRFU none, so they are out.
     assert list(out["headline"]) == ["lru", "ttdf", "ceiling"]
     assert list(out["mixed_intervals"]) == ["lru", "ttdf", "ceiling"]
     assert "curve" in out["mixed_intervals"]["ttdf"]
@@ -669,6 +673,8 @@ def test_study_adds_the_new_policies_to_the_mixed_views_only(grid):
     assert new["sketch"] == {"seed": 0}
     assert new["tuning"]["selected"]["ttdf"]["policy"] == TT_A
     assert new["tuning"]["selected"]["race_rp"]["is_spec"] is True
+    assert set(new["tuning"]["selected"]) == {"ttdf", "race_rp"}
+    assert set(new["tuning"]["candidates"]) == {"ttdf", "race_rp"}
     # Evictions over the 100 s window, both seeds alike. LRU: one ShareGPT
     # block (looked up again) and one Bailian block (not); TTDF: one
     # CC-Bench block (looked up again).
@@ -705,8 +711,11 @@ def test_study_adds_the_new_policies_to_the_mixed_views_only(grid):
     assert rep["race_rp"][str(CAP)]["metadata_kib"] == pytest.approx(2.0)
     # The windowed capacity curve has every page name, tuned TTDF too.
     cw = out["capacity_window"]
-    assert list(cw["curve"]) == ["lru", "ttdf", "race_rp", "ttdf_tuned"]
+    assert list(cw["curve"]) == [
+        "lru", "ttdf", "race_rp", "sampled_lrfu", "ttdf_tuned"
+    ]
     assert cw["curve"]["race_rp"]["hit_rate"] == [pytest.approx(0.6)]
+    assert cw["curve"]["sampled_lrfu"]["hit_rate"] == [pytest.approx(0.65)]
     assert cw["curve"]["ttdf_tuned"]["hit_rate"] == [pytest.approx(0.8)]
     assert cw["groups"]["ttdf"]["sharegpt"] == [pytest.approx(0.7)]
     assert cw["evictions"]["race_rp"]["all"] == [pytest.approx(0.1)]
@@ -754,7 +763,7 @@ def test_study_without_new_policies_is_the_baselines_alone(grid):
     assert out["new_policies"]["overhead"]["engine"] == {}
     # The replay still compares the specified settings with the baselines.
     assert list(out["capacity_window"]["curve"]) == [
-        "lru", "ttdf", "race_rp", "ttdf_tuned"
+        "lru", "ttdf", "race_rp", "sampled_lrfu", "ttdf_tuned"
     ]
 
 
@@ -785,7 +794,7 @@ def test_main_passes_the_tuning_and_overhead_sweeps_to_study(
     ])
     assert seen["tuning"] == tmp_path / "t.jsonl"
     assert seen["overhead"] == tmp_path / "o.jsonl"
-    assert seen["cfg"]["new_policies"] == ["ttdf", "race_rp"]
+    assert seen["cfg"]["new_policies"] == ["ttdf", "race_rp", "sampled_lrfu"]
     assert json.loads(out.read_text()) == {
         "x": 1.0,
         "provenance": {

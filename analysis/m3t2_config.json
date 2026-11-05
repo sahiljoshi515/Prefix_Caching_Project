@@ -9,7 +9,8 @@
   ],
   "new_policies": [
     "ttdf",
-    "race_rp"
+    "race_rp",
+    "sampled_lrfu"
   ],
   "mix": "balanced",
   "pacing": "human",

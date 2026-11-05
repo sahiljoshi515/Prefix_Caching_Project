@@ -14,8 +14,9 @@ the order the course asked them:
 5. reuse portion and interval of each workload run alone;
 6. each workload alone against sharing the cache;
 
-and a seventh on the two new policies, TTDF and RACE-RP
-(``vllm/core/reuse_evictors.py``), which also join the mixed-workload
+and a seventh on the new policies, TTDF, RACE-RP
+(``vllm/core/reuse_evictors.py``) and Sampled LRFU
+(``vllm/core/sampled_lrfu.py``), which also join the mixed-workload
 charts of points 1, 2 and 4 once their runs are in ``summary.json``.
 
 Every number in its text and charts is read from ``summary.json``
@@ -44,7 +45,7 @@ Row = Dict[str, Any]
 
 POLICIES = ("lru", "lfu", "fifo")
 # The new policies, explored on the mixed workload only.
-NEW_POLICIES = ("ttdf", "race_rp")
+NEW_POLICIES = ("ttdf", "race_rp", "sampled_lrfu")
 GROUPS = ("sharegpt", "agentbank", "ccbench", "bailian")
 LABELS = {
     "sharegpt": "ShareGPT",
@@ -61,6 +62,8 @@ POLICY_LABELS = {
     "race_rp": "RACE-RP",
     "ttdf_tuned": "TTDF, tuned",
     "race_rp_tuned": "RACE-RP, tuned",
+    "sampled_lrfu": "Sampled LRFU",
+    "sampled_lrfu_tuned": "Sampled LRFU, tuned",
     "belady": "Belady",
     "ceiling": "No eviction",
 }
