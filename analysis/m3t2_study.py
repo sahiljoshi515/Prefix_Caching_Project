@@ -51,7 +51,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from analysis import events as ev
-from analysis import stackdist, survival
+from analysis import isolate, stackdist, survival
 
 CONFIG_PATH = Path(__file__).with_name("m3t2_config.json")
 Columns = Dict[str, np.ndarray]
@@ -596,8 +596,281 @@ def per_run(run_dir: Path, cfg: Row, w0: float) -> Row:
     }
 
 
-def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
-          plans_root: Path) -> Row:
+# The four workloads and the isolated runs ----------------------------------
+
+# The course's four workloads (Bailian's four traces are one).
+GROUPS = tuple(isolate.GROUPS)
+# A difference counts only when every seed agrees on its sign and the
+# mean is at least this far from 0 (a share: 0.005 is half a point).
+MIN_GAP = 0.005
+
+
+def grouped_usable(row: Row) -> Row:
+    """`usable_by_workload`'s counts summed per group, plus ``all``."""
+    out: Row = {}
+    for group, members in isolate.GROUPS.items():
+        parts = [row[w] for w in members if w in row]
+        prompt = sum(x["prompt_tokens"] for x in parts)
+        usable = sum(x["usable_tokens"] for x in parts)
+        out[group] = {
+            "requests": sum(x["requests"] for x in parts),
+            "prompt_tokens": prompt,
+            "usable_tokens": usable,
+            "fraction": share(float(usable), prompt),
+        }
+    out["all"] = dict(row["all"])
+    return out
+
+
+def verdict(diffs: Sequence[Optional[float]], min_gap: float = MIN_GAP) -> str:
+    """"higher", "lower" or "tie": higher only if every per-seed
+    difference is above 0 and their mean at least `min_gap`."""
+    if not diffs or any(d is None for d in diffs):
+        return "tie"
+    mean = float(np.mean(diffs))
+    if all(d > 0 for d in diffs) and mean >= min_gap:
+        return "higher"
+    if all(d < 0 for d in diffs) and mean <= -min_gap:
+        return "lower"
+    return "tie"
+
+
+def reaccess_intervals(
+    lk: Columns,
+    w0: float,
+    stop: float,
+    workloads: Optional[Sequence[str]] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """004 reuse intervals of the re-accesses (blocks seen before) in the
+    first prefills of requests planned in [w0, stop): all of them (the
+    reuse on offer) and those served (a usable hit). Blocks another running
+    request still holds are left out: no policy can evict them, so they
+    say nothing about what a policy keeps (as in `hit_by_interval`)."""
+    m = (window(lk["planned_s"], w0, stop) & (lk["prefill"] == 0)
+         & (lk["source"] != "first") & ~lk["in_use"].astype(bool))
+    if workloads is not None:
+        m &= np.isin(lk["workload"], list(workloads))
+    return lk["interval_s"][m], lk["interval_s"][m & lk["usable"]]
+
+
+def _bins(off: np.ndarray, srv: np.ndarray,
+          edges: Sequence[float]) -> List[Row]:
+    """Per bin (edges in seconds, the last open-ended): the re-accesses on
+    offer, those served and the share served."""
+    bounds = list(edges) + [math.inf]
+    out = []
+    for lo, hi in zip(bounds[:-1], bounds[1:]):
+        n_off = int(((off >= lo) & (off < hi)).sum())
+        n_srv = int(((srv >= lo) & (srv < hi)).sum())
+        out.append({
+            "lo": lo,
+            "hi": None if math.isinf(hi) else hi,
+            "offered": n_off,
+            "served": n_srv,
+            "share": share(n_srv, n_off),
+        })
+    return out
+
+
+def interval_view(offered: Sequence[np.ndarray],
+                  served: Sequence[np.ndarray],
+                  edges: Sequence[float],
+                  points: int,
+                  fine_edges: Optional[Sequence[float]] = None) -> Row:
+    """The reuse intervals a run (or runs, pooled) served: their CDF, the
+    share served per coarse bin (`edges`) and, with `fine_edges`, per fine
+    bin (``curve``: a chart's x grid)."""
+    off = np.concatenate(offered) if offered else np.array([])
+    srv = np.concatenate(served) if served else np.array([])
+    out = {
+        "served": cdf_points(srv, points),
+        "offered": int(len(off)),
+        "served_n": int(len(srv)),
+        "by_bin": _bins(off, srv, edges),
+    }
+    if fine_edges is not None:
+        out["curve"] = _bins(off, srv, fine_edges)
+    return out
+
+
+def latency_by_group(run_dir: Path, w0: float, stop: float) -> Row:
+    """Median request latency (client.jsonl, seconds) per group, over the
+    completed requests planned in [w0, stop)."""
+    lat: Dict[str, List[float]] = defaultdict(list)
+    with (run_dir / "client.jsonl").open() as f:
+        for line in f:
+            r = json.loads(line)
+            t, v = r.get("planned_s"), r.get("latency_s")
+            if (t is None or v is None or r.get("status") != "completed"
+                    or not w0 <= t < stop):
+                continue
+            lat[isolate.group_of(r["workload"])].append(v)
+    return {g: float(np.median(v)) for g, v in sorted(lat.items())}
+
+
+def _pair(a: Sequence[Optional[float]],
+          b: Sequence[Optional[float]]) -> List[Optional[float]]:
+    return [None if x is None or y is None else x - y for x, y in zip(a, b)]
+
+
+def isolation_study(runs: Path, cfg: Row, headline: Row,
+                    mixed_latency: Dict[int, Dict[str, Row]],
+                    mixed_lookups: Dict[int, Dict[str, int]]) -> Optional[Row]:
+    """Each workload alone (the ``isolated`` grid: its requests of the
+    balanced plan, at the same times) against the same workload in the mix,
+    per policy, over the reported seeds.
+
+    `headline` holds the mixed runs' `usable_by_workload` rows (policy ->
+    seed -> row, and the ceiling's); `mixed_latency` the mixed runs'
+    `latency_by_group` (seed -> policy -> group -> s); `mixed_lookups` the
+    first-prefill lookups per group in the mixed LRU run (seed -> group).
+    Returns None until every isolated run has its tables."""
+    w0, stop, bs = cfg["w0_s"], cfg["stop_s"], cfg["block_size"]
+    wl, cap, pacing = cfg["workloads"], cfg["capacity_tokens"], cfg["pacing"]
+    seeds, policies = cfg["reported_seeds"], cfg["policies"]
+    edges, points = cfg["served_interval_edges_s"], cfg["cdf_points"]
+    fine = cfg["interval_bins_s"]
+    alone: Row = {p: {g: {} for g in GROUPS} for p in policies}
+    offered: Dict[Tuple[str, str], List[np.ndarray]] = defaultdict(list)
+    served: Dict[Tuple[str, str], List[np.ndarray]] = defaultdict(list)
+    latency: Row = {p: {g: [] for g in GROUPS} for p in policies}
+    integrity: List[Row] = []
+    for seed in seeds:
+        for group in GROUPS:
+            for policy in policies:
+                d = runs / run_name(isolate.isolated_mix(group), pacing, seed,
+                                    policy, cap)
+                if not (d / "tables" / "requests.parquet").exists():
+                    return None
+                req = load_requests(d)
+                lk = read(d, "lookups", LOOKUP_COLUMNS)
+                alone[policy][group][seed] = grouped_usable(
+                    usable_by_workload(req, wl, w0, stop, bs))[group]
+                o, v = reaccess_intervals(lk, w0, stop)
+                offered[(group, policy)].append(o)
+                served[(group, policy)].append(v)
+                latency[policy][group].append(
+                    latency_by_group(d, w0, stop).get(group))
+                integrity.append({
+                    "run":
+                    d.name,
+                    "not_completed":
+                    int((req["status"] != "completed").sum()),
+                    "lookups":
+                    int((lk["prefill"] == 0).sum()),
+                    "mixed_lookups":
+                    mixed_lookups[seed][group],
+                })
+    rows: Row = {}
+    for group in GROUPS:
+        ceiling = [
+            grouped_usable(headline["ceiling"][x])[group]["fraction"]
+            for x in seeds
+        ]
+        rows[group] = {"ceiling": spread(ceiling)}
+        for policy in policies:
+            mixed = [
+                grouped_usable(headline[policy][x])[group]["fraction"]
+                for x in seeds
+            ]
+            solo = [alone[policy][group][x]["fraction"] for x in seeds]
+            diffs = _pair(solo, mixed)
+            rows[group][policy] = {
+                "mixed":
+                spread(mixed),
+                "alone":
+                spread(solo),
+                "alone_minus_mixed":
+                spread(diffs),
+                "verdict":
+                verdict(diffs),
+                "mixed_efficiency":
+                spread([
+                    m / c if m is not None and c else None
+                    for m, c in zip(mixed, ceiling)
+                ]),
+                "alone_efficiency":
+                spread([
+                    a / c if a is not None and c else None
+                    for a, c in zip(solo, ceiling)
+                ]),
+                "latency_alone_s":
+                spread(latency[policy][group]),
+                "latency_mixed_s":
+                spread([mixed_latency[x][policy].get(group) for x in seeds]),
+            }
+        first = alone[policies[0]][group]
+        rows[group]["requests"] = spread([first[x]["requests"] for x in seeds])
+        rows[group]["prompt_tokens_per_s"] = spread(
+            [first[x]["prompt_tokens"] / (stop - w0) for x in seeds])
+        rows[group]["mixed_requests"] = spread([
+            grouped_usable(headline[policies[0]][x])[group]["requests"]
+            for x in seeds
+        ])
+    # Each workload's alone vs its served reuse intervals, pooled seeds.
+    intervals = {
+        g: {
+            p: interval_view(offered[(g, p)], served[(g, p)], edges, points,
+                             fine)
+            for p in policies
+        }
+        for g in GROUPS
+    }
+    # Alone, each policy against LRU, per workload.
+    vs_lru: Row = {}
+    for group in GROUPS:
+        lru = [alone["lru"][group][x]["fraction"] for x in seeds]
+        vs_lru[group] = {}
+        for policy in policies:
+            if policy == "lru":
+                continue
+            diffs = _pair([alone[policy][group][x]["fraction"] for x in seeds],
+                          lru)
+            vs_lru[group][policy] = {
+                "diff": spread(diffs),
+                "verdict": verdict(diffs)
+            }
+    return {
+        "groups": list(GROUPS),
+        "rows": rows,
+        "intervals": intervals,
+        "vs_lru": vs_lru,
+        "integrity": integrity,
+    }
+
+
+def mixed_group_view(headline: Row, cfg: Row) -> Row:
+    """The mixed runs' usable reuse per group (and the whole mix), per
+    policy and the ceiling: seed mean and spread, and each policy's paired
+    difference from LRU with its verdict; and the prompt tokens per seed."""
+    seeds, policies = cfg["reported_seeds"], cfg["policies"]
+    out: Row = {}
+    for key in list(GROUPS) + ["all"]:
+        per = {
+            p:
+            [grouped_usable(headline[p][x])[key]["fraction"] for x in seeds]
+            for p in policies + ["ceiling"]
+        }
+        out[key] = {p: {"usable": spread(v)} for p, v in per.items()}
+        out[key]["prompt_tokens"] = float(
+            np.mean([
+                grouped_usable(headline["ceiling"][x])[key]["prompt_tokens"]
+                for x in seeds
+            ]))
+        for p in policies:
+            if p != "lru":
+                diffs = _pair(per[p], per["lru"])
+                out[key][p]["vs_lru"] = spread(diffs)
+                out[key][p]["verdict"] = verdict(diffs)
+    return out
+
+
+def study(runs: Path,
+          cfg: Row,
+          sweep: Optional[Path],
+          reports: Optional[Path],
+          plans_root: Path,
+          capacity_sweep: Optional[Path] = None) -> Row:
     w0, stop, bs = cfg["w0_s"], cfg["stop_s"], cfg["block_size"]
     wl, cap = cfg["workloads"], cfg["capacity_tokens"]
     mix, pacing = cfg["mix"], cfg["pacing"]
@@ -618,6 +891,14 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
     example: Row = {}
     integrity: Row = {}
     timelines: Row = {p: [] for p in policies + ["ceiling"]}
+    # The six report questions: reuse intervals served in the mix, the
+    # ceiling's per group, latency and lookups per group for isolation.
+    mix_offered: Dict[str, List[np.ndarray]] = defaultdict(list)
+    mix_served: Dict[str, List[np.ndarray]] = defaultdict(list)
+    group_offered: Dict[str, List[np.ndarray]] = defaultdict(list)
+    group_served: Dict[str, List[np.ndarray]] = defaultdict(list)
+    mixed_latency: Dict[int, Dict[str, Row]] = {}
+    mixed_lookups: Dict[int, Dict[str, int]] = {}
     for seed in seeds:
         cdir = runs / run_name(mix, pacing, seed, "ceiling", cap)
         creq = load_requests(cdir)
@@ -636,6 +917,14 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
         }
         for key, vals in intervals(clk, w0, stop).items():
             interval_pool[key].append(vals)
+        o, v = reaccess_intervals(clk, w0, stop)
+        mix_offered["ceiling"].append(o)
+        mix_served["ceiling"].append(v)
+        for group, members in isolate.GROUPS.items():
+            o, v = reaccess_intervals(clk, w0, stop, members)
+            group_offered[group].append(o)
+            group_served[group].append(v)
+        mixed_latency[seed] = {}
         sources.append(source_shares(clk, wl, w0, stop))
         come_backs.append(come_back(crs, wl, cfg["km_grid_s"], w0, stop))
         planned = dict(zip(creq["req"].tolist(), creq["planned_s"].tolist()))
@@ -651,6 +940,18 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
             pdir = runs / run_name(mix, pacing, seed, policy, cap)
             r = per_run(pdir, cfg, w0)
             headline[policy][seed] = r["usable"]
+            o, v = reaccess_intervals(r["_lk"], w0, stop)
+            mix_offered[policy].append(o)
+            mix_served[policy].append(v)
+            mixed_latency[seed][policy] = latency_by_group(pdir, w0, stop)
+            if policy == "lru":
+                first = r["_lk"]["prefill"] == 0
+                mixed_lookups[seed] = {
+                    g: int(
+                        (first
+                         & np.isin(r["_lk"]["workload"], list(members))).sum())
+                    for g, members in isolate.GROUPS.items()
+                }
             pus = _usable_map(r["_req"])
             lost[policy][seed] = lost_reuse(r["_lk"], cusable, pus, wl, w0,
                                             stop)
@@ -695,6 +996,20 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
                 r["requests_with_hits_after_miss"])
             views[policy]["preempted"].append(r["preempted"])
     summary["headline"] = headline_summary(headline, wl, policies, seeds)
+    edges, points = cfg["served_interval_edges_s"], cfg["cdf_points"]
+    fine = cfg["interval_bins_s"]
+    summary["mixed_intervals"] = {
+        p: interval_view(mix_offered[p], mix_served[p], edges, points, fine)
+        for p in policies + ["ceiling"]
+    }
+    summary["ceiling_intervals_by_group"] = {
+        g: interval_view(group_offered[g], group_served[g], edges, points,
+                         fine)
+        for g in GROUPS
+    }
+    summary["mixed_groups"] = mixed_group_view(headline, cfg)
+    summary["isolation"] = isolation_study(runs, cfg, headline, mixed_latency,
+                                           mixed_lookups)
     summary["lost"] = lost
     summary["timeline"] = {p: merge_seeds(v) for p, v in timelines.items()}
     summary["example"] = example
@@ -755,6 +1070,10 @@ def study(runs: Path, cfg: Row, sweep: Optional[Path], reports: Optional[Path],
         summary["sim"] = sim_summary(sweep, cfg)
         summary["validation"] = validation(runs, sweep, cfg)
         summary["capacity_curve"] = capacity_curve(runs, sweep, cfg)
+    if capacity_sweep is not None and capacity_sweep.exists():
+        summary["capacity_window"] = capacity_curve(runs, capacity_sweep, cfg,
+                                                    (w0, stop),
+                                                    cfg["sim_policies"])
     if reports is not None:
         cs = reports / "validate_cachesim.json"
         if cs.exists():
@@ -989,8 +1308,8 @@ def sim_summary(path: Path, cfg: Row) -> Row:
     # Model-timed rows only: engine-timed rows of the same plan would
     # otherwise be averaged in (and counted twice).
     rows = [
-        r for r in read_sweep(path)
-        if "summary" in r and r.get("timing", "model") == "model"
+        r for r in read_sweep(path) if "summary" in r
+        and r.get("timing", "model") == "model" and r.get("window") is None
     ]
     groups = {
         "balanced-human": [f"balanced-human-s{s}" for s in (1, 2, 3, 4)],
@@ -1034,29 +1353,41 @@ def sim_summary(path: Path, cfg: Row) -> Row:
     return out
 
 
-def capacity_curve(runs: Path, sweep: Path, cfg: Row) -> Optional[Row]:
+def capacity_curve(runs: Path,
+                   sweep: Path,
+                   cfg: Row,
+                   window_s: Optional[Tuple[float, float]] = None,
+                   policies: Optional[Sequence[str]] = None) -> Optional[Row]:
     """The mixed workload's hit rate (share of prompt tokens served from the
-    cache over the whole run, warm-up included, as the cache replay counts
-    it) against cache size: the replay's curve per policy averaged over the
-    reported seeds, and every engine run of those plans at any size beside
-    the replay's value for the same plan and size."""
+    cache) against cache size: the replay's curve per policy averaged over
+    the reported seeds, and every engine run of those plans at any size
+    beside the replay's value for the same plan and size.
+
+    Over the whole run, warm-up included, unless `window_s` (w0, stop):
+    then only replay rows made with that window count (``sim --window``),
+    and engine runs are counted over it too. `policies` defaults to the
+    baselines; Belady's curve comes from the replay alone."""
     seeds = list(cfg["reported_seeds"])
     plans = {f"{cfg['mix']}-{cfg['pacing']}-s{x}": x for x in seeds}
+    want = None if window_s is None else [float(v) for v in window_s]
     sims: Dict[Tuple[str, str, Any], Row] = {}
     for r in read_sweep(sweep):
-        if "summary" not in r or r.get("timing", "model") != "model":
+        if ("summary" not in r or r.get("timing", "model") != "model"
+                or r.get("window") != want):
             continue
         plan = Path(r["plan"]).name
         if plan not in plans:
             continue
         ceiling = str(r.get("capacity")) == "ceiling"
         key = "ceiling" if ceiling else int(r["capacity_tokens"])
-        sims[(plan, "ceiling" if ceiling else r["policy"], key)] = r["summary"]
+        summary = r["summary"] if want is None else r["summary"]["window"]
+        sims[(plan, "ceiling" if ceiling else r["policy"], key)] = summary
     caps = sorted({k for (_, _, k) in sims if k != "ceiling"})
     if not caps:
         return None
+    lo, hi = (-math.inf, math.inf) if want is None else want
     curve: Row = {}
-    for policy in cfg["policies"]:
+    for policy in (policies or cfg["policies"]):
         curve[policy] = {"hit_rate": [], "block_hit_rate": [], "seeds": []}
         for cap in caps:
             vals = [sims.get((plan, policy, cap)) for plan in plans]
@@ -1066,8 +1397,9 @@ def capacity_curve(runs: Path, sweep: Path, cfg: Row) -> Optional[Row]:
                 continue
             usable = [v["usable_reused_fraction"] for v in vals]
             curve[policy]["hit_rate"].append(float(np.mean(usable)))
+            rates = [v.get("block_hit_rate") for v in vals]
             curve[policy]["block_hit_rate"].append(
-                float(np.mean([v["block_hit_rate"] for v in vals])))
+                None if None in rates else float(np.mean(rates)))
             curve[policy]["seeds"].append(usable)
     ceil = [sims.get((plan, "ceiling", "ceiling")) for plan in plans]
     engine: List[Row] = []
@@ -1080,7 +1412,7 @@ def capacity_curve(runs: Path, sweep: Path, cfg: Row) -> Optional[Row]:
             continue
         plan, cap = f"{cfg['mix']}-{cfg['pacing']}-s{m[1]}", int(m[3])
         req = load_requests(path)
-        whole = usable_by_workload(req, cfg["workloads"], -math.inf, math.inf,
+        whole = usable_by_workload(req, cfg["workloads"], lo, hi,
                                    cfg["block_size"])["all"]["fraction"]
         sim = sims.get((plan, m[2], cap))
         engine.append({
@@ -1091,9 +1423,12 @@ def capacity_curve(runs: Path, sweep: Path, cfg: Row) -> Optional[Row]:
             "replay": sim["usable_reused_fraction"] if sim else None,
         })
     return {
-        "note":
-        "whole run, warm-up included; curve: cache replay, model "
-        "timing, mean of the reported seeds; engine: single vllm serve runs",
+        "note": ("whole run, warm-up included" if want is None else
+                 f"requests planned in [{lo:g}, {hi:g}) s") +
+        "; curve: cache replay, model timing, mean of the reported seeds; "
+        "engine: single vllm serve runs",
+        "window_s":
+        want,
         "seeds":
         seeds,
         "fixed":
@@ -1116,7 +1451,8 @@ def validation(runs: Path, sweep: Path, cfg: Row) -> Row:
     plan, overall and per workload."""
     sims = {(Path(r["plan"]).name, r["policy"], str(r.get("capacity"))): r
             for r in read_sweep(sweep)
-            if "summary" in r and r.get("timing", "model") == "model"}
+            if "summary" in r and r.get("timing", "model") == "model"
+            and r.get("window") is None}
     out: List[Row] = []
     cap = cfg["capacity_tokens"]
     for seed in cfg["train_seeds"] + cfg["reported_seeds"]:
@@ -1182,6 +1518,11 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     parser.add_argument("--sweep",
                         type=Path,
                         default=Path("results/m3-sim/sweep.jsonl"))
+    parser.add_argument("--capacity-sweep",
+                        type=Path,
+                        default=Path("results/m3-sim/capacity-window.jsonl"),
+                        help="Cache replay rows made with sim --window "
+                        "(the capacity curve over the measurement window)")
     parser.add_argument("--reports",
                         type=Path,
                         default=Path("results/m3-study"))
@@ -1191,7 +1532,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                         default=Path("results/m3-study/summary.json"))
     args = parser.parse_args(list(argv) if argv is not None else None)
     cfg = load_config(args.config)
-    summary = study(args.runs, cfg, args.sweep, args.reports, args.plans)
+    summary = study(args.runs, cfg, args.sweep, args.reports, args.plans,
+                    args.capacity_sweep)
     from analysis.run_m2_task2 import git_state
     summary["provenance"] = git_state()
     args.out.parent.mkdir(parents=True, exist_ok=True)

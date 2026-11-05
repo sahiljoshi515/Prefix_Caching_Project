@@ -296,3 +296,316 @@ def test_capacity_curve_averages_the_reported_seeds(tmp_path):
     assert out["curve"]["lru"]["seeds"][0] == [0.2, 0.4]
     assert out["ceiling"] == pytest.approx(0.85)
     assert out["engine"] == []
+
+
+# --- The six report questions ----------------------------------------------
+
+
+def test_grouped_usable_sums_the_bailian_traces():
+    row = {
+        "sharegpt": {
+            "requests": 2,
+            "prompt_tokens": 100,
+            "usable_tokens": 50
+        },
+        "bailian-chat": {
+            "requests": 1,
+            "prompt_tokens": 60,
+            "usable_tokens": 30
+        },
+        "bailian-api": {
+            "requests": 3,
+            "prompt_tokens": 40,
+            "usable_tokens": 40
+        },
+        "all": {
+            "requests": 6,
+            "prompt_tokens": 200,
+            "usable_tokens": 120,
+            "fraction": 0.6
+        },
+    }
+    out = st.grouped_usable(row)
+    # Bailian: (30 + 40) of (60 + 40) tokens.
+    assert out["bailian"] == {
+        "requests": 4,
+        "prompt_tokens": 100,
+        "usable_tokens": 70,
+        "fraction": 0.7
+    }
+    assert out["sharegpt"]["fraction"] == 0.5
+    assert out["agentbank"]["fraction"] is None
+    assert out["all"]["fraction"] == 0.6
+
+
+def test_verdict_needs_every_seed_and_half_a_point():
+    assert st.verdict([0.01, 0.02, 0.006]) == "higher"
+    assert st.verdict([-0.01, -0.02, -0.03]) == "lower"
+    assert st.verdict([0.01, -0.001, 0.03]) == "tie"  # one seed disagrees
+    assert st.verdict([0.001, 0.002, 0.003]) == "tie"  # under half a point
+    assert st.verdict([0.01, None]) == "tie"
+
+
+def test_reaccess_intervals_and_the_share_served_per_bin():
+    # Re-accesses (not "first") of the first prefill: 0.5 s (served), 40 s
+    # twice (lost) and 2 s (served, agent); the 0.01 s one is a block a
+    # running request still held, which no policy could have evicted.
+    offered, served = st.reaccess_intervals(lookups(), 10.0, 100.0)
+    assert sorted(offered.tolist()) == [0.5, 2.0, 40.0, 40.0]
+    assert sorted(served.tolist()) == [0.5, 2.0]
+    agent = st.reaccess_intervals(lookups(), 10.0, 100.0, ["agent"])
+    assert agent[1].tolist() == [2.0]
+    view = st.interval_view([offered], [served], [0, 1, 10], 5)
+    shares = [(b["offered"], b["served"], b["share"]) for b in view["by_bin"]]
+    assert shares == [(1, 1, 1.0), (1, 1, 1.0), (2, 0, 0.0)]
+    assert view["by_bin"][-1]["hi"] is None
+    assert view["served"]["n"] == 2 and view["offered"] == 4
+    assert "curve" not in view
+    fine = st.interval_view([offered], [served], [0, 10], 5, [0, 1, 3, 30])
+    counts = [(b["offered"], b["served"]) for b in fine["curve"]]
+    assert counts == [(1, 1), (1, 1), (0, 0), (2, 0)]
+
+
+def write_client(path, rows):
+    import json as _json
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "client.jsonl").write_text("\n".join(_json.dumps(r) for r in rows))
+
+
+def test_latency_by_group_is_the_median_inside_the_window(tmp_path):
+    write_client(tmp_path, [
+        {
+            "workload": "bailian-api",
+            "planned_s": 10,
+            "latency_s": 1.0,
+            "status": "completed"
+        },
+        {
+            "workload": "bailian-chat",
+            "planned_s": 20,
+            "latency_s": 3.0,
+            "status": "completed"
+        },
+        {
+            "workload": "sharegpt",
+            "planned_s": 20,
+            "latency_s": 9.0,
+            "status": "failed"
+        },
+        {
+            "workload": "sharegpt",
+            "planned_s": 5,
+            "latency_s": 7.0,
+            "status": "completed"
+        },
+        {
+            "workload": "sharegpt",
+            "planned_s": 30,
+            "latency_s": 0.5,
+            "status": "completed"
+        },
+    ])
+    assert st.latency_by_group(tmp_path, 10.0, 100.0) == {
+        "bailian": 2.0,
+        "sharegpt": 0.5
+    }
+
+
+def test_capacity_curve_over_the_window_with_belady(tmp_path):
+    import json as _json
+
+    def row(seed, policy, cap, whole, inside, window=(600.0, 1800.0)):
+        return {
+            "plan": f"data/processed/m3/balanced-human-s{seed}",
+            "policy": policy,
+            "capacity": cap,
+            "capacity_tokens": 0 if cap == "ceiling" else cap,
+            "timing": "model",
+            "window": list(window) if window else None,
+            "summary": {
+                "usable_reused_fraction": whole,
+                "window": {
+                    "usable_reused_fraction": inside
+                } if window else None,
+            },
+        }
+
+    rows = [
+        row(2, "lru", 64, 0.1, 0.2),
+        row(3, "lru", 64, 0.1, 0.4),
+        row(2, "belady", 64, 0.1, 0.5),
+        row(3, "belady", 64, 0.1, 0.7),
+        row(2, "lru", "ceiling", 0.1, 0.8),
+        row(3, "lru", "ceiling", 0.1, 0.9),
+        # A whole-run row of the same plan and size is not windowed.
+        {
+            **row(2, "lru", 64, 0.99, 0.99, window=None)
+        },
+    ]
+    sweep = tmp_path / "sweep.jsonl"
+    sweep.write_text("\n".join(_json.dumps(r) for r in rows))
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    cfg = {
+        "mix": "balanced",
+        "pacing": "human",
+        "reported_seeds": [2, 3],
+        "policies": ["lru"],
+        "workloads": W,
+        "block_size": 16,
+        "capacity_tokens": 64
+    }
+    out = st.capacity_curve(runs, sweep, cfg, (600, 1800), ["lru", "belady"])
+    assert out["window_s"] == [600.0, 1800.0]
+    assert out["curve"]["lru"]["hit_rate"] == [pytest.approx(0.3)]
+    assert out["curve"]["belady"]["hit_rate"] == [pytest.approx(0.6)]
+    assert out["curve"]["lru"]["block_hit_rate"] == [None]
+    assert out["ceiling"] == pytest.approx(0.85)
+    # Without the window only the whole-run row counts.
+    whole = st.capacity_curve(runs, sweep, cfg)
+    assert whole["curve"]["lru"]["hit_rate"] == [None]
+
+
+def write_tables(run, requests, lookups_):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    (run / "tables").mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table(requests), run / "tables" / "requests.parquet")
+    pq.write_table(pa.table(lookups_), run / "tables" / "lookups.parquet")
+
+
+def toy_run(run, rid, workload, usable_hits, intervals, usable, latency):
+    """One request of 2 blocks (32 tokens) planned at 20 s, whose two
+    lookups are re-accesses with `intervals`, `usable` of them served."""
+    write_tables(
+        run, {
+            "req": [rid],
+            "workload": [workload],
+            "session": ["x"],
+            "turn": [1],
+            "planned_s": [20.0],
+            "status": ["completed"],
+            "prompt_tokens": [32],
+            "prompt_blocks": [2],
+            "hits": [usable_hits],
+            "usable_hits": [usable_hits],
+            "hits_after_miss": [0],
+            "cached_tokens": [16 * usable_hits],
+            "preempted": [0]
+        }, {
+            "req": [rid] * 2,
+            "workload": [workload] * 2,
+            "turn": [1, 1],
+            "planned_s": [20.0, 20.0],
+            "prefill": [0, 0],
+            "index": [0, 1],
+            "hit": usable,
+            "usable": usable,
+            "in_use": [False, False],
+            "source": ["same_session"] * 2,
+            "interval_s": intervals,
+            "requests_between": [0, 0],
+            "evicted_before": [False, False]
+        })
+    write_client(run, [{
+        "workload": workload,
+        "planned_s": 20.0,
+        "latency_s": latency,
+        "status": "completed"
+    }])
+
+
+def test_isolation_compares_each_workload_alone_and_in_the_mix(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(st, "GROUPS", ("sharegpt", "bailian"))
+    cfg = {
+        "w0_s": 0.0,
+        "stop_s": 100.0,
+        "block_size": 16,
+        "workloads": ["sharegpt", "bailian-chat"],
+        "capacity_tokens": 64,
+        "pacing": "human",
+        "reported_seeds": [2],
+        "policies": ["lru", "fifo"],
+        "served_interval_edges_s": [0, 10],
+        "cdf_points": 3,
+        "interval_bins_s": [0, 10]
+    }
+    runs = tmp_path / "runs"
+    # Alone, ShareGPT keeps both blocks under LRU and one under FIFO;
+    # Bailian keeps one under either.
+    for policy, sg in (("lru", 2), ("fifo", 1)):
+        toy_run(runs / f"alone-sharegpt-human-s2-{policy}-cap64",
+                "sharegpt:x:1", "sharegpt", sg, [5.0, 50.0], [True, sg == 2],
+                0.5)
+        toy_run(runs / f"alone-bailian-human-s2-{policy}-cap64",
+                "bailian-chat:y:1", "bailian-chat", 1, [5.0, 50.0],
+                [True, False], 1.0)
+
+    def usable(sg, bl):
+        return {
+            "sharegpt": {
+                "requests": 1,
+                "prompt_tokens": 32,
+                "usable_tokens": 16 * sg
+            },
+            "bailian-chat": {
+                "requests": 1,
+                "prompt_tokens": 32,
+                "usable_tokens": 16 * bl
+            },
+            "all": {
+                "requests": 2,
+                "prompt_tokens": 64,
+                "usable_tokens": 16 * (sg + bl),
+                "fraction": None
+            }
+        }
+
+    # In the mix both keep one block each; the ceiling keeps both.
+    headline = {
+        "lru": {
+            2: usable(1, 1)
+        },
+        "fifo": {
+            2: usable(1, 1)
+        },
+        "ceiling": {
+            2: usable(2, 2)
+        }
+    }
+    latency = {
+        2: {
+            "lru": {
+                "sharegpt": 0.8,
+                "bailian": 1.5
+            },
+            "fifo": {
+                "sharegpt": 0.9,
+                "bailian": 1.6
+            }
+        }
+    }
+    lookups_ = {2: {"sharegpt": 2, "bailian": 2}}
+    out = st.isolation_study(runs, cfg, headline, latency, lookups_)
+    lru = out["rows"]["sharegpt"]["lru"]
+    assert lru["alone"]["mean"] == 1.0 and lru["mixed"]["mean"] == 0.5
+    assert lru["alone_minus_mixed"]["mean"] == 0.5
+    assert lru["verdict"] == "higher"
+    assert lru["mixed_efficiency"]["mean"] == 0.5
+    assert lru["latency_alone_s"]["mean"] == 0.5
+    assert lru["latency_mixed_s"]["mean"] == 0.8
+    assert out["rows"]["sharegpt"]["fifo"]["verdict"] == "tie"
+    assert out["rows"]["bailian"]["lru"]["alone_minus_mixed"]["mean"] == 0
+    assert out["rows"]["sharegpt"]["requests"]["mean"] == 1
+    assert out["rows"]["sharegpt"]["prompt_tokens_per_s"]["mean"] == 0.32
+    # Alone, FIFO serves ShareGPT's 5 s reuse and loses the 50 s one.
+    bins = out["intervals"]["sharegpt"]["fifo"]["by_bin"]
+    assert [(b["offered"], b["served"]) for b in bins] == [(1, 1), (1, 0)]
+    assert out["vs_lru"]["sharegpt"]["fifo"]["verdict"] == "lower"
+    assert all(r["lookups"] == r["mixed_lookups"] == 2
+               for r in out["integrity"])
+    # A missing run's tables: no comparison yet.
+    import shutil
+    shutil.rmtree(runs / "alone-bailian-human-s2-fifo-cap64" / "tables")
+    assert st.isolation_study(runs, cfg, headline, latency, lookups_) is None

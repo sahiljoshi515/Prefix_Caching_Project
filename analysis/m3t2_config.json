@@ -103,6 +103,12 @@
   ],
   "cdf_points": 160,
   "timeline_step_s": 60,
+  "served_interval_edges_s": [
+    0,
+    10,
+    60,
+    300
+  ],
   "sim_capacities": [
     32768,
     49152,
