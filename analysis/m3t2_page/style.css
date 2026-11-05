@@ -166,6 +166,7 @@ figure.chart { margin: 0; background: var(--surface); border: 1px solid var(--ru
 .panel-title { font-size: 0.85rem; font-weight: 600; color: var(--ink-2); }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.82rem; color: var(--ink-2); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend span > span { font-size: 0.8rem; line-height: 1; }
 .key-line { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
 .key-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 .key-rect { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }

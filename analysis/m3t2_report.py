@@ -191,7 +191,35 @@ def build_data(s: Row) -> Row:
         data["signals"] = signals_view(s["signals"])
     if "paper" in s:
         data["paper"] = paper_view(s["paper"], cfg["workload_labels"])
+        data["freq_ceiling"] = ceiling_frequency(s["paper"])
+    if data.get("beladySplit"):
+        # Token-weighted: a workload's gain times its share of prompt tokens
+        # (seeds 1-4, the seeds the sweep averages).
+        tok = {
+            w: sum(s["mix"][k]["workloads"][w]["prompt_token_share"]
+                   for k in s["mix"]) / len(s["mix"])
+            for w in W
+        }
+        b = data["beladySplit"]
+        gain = {w: (b["belady"][w] - b["lru"][w]) * tok[w] for w in W}
+        total = sum(gain.values()) or 1
+        b["token_share_of_gain"] = {w: g / total for w, g in gain.items()}
     return data
+
+
+def ceiling_frequency(r: Row) -> Optional[Dict[str, float]]:
+    """No-eviction runs: the chance a block is used again after 0, 1, 2 and
+    3+ past uses (paper check 9's mix values, averaged over runs)."""
+    row = next((x for x in r.get("rows", []) if x.get("claim") == 9), None)
+    if not row or not isinstance(row.get("mix"), dict):
+        return None
+    runs = [
+        v["all"]["future_reuse_by_past_accesses"] for v in row["mix"].values()
+        if isinstance(v, dict) and "all" in v
+    ]
+    if not runs:
+        return None
+    return {k: sum(x[k] for x in runs) / len(runs) for k in runs[0]}
 
 
 # Report views (identification, signals, paper checks) ------------------
@@ -247,6 +275,13 @@ def identify_view(r: Row, workloads: List[str]) -> Row:
         row = conf.get(w, {})
         tot = sum(row.values()) or 1
         share.append([row.get(c, 0) / tot for c in workloads])
+    col = {
+        c: sum(conf.get(w, {}).get(c, 0) for w in workloads)
+        for c in workloads
+    }
+    fallback = max(workloads, key=lambda c: col[c] - conf.get(c, {}).get(c, 0))
+    fallback_wrong = (col[fallback] - conf.get(fallback, {}).get(
+        fallback, 0)) / max(1, col[fallback])
     worst = sorted(((share[i][j], workloads[i], workloads[j])
                     for i in range(len(workloads))
                     for j in range(len(workloads)) if i != j),
@@ -303,6 +338,10 @@ def identify_view(r: Row, workloads: List[str]) -> Row:
             "propagation":
             p["propagation"]["accuracy"] if "accuracy" in p.get(
                 "propagation", {}) else None,
+            "fallback":
+            fallback,
+            "fallback_wrong":
+            fallback_wrong,
             "ccbench_known":
             tree["ccbench_known_task_accuracy"],
             "ccbench_new":
@@ -315,9 +354,23 @@ def identify_view(r: Row, workloads: List[str]) -> Row:
     }
 
 
+LANDMARKS = (0, 5, 30, 120)
+
+
 def signals_view(r: Row) -> Row:
-    """AUC of each feature set, pooled over idle ages, per horizon."""
+    """AUC of each feature set among blocks idle equally long (each
+    landmark idle age, one-minute horizon), and pooled per horizon.
+
+    Pooled over idle ages, idle time alone scores above 0.5 only because
+    the pool mixes ages; at one idle age it is exactly 0.5. So the page
+    compares signals at equal idle time."""
     horizons = [int(h) for h in r["settings"]["horizons_s"]]
+    by_age = {
+        fs:
+        {str(a): r["models"][fs]["H=60"][f"a={a}"]["auc"]
+         for a in LANDMARKS}
+        for fs, _ in FEATURE_SETS if fs in r["models"]
+    }
     auc = {
         fs:
         {str(h): r["models"][fs][f"H={h}"]["pooled"]["auc"]
@@ -333,6 +386,10 @@ def signals_view(r: Row) -> Row:
             return None
 
     return {
+        "landmarks":
+        list(LANDMARKS),
+        "by_age":
+        by_age,
         "horizons":
         horizons,
         "rows": [{
@@ -452,8 +509,15 @@ def _claim_text(c: int, raw: Row, mix: Row,
     elif c == 9:
         rtxt = ("chance a block is used again after 0/1/2/3+ past uses: "
                 f"A {_future(raw[a])}, B {_future(raw[b])}")
-        m0 = next(iter(mix.values()), {}).get("all", {})
-        mtxt = f"whole mix {_future(m0)}: frequency is informative"
+        keys = ("0", "1", "2", "3+")
+        m0 = {
+            "future_reuse_by_past_accesses": {
+                k: _mix_mean(mix, "all", "future_reuse_by_past_accesses", k)
+                for k in keys
+            }
+        }
+        mtxt = (f"whole mix {_future(m0)} (mean of seeds 2–4): frequency "
+                "is informative")
     else:
         m0 = next(iter(mix.values()), {}).get("live_blocks", {})
         rtxt = "blocks with a future reuse (full rate): " + ", ".join(

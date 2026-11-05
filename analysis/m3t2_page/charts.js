@@ -37,6 +37,13 @@
     const box = el("div", { class: "legend" });
     for (const it of items) {
       const s = el("span");
+      if (it.glyph) {
+        const g = el("span", { "aria-hidden": "true" }, it.glyph);
+        g.style.color = it.color;
+        s.append(g, document.createTextNode(it.label));
+        box.append(s);
+        continue;
+      }
       const key = el("i", { class: it.kind === "dot" ? "key-dot" :
         it.kind === "rect" ? "key-rect" : "key-line" });
       key.style.background = it.color;
@@ -140,7 +147,7 @@
       marginLeft: o.marginLeft || 150, marginRight: 24, marginBottom: 36,
       style: baseStyle(),
       x: { domain: o.xDomain || [0, 1], label: o.xLabel, grid: true,
-           tickFormat: (v) => pct(v) },
+           tickFormat: (v) => (o.fmt || pct)(v) },
       y: { domain: order, label: null },
       marks: [
         Plot.link(gaps, { x1: "x1", x2: "x2", y1: "row", y2: "row",
@@ -155,7 +162,7 @@
           fill: "color", stroke: tok("--surface"), strokeWidth: 1.5,
           symbol: "shape" }),
         Plot.tip(rows, Plot.pointer({ x: "x", y: "row", title: (d) =>
-          d.row + "\n" + d.policy + ": " + pct(d.x, 1) +
+          d.row + "\n" + d.policy + ": " + (o.fmt ? o.fmt(d.x) : pct(d.x, 1)) +
           (d.lo != null && d.hi != null && d.lo !== d.hi ?
             "  (seeds " + pct(d.lo, 1) + "–" + pct(d.hi, 1) + ")" : "") +
           (d.extra ? "\n" + d.extra : "") })),
@@ -454,19 +461,24 @@
   draw["fig-signals"] = (node) => {
     const S = D.signals;
     if (!S) { node.append(el("p", {}, "Signals report missing.")); return; }
+    const ages = S.landmarks;
+    const ageLabel = (a) => a === 0 ? "just freed" :
+      "idle " + (a < 60 ? a + " s" : a / 60 + " min");
+    // High-contrast ramp steps first; the last age is drawn in grey.
+    const ramp = ["--seq-5", "--seq-4", "--seq-3", "--muted"];
+    const glyphs = ["●", "◆", "■", "▲"];
+    const rows = S.rows.filter((r) => r.id !== "idle_age");
     dots(node, {
-      rows: S.rows.map((r) => ({ id: r.id, label: r.label })),
-      xDomain: [0.5, 1], marginLeft: 220,
-      xLabel: "How well it predicts a reuse (AUC: 0.5 = coin flip, 1 = perfect) →",
-      marks: S.horizons.map((h, i) => ({ id: "h" + h, label: "within " +
-        secs(h), color: tok(["--seq-2", "--seq-3", "--seq-5"][i] || "--ink"),
-        shape: ["circle", "diamond", "square"][i] || "circle",
-        values: Object.fromEntries(S.rows.map((r) => [r.id,
-          { mean: S.auc[r.id][String(h)] }])) })),
+      rows: rows.map((r) => ({ id: r.id, label: r.label.replace(/^\+ /, "") })),
+      xDomain: [0.4, 1], marginLeft: 220, fmt: (v) => v.toFixed(2),
+      xLabel: "Ranks blocks that come back within a minute (AUC) →",
+      marks: ages.map((a, i) => ({ id: "a" + a, label: ageLabel(a),
+        color: tok(ramp[i]), shape: ["circle", "diamond", "square",
+          "triangle"][i], values: Object.fromEntries(rows.map((r) => [r.id,
+          { mean: S.by_age[r.id][String(a)] }])) })),
     });
-    legend(node, S.horizons.map((h, i) => ({ label: "Comes back within " +
-      secs(h), kind: "dot",
-      color: tok(["--seq-2", "--seq-3", "--seq-5"][i] || "--ink") })));
+    legend(node, ages.map((a, i) => ({ label: "Blocks " + ageLabel(a),
+      glyph: glyphs[i], color: tok(ramp[i]) })));
   };
 
   draw["fig-capacity"] = (node) => {
@@ -561,10 +573,12 @@
     "fig-confusion": () => D.identify ? [["True \\ predicted", ...W.map((w) =>
       LABEL[w])], W.map((w, i) => [LABEL[w], ...D.identify.confusion.share[i]
         .map((v) => pct(v, 1))])] : null,
-    "fig-signals": () => D.signals ? [["Signals", ...D.signals.horizons.map(
-      (h) => "AUC, back within " + secs(h))], D.signals.rows.map((r) =>
-      [r.label, ...D.signals.horizons.map((h) =>
-        D.signals.auc[r.id][String(h)].toFixed(3))])] : null,
+    "fig-signals": () => D.signals ? [["Signals (AUC, back within a minute)",
+      ...D.signals.landmarks.map((a) => a === 0 ? "just freed" :
+        "idle " + (a < 60 ? a + " s" : a / 60 + " min"))],
+      D.signals.rows.map((r) => [r.label,
+      ...D.signals.landmarks.map((a) =>
+        D.signals.by_age[r.id][String(a)].toFixed(3))])] : null,
     "fig-capacity": () => D.capacity ? [["Cache (tokens)", "Belady", "LRU",
       "LFU", "FIFO"], D.capacity.capacities.map((c, i) => [num(c),
       ...["belady", "lru", "lfu", "fifo"].map((p) =>

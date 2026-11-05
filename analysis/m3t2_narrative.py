@@ -48,6 +48,25 @@ def _strip(states: List[str]) -> str:
     return "".join(f'<i class="cell {x}"></i>' for x in states)
 
 
+def _lfu_phrase(s: Row) -> Tuple[str, str]:
+    """How LFU compares with LRU overall, in words, and the workloads where
+    it loses on every seed (by more than 3 points on average)."""
+    v = _vs(s, "lfu")
+    if _tie(v):
+        overall = "ties with LRU"
+    elif abs(v["mean"]) < 0.025:
+        overall = "is close to LRU"
+    else:
+        overall = "beats LRU" if v["mean"] > 0 else "trails LRU"
+    lab = _labels(s)
+    loses = [
+        lab[w] for w in s["config"]["workloads"]
+        if max(s["headline"]["lfu"][w]["vs_lru"]["seeds"]) < 0
+        and s["headline"]["lfu"][w]["vs_lru"]["mean"] < -0.03
+    ]
+    return overall, ", ".join(loses)
+
+
 def _came_back(data: Row, w: str, t: float) -> float:
     g = data["comeBack"]["grid"]
     return data["comeBack"]["series"][w][g.index(t)]
@@ -110,27 +129,29 @@ def answers(s: Row, data: Row) -> str:
     lfu_keep = data["retention"]["lfu"]["p50"]
     ceil, lru = _u(s, "ceiling", "all"), _u(s, "lru", "all")
     lfu, fifo = _u(s, "lfu", "all"), _u(s, "fifo", "all")
-    lfu_v = _vs(s, "lfu")
-    lfu_word = ("ties with LRU" if _tie(lfu_v) else
-                ("beats LRU" if lfu_v["mean"] > 0 else "trails LRU"))
+    lfu_word = _lfu_phrase(s)[0]
     idn = (data.get("identify") or {}).get("numbers") or {}
-    auc = (data.get("signals") or {}).get("auc", {})
+    age = (data.get("signals") or {}).get("by_age", {})
     q3 = ""
     if idn:
         q3 = (f"The first two blocks of a prompt, a fingerprint of its "
               f"system prompt or task, name {pct(idn['fingerprint'])} of new "
-              f"requests without a single mistake. A small decision tree on "
-              f"prompt length, turn number and timing names the rest, for "
-              f"{pct(idn['accuracy'])} overall. No labels are needed.")
+              f"requests without a mistake. A small decision tree on prompt "
+              f"length, turn number and timing names the rest, for "
+              f"{pct(idn['accuracy'])} overall. It is trained once on one "
+              "labelled half hour and then needs no labels.")
     design = ""
-    if auc:
-        extra = auc["label_free+oracle"]["60"] - auc["label_free"]["60"]
-        design = (f"How long a block has sat idle, the only thing LRU looks "
-                  f"at, predicts its return with an AUC of "
-                  f"{auc['idle_age']['60']:.2f} (0.5 is a coin flip). Adding "
-                  f"its past hits gives {auc['+hits_before']['60']:.2f}, and "
-                  f"all label-free signals {auc['label_free']['60']:.2f}. The "
-                  f"true workload label adds only {extra:.2f}.")
+    if age:
+        hb, lf, lo = (age["+hits_before"], age["label_free"],
+                      age["label_free+oracle"])
+        design = (f"Among blocks that have sat idle equally long, which is "
+                  f"all LRU can see, past hits pick out the ones that will "
+                  f"come back (AUC {hb['0']:.2f} for blocks just freed, "
+                  f"{hb['30']:.2f} after 30 idle seconds; 0.5 is a coin "
+                  f"flip). The true workload label adds "
+                  f"{lo['0'] - lf['0']:.2f} for fresh blocks and up to "
+                  f"{max(lo['30'] - lf['30'], lo['120'] - lf['120']):.2f} "
+                  "for blocks idle 30 seconds to 2 minutes.")
     return f"""
 <section class="answers" aria-label="Short answers">
   <div class="answer"><span class="q">Question 1 · reuse interval</span>
@@ -239,9 +260,17 @@ def headline(s: Row, data: Row) -> str:
         return ("ties with"
                 if _tie(v) else "beats" if v["mean"] > 0 else "trails")
 
-    claim = (f"LFU {word(lfu_v)} LRU, FIFO {word(fifo_v)} it, and all three "
-             "are far from the ceiling")
+    lfu_overall, lfu_loses = _lfu_phrase(s)
+    claim = (f"LFU {lfu_overall}"
+             f"{' but loses ' + lfu_loses if lfu_loses else ''}; FIFO "
+             f"{word(fifo_v)} LRU; all three are far from the ceiling")
     lab, sg = _labels(s), "sharegpt"
+    wins = [
+        lab[w] for w in s["config"]["workloads"]
+        if min(s["headline"]["lfu"][w]["vs_lru"]["seeds"]) > 0
+    ]
+    win_txt = (f", yet beats LRU on {' and '.join(wins)} in every seed"
+               if wins else "")
     lead = ("Overall ties hide large swings per workload"
             if _tie(lfu_v) else "The totals hide large swings per workload")
     return f"""
@@ -255,10 +284,12 @@ never evicts.</p>
 {figure("fig-headline", claim, ["measured:measured, 3 seeds"],
         f"{lead}: LFU serves "
         f"{lab[sg]} {pct(_u(s, 'lfu', sg))} against LRU's "
-        f"{pct(_u(s, 'lru', sg))}. Agents lose little under any policy; "
-        "human-paced workloads lose most of their reuse. The new policy has "
-        "to win back human returns without giving up the agents' reuse, and "
-        "it must be judged per workload.")}
+        f"{pct(_u(s, 'lru', sg))}{win_txt}. The agents keep most of their "
+        f"reuse under every policy (CC-Bench {pct(_u(s, 'lru', 'ccbench'))} "
+        f"of a possible {pct(_u(s, 'ceiling', 'ccbench'))} under LRU); the "
+        "human-paced workloads lose most of theirs. The new policy has to "
+        "win back human returns without giving up the agents' reuse, and it "
+        "must be judged per workload.")}
 </section>"""
 
 
@@ -386,7 +417,7 @@ def q3(s: Row, data: Row) -> str:
         return ""
     confused = "; ".join(f"{pct(x)} of {lab[a]} requests look like {lab[b]}"
                          for x, a, b in idn["worst"])
-    auc, base = sig.get("auc", {}), sig.get("base", {})
+    age, base = sig.get("by_age", {}), sig.get("base", {})
     base_txt = ""
     if base:
         b0, b30 = base["0"], base["30"]
@@ -394,26 +425,40 @@ def q3(s: Row, data: Row) -> str:
                     f"CC-Bench's and {pct(b0['bailian-thinking'])} of Bailian "
                     f"thinking's come back within a minute; after 30 idle "
                     f"seconds, {pct(b30['ccbench'])} and "
-                    f"{pct(b30['bailian-thinking'])}. Scores are pooled over "
-                    "blocks idle for 0, 5, 30 and 120 seconds.")
+                    f"{pct(b30['bailian-thinking'])}. Each mark compares "
+                    "blocks that have sat idle equally long, so idle time, "
+                    "the only thing LRU looks at, cannot separate them (it "
+                    "would score 0.5).")
     sig_take = ""
-    if auc:
-        sig_take = (f"Past hits are the strongest single signal "
-                    f"({auc['+hits_before']['60']:.2f} within a minute), "
-                    f"stronger than the true workload label "
-                    f"({auc['+oracle_workload']['60']:.2f}). A policy can "
-                    "rank blocks with label-free signals and keep almost all "
-                    "of what the label offers. LFU fails despite using the "
-                    "best signal because it applies it to blocks that have "
-                    "had no chance to be reused yet.")
+    if age:
+        hb, ow = age["+hits_before"], age["+oracle_workload"]
+        lf, lo = age["label_free"], age["label_free+oracle"]
+        beats = [a for a in ("0", "5", "30", "120") if hb[a] > ow[a]]
+        when = ("at every idle time"
+                if len(beats) == 4 else f"for blocks idle up to {beats[-1]} s"
+                if beats and beats == ["0", "5", "30", "120"][:len(beats)] else
+                "at some idle times")
+        sig_take = (f"Past hits are the best single signal {when}: AUC "
+                    f"{hb['0']:.2f} for blocks just freed and {hb['30']:.2f} "
+                    f"after 30 idle seconds, against {ow['0']:.2f} and "
+                    f"{ow['30']:.2f} for the true workload label. All "
+                    f"label-free signals together reach {lf['0']:.2f} and "
+                    f"{lf['30']:.2f}; adding the true label gains "
+                    f"{lo['0'] - lf['0']:.2f} for fresh blocks and "
+                    f"{lo['30'] - lf['30']:.2f} after 30 s. LFU counts past "
+                    "hits too, but evicts fresh blocks before they have had "
+                    "a chance to be reused.")
     return f"""
 <section class="section" aria-labelledby="q3"><h2 id="q3">Question 3: can a
 server tell which workload a request belongs to?</h2>
 <p class="prose">A server sees only tokens and timing. We gave a classifier
-only what a server could know when a request arrives, trained it on seed 1
-and tested it on seeds 2 to 4. It never reads the token values themselves,
-only whether blocks were seen before, how long prompts are and how they
-grow.</p>
+only what a server could know when a request arrives: whether each block's
+hash, which the cache computes anyway, was seen before, how long prompts are
+and how they grow, and the time since the session's last turn. It was
+trained once on seed 1, where the true labels are known, and tested on seeds
+2 to 4 with no labels. The test seeds replay later half hours of the same
+Bailian traces, so system prompts seen in training come back; a new
+deployment would need its own training pass.</p>
 {figure("fig-ladder", "A prompt fingerprint names most requests; a small "
         "tree names the rest", ["measured:plans of seeds 2–4, trained on "
         "seed 1"],
@@ -426,8 +471,11 @@ grow.</p>
 {figure("fig-confusion", "Which workloads get confused", ["measured:plans "
         "of seeds 2–4"],
         f"The mistakes are mostly first requests with short prompts: "
-        f"{confused}. A policy that falls back to a neutral default when "
-        "unsure loses little.")}
+        f"{confused}. The tree's guess when unsure is "
+        f"{lab.get(idn.get('fallback'), idn.get('fallback'))}: "
+        f"{pct(idn.get('fallback_wrong'))} of requests it names that way are "
+        "something else. A policy should treat that name as weak evidence "
+        "and revise it as the session's next turns arrive.")}
 {figure("fig-signals", "What predicts that an idle block will come back",
         ["measured:no-eviction runs, trained on seed 1"], sig_take,
         note=base_txt)}
@@ -466,6 +514,8 @@ def headroom(s: Row, data: Row) -> str:
     if not b:
         return ""
     gain = b["belady_all"] - b["lru_all"]
+    share = b.get("token_share_of_gain", {})
+    human_share = sum(v for w, v in share.items() if w in HUMAN)
     cap = data.get("capacity") or {}
     lru_curve = cap.get("curves", {}).get("lru", [])
     caps = cap.get("capacities", [])
@@ -473,13 +523,13 @@ def headroom(s: Row, data: Row) -> str:
     catch = next((c for c, v in zip(caps, lru_curve)
                   if v is not None and v >= b["belady_all"]), None)
     if catch is None and caps:
-        title = (f"A smarter policy is worth more than "
+        title = (f"A policy that knew the future would beat "
                  f"{caps[-1] / cap['fixed']:.0f} times the memory")
         size_txt = (f" LRU does not reach that even with "
                     f"{caps[-1]:,} tokens, {caps[-1] / cap['fixed']:.0f} "
                     "times the cache.")
     else:
-        title = "A smarter policy is worth a bigger cache"
+        title = "A policy that knew the future would equal a bigger cache"
         size_txt = (f" LRU needs {catch:,} tokens to match it."
                     if catch else "")
     gaps = [
@@ -503,11 +553,16 @@ engine runs closely (see Checks).</p>
 {figure("fig-capacity", title, ["sim:simulator"],
         f"At the fixed cache, Belady serves {pct(b['belady_all'])} against "
         f"LRU's {pct(b['lru_all'])}: {pts(gain)} are there for a better "
-        f"policy to win.{size_txt}{gap_txt}")}
+        f"policy to win, and a real policy will win back only part of it."
+        f"{size_txt}{gap_txt} These runs average seeds 1 to 4 with the "
+        f"simulator's own timing, so LRU reads {pct(b['lru_all'])} here "
+        f"against {pct(_u(s, 'lru', 'all'))} in the engine runs above.")}
 {figure("fig-belady", "Where the headroom is", ["sim:simulator"],
-        "The room to gain is in the human-paced workloads. Belady maximises "
-        "the total, so its split across workloads is one good allocation, "
-        "not a limit for each workload.")}
+        f"Counted in tokens, {pct(human_share)} of Belady's gain is in the "
+        f"human-paced workloads and {pct(share.get('ccbench', 0))} in "
+        "CC-Bench alone, whose long prompts make a few points worth many "
+        "tokens. Belady maximises the total, so its split across workloads "
+        "is one good allocation, not a limit for each workload.")}
 </section>"""
 
 
@@ -517,18 +572,22 @@ def signals(s: Row, data: Row) -> str:
     a_lo, a_hi = _range(s, AGENTS)
     keep = data["retention"]["lru"]["p50"]
     d = data["density"]["lru"]
-    fr = s["policy_views"]["lfu"]["frequency"]["all"]
-    auc = (data.get("signals") or {}).get("auc", {})
+    fr = data.get("freq_ceiling") or {}
+    age = (data.get("signals") or {}).get("by_age", {})
     idn = (data.get("identify") or {}).get("numbers") or {}
     src = s["q2"]["sources"]
     label_row = ""
-    if idn and auc:
-        extra = auc["label_free+oracle"]["60"] - auc["label_free"]["60"]
-        label_row = (f"A fingerprint plus a small tree names "
-                     f"{pct(idn['accuracy'])} of requests without labels; the "
-                     f"true label adds {extra:.2f} AUC over label-free "
-                     "signals.")
-    hb = auc.get("+hits_before", {}).get("60")
+    if idn and age:
+        lf, lo = age["label_free"], age["label_free+oracle"]
+        late = max(lo["30"] - lf["30"], lo["120"] - lf["120"])
+        label_row = (f"After training on one labelled half hour, a "
+                     f"fingerprint plus a small tree names "
+                     f"{pct(idn['accuracy'])} of requests. Among blocks idle "
+                     f"equally long, the true label adds "
+                     f"{lo['0'] - lf['0']:.2f} AUC over label-free signals "
+                     f"for fresh blocks and up to {late:.2f} for blocks idle "
+                     "30 s to 2 min.")
+    hb = age.get("+hits_before", {})
     rows = [
         ("How soon a session returns",
          f"Agents return in {secs(a_lo)} to {secs(a_hi)} (median); people in "
@@ -540,10 +599,15 @@ def signals(s: Row, data: Row) -> str:
          "No: the time since the session's previous turn is visible to the "
          "server.",
          "Holding human history uses space the agents could have used."),
-        ("Past hits", f"Blocks freed with 0, 1 and 2+ past hits came back "
-         f"{pct(fr['0']['revived_share'])}, {pct(fr['1']['revived_share'])} "
-         f"and {pct(fr['2+']['revived_share'])} of the time under LFU" +
-         (f"; AUC {hb:.2f}." if hb else "."),
+        ("Past hits",
+         (f"In the no-eviction runs, blocks with 0, 1, 2 and "
+          f"3+ past uses were used again {pct(fr.get('0'))}, "
+          f"{pct(fr.get('1'))}, {pct(fr.get('2'))} and {pct(fr.get('3+'))} "
+          "of the time (mean of seeds 2–4)" if fr else "No-eviction runs "
+          "missing") +
+         (f"; among blocks idle equally long, AUC "
+          f"{hb['0']:.2f} just freed and {hb['30']:.2f} after 30 s."
+          if hb else "."),
          "Rank idle blocks by recent hits, decayed over time, and protect "
          "blocks younger than their session's usual return time.", "No.",
          "Counts go stale; LFU without protection collapses on fresh "
@@ -577,7 +641,8 @@ def signals(s: Row, data: Row) -> str:
         ("Who the request is", label_row,
          "Run label-free, with oracle labels only as the upper bound to "
          "compare against (spec 007 label modes).", "No, by design.",
-         "A session's first request is the least certain."),
+         "A session's first request is the least certain, and the "
+         "fingerprints come from the same traces' earlier half hour."),
     ]
     body = "".join("<tr>" + "".join(f"<td>{esc(x)}</td>" for x in r) + "</tr>"
                    for r in rows)
