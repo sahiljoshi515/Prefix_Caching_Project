@@ -402,7 +402,7 @@
             W.map((w) => [w, { mean: d[w].revive }])) },
       ],
     });
-    legend(node, [{ label: "Share of idle cache time (block-seconds)",
+    legend(node, [{ label: "Share of the time idle blocks spend in the cache",
       color: tok("--muted"), kind: "rect" }, { label: "Share of reuses " +
       "served from idle blocks", color: tok("--accent"), kind: "dot" }]);
   };
@@ -489,7 +489,7 @@
       x: c.capacities, xType: "log", xDomain: [c.capacities[0],
         c.capacities[c.capacities.length - 1]], height: 300,
       xLabel: "Cache size in tokens (log; 1K = 1,024) →",
-      yLabel: "↑ Usable reuse (simulator)",
+      yLabel: "↑ Usable reuse (cache replay)",
       xFmt: (x) => num(x) + " tokens",
       xTick: (v) => Math.round(v / 1024) + "K", xTicks: c.capacities,
       yDomain: [0, Math.max(0.8, c.ceiling + 0.02)],
@@ -509,7 +509,7 @@
     if (!b) return;
     dots(node, {
       rows: wlRows,
-      xLabel: "Usable reuse with a 131,072-token cache (simulator) →",
+      xLabel: "Usable reuse with a 131,072-token cache (cache replay) →",
       gap: { from: b.lru, to: b.belady },
       marks: ["ceiling", "belady", "lru"].map((p) => ({ id: p,
         label: POLICY[p], color: pol(p), shape: SHAPE[p],

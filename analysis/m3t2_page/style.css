@@ -197,3 +197,5 @@ dl.glossary dd { margin: 0; color: var(--ink-2); }
 /* Plot's own tooltip and axes follow the page tokens. */
 svg[class^="plot"] { --plot-background: var(--surface); }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+
+.section.strip { gap: 12px; }

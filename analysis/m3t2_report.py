@@ -7,7 +7,7 @@ Writes one self-contained HTML page (spec 007 FR-011, constitution V):
 every number in its text and charts is read from ``summary.json``
 (``analysis/m3t2_study.py``); the charts are drawn in the browser by
 ``analysis/m3t2_page/charts.js`` with Observable Plot, styled by
-``analysis/m3t2_page/style.css``. Simulator figures carry a "simulator"
+``analysis/m3t2_page/style.css``. Cache-replay figures carry a "cache replay"
 badge; everything else comes from ``vllm serve`` runs.
 """
 import argparse
@@ -285,7 +285,7 @@ def identify_view(r: Row, workloads: List[str]) -> Row:
     worst = sorted(((share[i][j], workloads[i], workloads[j])
                     for i in range(len(workloads))
                     for j in range(len(workloads)) if i != j),
-                   reverse=True)[:2]
+                   reverse=True)[:3]
     no_timing = r["without_timing"]["pooled"]["tree"]["accuracy"]
     return {
         "ladder": {
@@ -488,7 +488,18 @@ def _claim_text(c: int, raw: Row, mix: Row,
         }
         rtxt = "hour 2's rate against hour 1's: " + ", ".join(
             f"{TRACE[w]} {v:.2f}×" for w, v in rr.items() if v)
-        mtxt = "holds between the two halves of a run"
+        own = [_dig(v, "ks_own_fit_weighted") for v in mix.values()]
+        refit = [_dig(v, "ks_refit_weighted") for v in mix.values()]
+        within = [_dig(v, "rate_within_1_5x_share") for v in mix.values()]
+        if all(x is not None for x in own + refit + within) and own:
+            mtxt = ("a fit to a run's first half is almost as good as "
+                    "refitting its second half (KS " + "/".join(f"{x:.2f}"
+                                                                for x in own) +
+                    " against " + "/".join(f"{x:.2f}" for x in refit) +
+                    "), but rates stay within 1.5× for only " +
+                    f"{pct(min(within))}–{pct(max(within))} of blocks")
+        else:
+            mtxt = "–"
     elif c == 7:
         parts = []
         for w in (a, t, c_):
@@ -602,6 +613,7 @@ def render(s: Row, data: Row, sections: Dict[str, str]) -> str:
 <main class="page">
 {sections["header"]}
 {sections["answers"]}
+{sections["example"]}
 {sections["glossary"]}
 {sections["mix"]}
 {sections["headline"]}

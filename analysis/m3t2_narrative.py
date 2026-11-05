@@ -75,12 +75,10 @@ def _came_back(data: Row, w: str, t: float) -> float:
 # Header and answers --------------------------------------------------------
 
 
-def header(s: Row, data: Row) -> str:
+def _example_strip(s: Row) -> str:
+    """One real request, block by block, under every policy."""
     cfg = s["config"]
     e = s.get("example") or {}
-    commit = (s.get("provenance") or {}).get("commit", "")[:8]
-    runs = (len(cfg["policies"]) + 1) * len(cfg["reported_seeds"])
-    seeds = ", ".join(str(x) for x in cfg["reported_seeds"])
     strip = ""
     if e:
         n = len(e["ceiling"])
@@ -93,7 +91,8 @@ def header(s: Row, data: Row) -> str:
             f'{_strip(states)}</span></div>' for name, states in rows)
         kept = e["lru"].count("hit") if "lru" in e else 0
         strip = f"""
-<div class="strip">
+<section class="section strip" aria-labelledby="example"><h2 id="example">One
+request, block by block</h2>
   <p class="prose">One real request from the runs: turn {e['turn'] + 1} of
   a ShareGPT conversation, {e['prompt_tokens']:,} prompt tokens in {n}
   blocks of 16 tokens. The person sent it {secs(e.get('since_previous_s'))}
@@ -103,23 +102,42 @@ def header(s: Row, data: Row) -> str:
   {cells}
   <div class="legend-inline"><span><i class="cell hit"></i>served from the
   cache</span><span><i class="cell miss"></i>recomputed</span></div>
-</div>"""
+</section>"""
+    return strip
+
+
+def header(s: Row, data: Row) -> str:
+    cfg = s["config"]
+    commit = (s.get("provenance") or {}).get("commit", "")[:8]
+    runs = (len(cfg["policies"]) + 1) * len(cfg["reported_seeds"])
+    seeds = ", ".join(str(x) for x in cfg["reported_seeds"])
     return f"""
 <header class="top">
   <span class="eyebrow">COMP 536 · Milestone 3 · Task 2 · Phase 1</span>
   <h1>Mixed-Workload Reuse Study</h1>
-  <p class="prose">Seven kinds of LLM traffic share one prefix cache of
-  131,072 tokens. We replayed them through vLLM with three eviction
-  policies and measured, workload by workload, how soon cached blocks are
-  needed again, how much of each prompt the cache can serve, and whether a
-  server can tell the workloads apart. Each finding ends with what it means
-  for the eviction policy we design next.</p>
-  <div class="meta"><span>{runs} reported engine runs (seeds
-  {seeds})</span><span>Qwen2.5-0.5B-Instruct on vLLM's CPU
-  simulator</span><span>16-token blocks</span><span>branch milestone3_task2
-  · commit <span class="num">{esc(commit)}</span></span></div>
-  {strip}
+  <p class="prose">Seven kinds of LLM traffic share one prefix cache: a
+  memory that keeps the model's work on recent prompts (131,072 tokens,
+  roughly 100,000 words) so a new prompt that starts the same way can skip
+  it. We replayed the traffic through vLLM with three eviction policies and
+  measured, workload by workload, how soon cached blocks are needed again,
+  how much of each prompt the cache can serve, and whether a server can tell
+  the workloads apart. Each finding ends with what it means for the eviction
+  policy we design next.</p>
+  <p class="prose">When the cache is full, an eviction policy picks which
+  idle block to drop. <b>LRU</b>, vLLM's default, drops the block idle the
+  longest; <b>LFU</b> the block used the fewest times; <b>FIFO</b> the block
+  that became idle first. A <b>freed</b> block is one no running request is
+  using; it stays cached until it is evicted.</p>
+  <div class="meta"><span>{runs} reported engine runs on seeds {seeds}
+  (three independent replays of different traffic)</span>
+  <span>Qwen2.5-0.5B-Instruct on vLLM's CPU simulator</span><span>16-token
+  blocks</span><span>branch milestone3_task2 · commit <span
+  class="num">{esc(commit)}</span></span></div>
 </header>"""
+
+
+def example(s: Row, data: Row) -> str:
+    return _example_strip(s)
 
 
 def answers(s: Row, data: Row) -> str:
@@ -135,11 +153,12 @@ def answers(s: Row, data: Row) -> str:
     q3 = ""
     if idn:
         q3 = (f"The first two blocks of a prompt, a fingerprint of its "
-              f"system prompt or task, name {pct(idn['fingerprint'])} of new "
-              f"requests without a mistake. A small decision tree on prompt "
-              f"length, turn number and timing names the rest, for "
-              f"{pct(idn['accuracy'])} overall. It is trained once on one "
-              "labelled half hour and then needs no labels.")
+              f"system prompt or task, identify {pct(idn['fingerprint'])} of "
+              f"test requests without a mistake. A few if-then rules on "
+              f"prompt length, turn number and timing identify the rest, for "
+              f"{pct(idn['accuracy'])} overall. After training once on one "
+              "labelled half hour, it needs no labels while serving; prompt "
+              "families never seen in training fall to the rules.")
     design = ""
     if age:
         hb, lf, lo = (age["+hits_before"], age["label_free"],
@@ -156,13 +175,14 @@ def answers(s: Row, data: Row) -> str:
 <section class="answers" aria-label="Short answers">
   <div class="answer"><span class="q">Question 1 · reuse interval</span>
   <h3>Agents return in a blink; people return in minutes</h3>
-  <p>Agent loops send their next request a median of
-  <mark>{secs(a_lo)} to {secs(a_hi)}</mark> after the last answer. People
+  <p>Agent loops reuse their session's blocks a median of
+  <mark>{secs(a_lo)} to {secs(a_hi)}</mark> after the previous use. People
   come back to their own conversation after a median of
   <mark>{secs(h_lo)} to {secs(h_hi)}</mark>. At this cache size LRU keeps a
   freed block for about {secs(keep)} and LFU for about {secs(lfu_keep)}, so
-  the agents are served and most human returns find their history
-  gone.</p></div>
+  the agents are served and most human returns find their history gone.
+  ShareGPT's and AgentBank's pauses are borrowed from recorded traces (see
+  What we replayed), and the timing is from a CPU run.</p></div>
   <div class="answer"><span class="q">Question 2 · reuse portion</span>
   <h3>The cache could serve {pct(ceil)} of prompt tokens; LRU serves
   {pct(lru)}</h3>
@@ -174,7 +194,7 @@ def answers(s: Row, data: Row) -> str:
   {pct(_u(s, "ceiling", "sharegpt"))}.</p></div>
   <div class="answer">
   <span class="q">Question 3 · telling workloads apart</span>
-  <h3>A cheap prompt fingerprint names most requests</h3>
+  <h3>A cheap prompt fingerprint identifies most requests</h3>
   <p>{q3}</p></div>
   <div class="answer"><span class="q">For the design</span>
   <h3>Keep blocks by their chance of coming back, not by age alone</h3>
@@ -209,12 +229,25 @@ this page</h2>
   cache, which is what an eviction policy sees.</dd>
   <dt>Session</dt><dd>One conversation, one agent task or one production
   user thread: the requests that build on each other.</dd>
-  <dt>AUC</dt><dd>How well a signal ranks the blocks that will come back
-  above those that will not: 0.5 is a coin flip, 1.0 is perfect.</dd>
-  <dt>Measured / simulator</dt><dd>Measured numbers come from real
-  <code>vllm serve</code> runs of three seeds (2, 3, 4). Simulator numbers
-  come from our fast replay of vLLM's own cache code and only guide the
-  design; they are marked.</dd>
+  <dt>Reuse distance</dt><dd>The number of other blocks used between two
+  uses of a block. LRU keeps a block roughly when this is below the cache's
+  8,192 blocks.</dd>
+  <dt>Working set</dt><dd>All the blocks that will be used again. A cache
+  that holds them all never needs to choose what to evict.</dd>
+  <dt>Prompt family</dt><dd>Requests whose prompts start with the same
+  blocks, such as one system prompt or one agent task.</dd>
+  <dt>Hit density</dt><dd>Reuses a block earns per minute it sits idle in
+  the cache.</dd>
+  <dt>AUC</dt><dd>Pick one block that comes back and one that does not: the
+  AUC is how often a signal ranks the returning one higher. 0.5 is a coin
+  flip, 1.0 is always right.</dd>
+  <dt>True label</dt><dd>The workload a request really came from. Our
+  replay knows it; a real server does not.</dd>
+  <dt>Measured / cache replay</dt><dd>Measured numbers come from real
+  <code>vllm serve</code> runs, with vLLM's CPU simulator standing in for
+  the GPU, on seeds 2, 3 and 4 (three independent replays of different
+  traffic). Cache-replay numbers come from our fast replay of vLLM's own
+  cache code and only guide the design; they are marked.</dd>
 </dl></section>"""
 
 
@@ -301,9 +334,9 @@ def q1(s: Row, data: Row) -> str:
     seen = [w for w in W if _came_back(data, w, t) is not None]
     low = sorted([w for w in seen if _came_back(data, w, t) < 0.5],
                  key=lambda w: _came_back(data, w, t))
-    low_txt = ("Many blocks never come back: within 5 minutes only " +
-               ", ".join(f"{lab[w]} {pct(_came_back(data, w, t))}"
-                         for w in low) +
+    low_txt = ("Many blocks are not needed again soon: within 5 minutes "
+               "only " + ", ".join(f"{lab[w]} {pct(_came_back(data, w, t))}"
+                                   for w in low) +
                " of freed blocks were needed again. ") if low else ""
     far = [lab[w] for w in W if (data["distance"][w] or 0) > 0.5]
     far_txt = (f"That is the case for most reuses of {', '.join(far)}. "
@@ -337,10 +370,13 @@ soon do blocks come back?</h2>
         "are left out, since no policy can lose them.")}
 {figure("fig-distance", "Most human-paced reuses are out of reach for an "
         "LRU cache of this size", ["measured:measured, no-eviction runs"],
-        "Reuse distance counts the other blocks used in between. When it "
-        "is below the cache's 8,192 blocks, LRU keeps the block; above it, "
-        f"LRU cannot. {far_txt}Winning them back means keeping fewer, "
-        "better-chosen blocks.")}
+        "When the reuse distance is below the cache's 8,192 blocks, LRU "
+        "roughly keeps the block; above it, LRU cannot (blocks held by "
+        "running requests make the usable cache a little smaller). "
+        f"{far_txt}Winning them back means choosing differently which "
+        "8,192 blocks to keep.",
+        note="Reuse distance: for each reuse, the number of other distinct "
+        "blocks used since the block's previous use.")}
 </section>"""
 
 
@@ -355,6 +391,12 @@ def q2(s: Row, data: Row) -> str:
     tot = sum(map(sum, ev)) or 1
     driver = sorted(range(len(W)), key=lambda i: -sum(ev[i]))[:2]
     cross = 1 - sum(ev[i][i] for i in range(len(W))) / tot
+    causes = [sum(ev[i]) / tot for i in range(len(W))]
+    suffers = [
+        sum(ev[i][j] for i in range(len(W))) / tot for j in range(len(W))
+    ]
+    chance = 1 - sum(a * b for a, b in zip(causes, suffers))
+    balanced = max(abs(a - b) for a, b in zip(causes, suffers)) < 0.02
     src = s["q2"]["sources"]
     shared = [w for w in W if (src[w]["other_session"] or 0) > 0.5]
     own = [w for w in W if (src[w]["same_session"] or 0) > 0.5]
@@ -373,7 +415,8 @@ much of each prompt is reused?</h2>
         f"own history. For the others it is prompts shared across users "
         f"({shared_txt}). Shared prompts are few blocks read by many users; "
         "history is many blocks read by one. They need different "
-        "treatment.")}
+        "treatment. Thinning the Bailian traces to fit the mix lowers their "
+        "shared reuse; the full-rate traces are in the paper section.")}
 {figure("fig-lost", "Where the lost reuse goes", ["measured:measured, 3 "
         "seeds"],
         f"Under LRU and LFU every lost block was evicted. FIFO also leaves "
@@ -389,20 +432,26 @@ much of each prompt is reused?</h2>
         "In the Bailian traces the first blocks (system prompts) are reused "
         "far more than later ones, which hold one user's text. In "
         "conversation and agent histories nearly every block is reused. "
-        "Evicting a prompt's deepest blocks first, as vLLM's tie-break "
-        "already does, suits the first kind.")}
+        "Evicting a prompt's deepest blocks first, as vLLM already does "
+        "between blocks idle equally long, suits the first kind.")}
 {figure("fig-density", "Some workloads fill the idle cache without using "
         "it", ["measured:measured, LRU, 3 seeds"],
         f"Under LRU, {lab[heavy[0]]} and {lab[heavy[1]]} hold {pct(pool)} of "
         f"the idle cache's time but earn {pct(rev)} of its reuses. CC-Bench "
         f"earns {pct(d['ccbench']['revive'])} from "
         f"{pct(d['ccbench']['pool'])}. That idle time is what a better "
-        "policy can hand to blocks that will be used.")}
+        "policy can hand to blocks that will be used. The Bailian traces "
+        "are thinned to fit the mix, which removes part of their reuse "
+        "across users, so their waste here is somewhat overstated.")}
 {figure("fig-evictions", "Who evicts whom", ["measured:measured, 3 seeds"],
-        f"{lab[W[driver[0]]]} and {lab[W[driver[1]]]} cause most evictions, "
-        f"and {pct(cross)} of all evictions remove another workload's block. "
-        "Protecting one workload always costs another, so every rule must "
-        "be checked per workload, not only in total.",
+        f"{lab[W[driver[0]]]} and {lab[W[driver[1]]]} cause the most "
+        f"evictions, and {pct(cross)} of all evictions remove another "
+        f"workload's block, the same as random mixing would give "
+        f"({pct(chance)})." + (" Each workload causes about as many "
+        "evictions as it suffers: evictions follow block demand, with no "
+        "workload preying on another. Dropping blocks that never return "
+        "therefore costs no one." if balanced else " Every rule must be "
+        "checked per workload, not only in total."),
         note="Rows: the workload whose new blocks needed space. Columns: "
         "the workload whose idle block was evicted. Each cell is a share of "
         "all evictions.")}
@@ -459,19 +508,20 @@ trained once on seed 1, where the true labels are known, and tested on seeds
 2 to 4 with no labels. The test seeds replay later half hours of the same
 Bailian traces, so system prompts seen in training come back; a new
 deployment would need its own training pass.</p>
-{figure("fig-ladder", "A prompt fingerprint names most requests; a small "
-        "tree names the rest", ["measured:plans of seeds 2–4, trained on "
-        "seed 1"],
+{figure("fig-ladder", "A prompt fingerprint identifies most requests; a "
+        "few if-then rules identify the rest", ["measured:plans of seeds "
+        "2–4, trained on seed 1"],
         f"The fingerprint resolves {pct(idn['fingerprint'])} of requests "
-        f"with no errors. With the tree, accuracy is {pct(idn['accuracy'])} "
+        f"with no errors. With the rules, accuracy is {pct(idn['accuracy'])} "
         f"({pct(idn['first'])} for a session's first request, "
         f"{pct(idn['later'])} for later ones). The inferred parent request "
         f"is the true previous turn for at least {pct(idn['parent'])} of "
         "later turns, so a policy can follow a session without any label.")}
 {figure("fig-confusion", "Which workloads get confused", ["measured:plans "
         "of seeds 2–4"],
-        f"The mistakes are mostly first requests with short prompts: "
-        f"{confused}. The tree's guess when unsure is "
+        f"A session's first request is wrong {pct(1 - idn['first'])} of the "
+        f"time, a later one {pct(1 - idn['later'])}. The largest confusions: "
+        f"{confused}. The rules' guess when unsure is "
         f"{lab.get(idn.get('fallback'), idn.get('fallback'))}: "
         f"{pct(idn.get('fallback_wrong'))} of requests it names that way are "
         "something else. A policy should treat that name as weak evidence "
@@ -496,7 +546,8 @@ paper's findings hold here?</h2>
 (Wang et al., USENIX ATC '25). We tested ten of its claims on the four raw
 traces at full rate (A is chat, B is API; the coder and thinking traces are
 newer and not in the paper) and in our mix. The verdict is on traces A and
-B.</p>
+B. KS, used in some cells, is the largest gap between a fitted curve and the
+real one: 0 is a perfect fit, 1 the worst.</p>
 <div class="tablewrap"><table class="signals"><thead><tr><th>Claim</th>
 <th>Paper</th><th>Raw traces</th><th>Our mix</th><th>Verdict</th></tr>
 </thead><tbody>{body}</tbody></table></div>
@@ -546,18 +597,18 @@ def headroom(s: Row, data: Row) -> str:
 <section class="section" aria-labelledby="headroom"><h2 id="headroom">How
 much room is there?</h2>
 <p class="prose">Belady's rule evicts the block needed again furthest in
-the future. It needs to know the future, so no real server can run it, but
-it is the best any policy could do at a given cache size. These numbers come
-from our simulator, which replays vLLM's own cache code and matched the
+the future. It needs to know the future, so no real server can run it; it
+serves as a near-best reference for a given cache size. These numbers come
+from our cache replay, which runs vLLM's own cache code and matched the
 engine runs closely (see Checks).</p>
-{figure("fig-capacity", title, ["sim:simulator"],
+{figure("fig-capacity", title, ["sim:cache replay"],
         f"At the fixed cache, Belady serves {pct(b['belady_all'])} against "
         f"LRU's {pct(b['lru_all'])}: {pts(gain)} are there for a better "
         f"policy to win, and a real policy will win back only part of it."
         f"{size_txt}{gap_txt} These runs average seeds 1 to 4 with the "
-        f"simulator's own timing, so LRU reads {pct(b['lru_all'])} here "
+        f"replay's own timing, so LRU reads {pct(b['lru_all'])} here "
         f"against {pct(_u(s, 'lru', 'all'))} in the engine runs above.")}
-{figure("fig-belady", "Where the headroom is", ["sim:simulator"],
+{figure("fig-belady", "Where the headroom is", ["sim:cache replay"],
         f"Counted in tokens, {pct(human_share)} of Belady's gain is in the "
         f"human-paced workloads and {pct(share.get('ccbench', 0))} in "
         "CC-Bench alone, whose long prompts make a few points worth many "
@@ -588,17 +639,30 @@ def signals(s: Row, data: Row) -> str:
                      f"for fresh blocks and up to {late:.2f} for blocks idle "
                      "30 s to 2 min.")
     hb = age.get("+hits_before", {})
+    it = age.get("+inferred_turn", {})
+    turn_ev = ((f"Among blocks idle equally long, the inferred turn ranks "
+                f"returners with AUC {it['0']:.2f} just freed and "
+                f"{it['30']:.2f} after 30 s. " if it else "") +
+               "In the Bailian chat trace the chance of a next turn rises "
+               "from turn 1 to turn 6+ (see the paper section).")
     rows = [
         ("How soon a session returns",
          f"Agents return in {secs(a_lo)} to {secs(a_hi)} (median); people in "
          f"{secs(h_lo)} to {secs(h_hi)}. LRU keeps idle blocks about "
          f"{secs(keep)}.",
          "Give a session's history a retention time that fits its loop: "
-         "short for agent loops, minutes for people, ended when the session "
-         "stops.",
+         "short for agent loops, minutes for people, dropped once the "
+         "session has been quiet well past its usual gap.",
          "No: the time since the session's previous turn is visible to the "
          "server.",
-         "Holding human history uses space the agents could have used."),
+         "Holding human history uses space the agents could have used. A "
+         "server cannot see when a session ends, and a first turn has no gap "
+         "history. The human gaps are borrowed for ShareGPT, and pacing "
+         "decides who LRU serves (see Checks)."),
+        ("Turn number", turn_ev,
+         "Trust a session's history more as its turn count grows.",
+         "No: the turn is inferred from the matching earlier prompt.",
+         "A long session can still end at any turn."),
         ("Past hits",
          (f"In the no-eviction runs, blocks with 0, 1, 2 and "
           f"3+ past uses were used again {pct(fr.get('0'))}, "
@@ -622,7 +686,9 @@ def signals(s: Row, data: Row) -> str:
          "returns: rank by expected hits per unit of cache time (hit "
          "density).",
          "A class helps; prompt-family statistics work without one.",
-         "A rare long return, such as a user back after an hour, is lost."),
+         "A rare long return, such as a user back after an hour, is lost. "
+         "Thinning removed part of the Bailian traces' reuse across users, "
+         "so the rule may evict shared Bailian prompts too eagerly."),
         ("Shared prompt heads", "Share of reuse across users: " +
          ", ".join(f"{lab[w]} {pct(src[w]['other_session'])}"
                    for w in ("bailian-api", "bailian-thinking",
@@ -636,11 +702,11 @@ def signals(s: Row, data: Row) -> str:
          "FIFO leaves reusable blocks cached but unusable behind an evicted "
          "block; LRU and LFU never do.",
          "Never evict a block while a later block of the same prompt stays "
-         "cached (spec 007 FR-005).", "No.",
+         "cached (the spec's prefix-closure rule).", "No.",
          "Restricts which blocks a smarter score can pick."),
         ("Who the request is", label_row,
-         "Run label-free, with oracle labels only as the upper bound to "
-         "compare against (spec 007 label modes).", "No, by design.",
+         "Run label-free, with true labels only as the upper bound to "
+         "compare against (the spec's label modes).", "No, by design.",
          "A session's first request is the least certain, and the "
          "fingerprints come from the same traces' earlier half hour."),
     ]
@@ -702,15 +768,15 @@ def checks(s: Row, data: Row) -> str:
     val = s.get("validation") or {}
     if val.get("runs"):
         items.append(
-            "Simulator against engine: on the same plans, the simulator's "
-            "usable reuse is within "
+            "Cache replay against engine: on the same request plans, the "
+            "replay's usable reuse is within "
             f"{100 * val['max_diff']:.1f} points of the engine runs overall.")
     vt = s.get("validation_engine_timing") or []
     if vt:
         diff = max(abs(r["engine"] - r["sim"]) for r in vt)
         overlap = min(r["evicted_overlap"] for r in vt)
         items.append(
-            "Simulator with the engine's own timing (seed 1, LRU, LFU and "
+            "Cache replay with the engine's own timing (seed 1, LRU, LFU and "
             "FIFO): the same prompt blocks, usable reuse within "
             f"{100 * diff:.2f} points, and {pct(overlap, 3)} of evicted "
             "blocks the same.")
@@ -763,8 +829,8 @@ def checks(s: Row, data: Row) -> str:
     if (pace.get("fast") or {}).get("lru") and pace["human"].get("lru"):
         hp, fp = pace["human"]["lru"], pace["fast"]["lru"]
         items.append(
-            "Pacing: with Phase 0's fixed 5 s pause for ShareGPT instead of "
-            "real human gaps, LRU serves ShareGPT "
+            "Pacing (seed 2): with the earlier setup's fixed 5 s pause for "
+            "ShareGPT instead of real human gaps, LRU serves ShareGPT "
             f"{pct(fp['sharegpt']['fraction'])} instead of "
             f"{pct(hp['sharegpt']['fraction'])}. The pacing decides who LRU "
             "serves, which is why real gaps are used.")
@@ -832,6 +898,7 @@ def sections(s: Row, data: Row) -> Dict[str, str]:
     return {
         "header": header(s, data),
         "answers": answers(s, data),
+        "example": example(s, data),
         "glossary": glossary(s, data),
         "mix": mix(s, data),
         "headline": headline(s, data),
