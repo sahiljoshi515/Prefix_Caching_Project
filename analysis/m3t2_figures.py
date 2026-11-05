@@ -1,11 +1,13 @@
-"""Milestone 3 Task 2, Phase 1: report figures from summary.json.
+"""Milestone 3 Task 2: report figures from summary.json.
 
     python -m analysis.m3t2_figures --summary results/m3-study/summary.json \\
         --out report/milestone3/figures/task2
 
-Draws the static (PDF and PNG) versions of the results page's main charts
-for the technical report (constitution V: every figure from a committed
-script). Workload colors follow the page's validated palette.
+Draws the static (PDF and PNG) versions of the results page's charts for
+the technical report, one figure per point (two for point 5), from the
+same chart data as the page (``analysis/m3t2_report.build_data``), so the
+page and the report cannot disagree (constitution V: every figure from a
+committed script). Policy colours follow the page's validated palette.
 """
 import argparse
 import json
@@ -13,49 +15,20 @@ import math
 from pathlib import Path
 from typing import Any, Dict, List
 
-COLORS = {
-    "sharegpt": "#2a78d6",
-    "bailian-chat": "#eb6834",
-    "agentbank": "#1baf7a",
-    "ccbench": "#eda100",
-    "bailian-thinking": "#e87ba4",
-    "bailian-coder": "#008300",
-    "bailian-api": "#6250d6",
+from analysis.m3t2_report import (GROUPS, LABELS, MIN_OFFERED, POLICIES,
+                                  POLICY_LABELS, build_data, tokens)
+
+COLOR = {
+    "lru": "#2a78d6",
+    "lfu": "#eb6834",
+    "fifo": "#1baf7a",
+    "belady": "#eda100",
 }
-POLICY = {
-    "ceiling": "No eviction",
-    "lru": "LRU",
-    "lfu": "LFU",
-    "fifo": "FIFO",
-    "belady": "Belady (offline)"
-}
-POLICY_STYLE = {
-    "ceiling": ("#111a1d", "o", "none"),
-    "lru": ("#263b44", "o", None),
-    "lfu": ("#6f838b", "D", None),
-    "fifo": ("#a2988a", "s", None),
-    "belady": ("#0c5c70", "^", None)
-}
+MARKER = {"lru": "o", "lfu": "D", "fifo": "s", "belady": "^"}
+INK = "#111a1d"
+INK_2 = "#46555a"
+INTERVAL_TICKS = [0.1, 1, 10, 60, 300, 1200]
 Row = Dict[str, Any]
-
-
-def _mids(edges: List[float]) -> List[float]:
-    return [
-        hi / 2 if lo <= 0 else math.sqrt(lo * hi)
-        for lo, hi in zip(edges[:-1], edges[1:])
-    ]
-
-
-def _cap_ticks(ax, caps: List[int]) -> None:
-    """Cache-size ticks as 32K ... 4M (1K = 1,024 tokens)."""
-    ticks = [
-        t for t in (32768, 65536, 131072, 262144, 524288, 1048576, 2097152,
-                    4194304, 8388608) if caps[0] <= t <= caps[-1]
-    ]
-    ax.set_xticks(ticks, [
-        f"{t // 1048576}M" if t >= 1048576 else f"{t // 1024}K" for t in ticks
-    ])
-    ax.minorticks_off()
 
 
 def _save(fig, out: Path, name: str) -> List[Path]:
@@ -67,264 +40,315 @@ def _save(fig, out: Path, name: str) -> List[Path]:
     return paths
 
 
-def come_back(s: Row, plt, out: Path) -> List[Path]:
-    cfg, cb = s["config"], s["q1"]["come_back"]
-    fig, ax = plt.subplots(figsize=(7, 3.6))
-    for w in cfg["workloads"]:
-        ax.plot(cb["grid"],
-                cb[w]["came_back"],
-                color=COLORS[w],
+def _pct_axis(axis) -> None:
+    axis.set_major_formatter(lambda v, _: f"{100 * v:.0f}%")
+
+
+def _tick_secs(v: float) -> str:
+    return f"{v:g} s" if v < 60 else f"{v / 60:g} min"
+
+
+def _interval_axes(ax, curves: Row, title: str = "") -> None:
+    """Share of reuses served by how long the block waited, per policy."""
+    bins = curves[POLICIES[0]]
+    keep = [
+        i for i in range(len(bins)) if bins[i]["hi"] is not None and all(
+            curves[p][i]["offered"] >= MIN_OFFERED for p in POLICIES)
+    ]
+    x = [
+        (bins[i]["hi"] / 2 if bins[i]["lo"] <= 0 else math.sqrt(bins[i]["lo"] *
+                                                                bins[i]["hi"]))
+        for i in keep
+    ]
+    for p in POLICIES:
+        ax.plot(x, [curves[p][i]["share"] for i in keep],
+                color=COLOR[p],
+                marker=MARKER[p],
+                ms=4,
                 lw=2,
-                label=cfg["workload_labels"][w])
-    for i, p in enumerate(cfg["policies"]):
-        q = s["policy_views"][p]["eviction_ages"]["all"]["quantiles"]
-        ax.axvline(q["p50"], color=POLICY_STYLE[p][0], lw=1, ls=":")
-        # Staggered: LRU's and FIFO's medians are close.
-        ax.text(q["p50"],
-                1.02 + 0.07 * i,
-                f"{POLICY[p]} evicts at {q['p50']:.0f} s",
-                ha="center",
-                fontsize=7,
-                transform=ax.get_xaxis_transform())
+                label=POLICY_LABELS[p])
     ax.set_xscale("log")
-    ax.set_xlabel("Time since the block was freed (s)")
-    ax.set_ylabel("Share looked up again")
-    ax.set_ylim(0, 1)
-    ax.grid(alpha=0.25)
-    ax.legend(fontsize=7, ncol=2, frameon=False, loc="upper left")
-    return _save(fig, out, "fig1_come_back")
+    ax.set_xticks(INTERVAL_TICKS, [_tick_secs(t) for t in INTERVAL_TICKS])
+    ax.minorticks_off()
+    ax.set_xlim(0.03, 1800)
+    ax.set_ylim(0, 1.03)
+    _pct_axis(ax.yaxis)
+    ax.grid(axis="y", color="#dce2e1", lw=0.8)
+    if title:
+        ax.set_title(title, loc="left", fontsize=9, fontweight="bold")
 
 
-def hit_by_interval(s: Row, plt, out: Path) -> List[Path]:
-    cfg = s["config"]
-    fig, axes = plt.subplots(1, 3, figsize=(10, 3.2), sharey=True)
-    for ax, p in zip(axes, cfg["policies"]):
-        h = s["q1"]["hit_by_interval"][p]
-        x = _mids(h["edges"])
-        for w in cfg["workloads"]:
-            ax.plot(x,
-                    h[w]["usable_share"],
-                    color=COLORS[w],
-                    lw=1.8,
-                    marker="o",
-                    ms=3,
-                    label=cfg["workload_labels"][w])
-        ax.set_xscale("log")
-        ax.set_title(POLICY[p], fontsize=10)
-        ax.set_xlabel("Reuse interval (s)")
-        ax.grid(alpha=0.25)
-    axes[0].set_ylabel("Share of reuses served")
-    axes[0].set_ylim(0, 1.02)
-    axes[-1].legend(fontsize=7, frameon=False, loc="upper right")
-    return _save(fig, out, "fig2_hit_by_interval")
+def point1(data: Row, plt, out: Path) -> List[Path]:
+    fig, ax = plt.subplots(figsize=(7.2, 3.6))
+    _interval_axes(ax, data["q1"]["curves"])
+    ax.set_xlabel("Time the block sat unused before it was needed again")
+    ax.set_ylabel("Share of those reuses served")
+    ax.legend(frameon=False, loc="lower left")
+    ax.set_title("Point 1 · Mixed workload: reuses served by wait",
+                 loc="left",
+                 fontweight="bold")
+    return _save(fig, out, "point1_reuse_interval")
 
 
-def usable(s: Row, plt, out: Path) -> List[Path]:
-    cfg = s["config"]
-    rows = ["all"] + cfg["workloads"]
-    labels = ["Whole mix"
-              ] + [cfg["workload_labels"][w] for w in cfg["workloads"]]
-    fig, ax = plt.subplots(figsize=(7, 3.8))
-    for i, w in enumerate(rows):
-        lru = s["headline"]["lru"][w]["usable"]["mean"]
-        ceil = s["headline"]["ceiling"][w]["usable"]["mean"]
-        ax.plot([lru, ceil], [i, i],
-                color="#dce2e1",
-                lw=6,
-                zorder=1,
-                solid_capstyle="round")
-        for p in ("ceiling", "lru", "lfu", "fifo"):
-            u = s["headline"][p][w]["usable"]
-            color, marker, face = POLICY_STYLE[p]
-            ax.plot([u["min"], u["max"]], [i, i], color=color, lw=1, zorder=2)
-            ax.scatter([u["mean"]], [i],
-                       color=face or color,
-                       edgecolors=color,
-                       marker=marker,
-                       s=36,
-                       zorder=3,
-                       label=POLICY[p] if i == 0 else None)
-    ax.set_yticks(range(len(rows)), labels)
+def _grouped_bars(ax, rows: List[str], values: Row, ceiling: Row) -> None:
+    """Horizontal bars per row and policy, seed ranges, ceiling ticks."""
+    height = 0.26
+    for r, row in enumerate(rows):
+        for k, p in enumerate(POLICIES):
+            v = values[p][row]
+            y = r + (k - 1) * height
+            ax.barh(y,
+                    v["mean"],
+                    height * 0.9,
+                    color=COLOR[p],
+                    label=POLICY_LABELS[p] if r == 0 else None)
+            if v["max"] > v["min"]:
+                ax.plot([v["min"], v["max"]], [y, y],
+                        color=INK,
+                        lw=1,
+                        alpha=0.6)
+            ax.text(max(v["mean"], v["max"]) + 0.01,
+                    y,
+                    f"{100 * v['mean']:.1f}%",
+                    va="center",
+                    fontsize=7)
+        c = ceiling[row]["mean"]
+        ax.plot([c, c], [r - 1.6 * height, r + 1.6 * height],
+                color=INK,
+                lw=1.5,
+                ls=(0, (3, 2)),
+                label="No eviction" if r == 0 else None)
+    ax.set_yticks(range(len(rows)), [LABELS[r] for r in rows])
     ax.invert_yaxis()
-    ax.set_xlim(0, 1)
-    ax.set_xlabel("Usable reuse (share of prompt tokens served)")
-    ax.grid(axis="x", alpha=0.25)
-    ax.legend(fontsize=8,
-              frameon=False,
+    ax.set_xlim(0, 1.08)
+    _pct_axis(ax.xaxis)
+    ax.set_xlabel("Usable prefix reuse (share of prompt tokens served)")
+    ax.legend(frameon=False,
               ncol=4,
               loc="lower center",
-              bbox_to_anchor=(0.5, 1.0))
-    return _save(fig, out, "fig3_usable_by_policy")
+              bbox_to_anchor=(0.5, 1.0),
+              fontsize=8)
 
 
-def lost(s: Row, plt, out: Path) -> List[Path]:
-    cfg = s["config"]
-    seeds = [str(x) for x in cfg["reported_seeds"]]
-    fig, axes = plt.subplots(1, 3, figsize=(10, 3.4), sharey=True)
-    parts = [("kept", "Reused", "#1c5cab"), ("evicted", "Evicted", "#86b6ef"),
-             ("cut_off", "Cached but cut off", "#d03b3b")]
-    for ax, p in zip(axes, cfg["policies"]):
-        for i, w in enumerate(cfg["workloads"]):
-            tot = {
-                k: sum(s["lost"][p][x][w][k] for x in seeds)
-                for k, _, _ in parts
-            }
-            n = sum(tot.values()) or 1
-            left = 0.0
-            for k, label, color in parts:
-                ax.barh(i,
-                        tot[k] / n,
-                        left=left,
-                        color=color,
-                        height=0.7,
-                        label=label if i == 0 else None)
-                left += tot[k] / n
-        ax.set_title(POLICY[p], fontsize=10)
-        ax.set_xlim(0, 1)
-    axes[0].set_yticks(range(len(cfg["workloads"])),
-                       [cfg["workload_labels"][w] for w in cfg["workloads"]])
-    axes[0].invert_yaxis()
-    axes[1].set_xlabel("Share of the blocks the no-eviction run reused")
-    axes[-1].legend(fontsize=7, frameon=False, loc="lower right")
-    return _save(fig, out, "fig4_lost_reuse")
+def point2(data: Row, plt, out: Path) -> List[Path]:
+    q = data["q2"]
+    fig, ax = plt.subplots(figsize=(7.2, 4.6))
+    _grouped_bars(ax, q["rows"], q["values"], q["ceiling"])
+    fig.suptitle("Point 2 · Mixed workload: reuse portion",
+                 x=0.02,
+                 ha="left",
+                 fontweight="bold",
+                 fontsize=10,
+                 y=1.03)
+    return _save(fig, out, "point2_reuse_portion")
 
 
-def mixed_baselines(s: Row, plt, out: Path) -> List[Path]:
-    """The whole mixed workload under each policy: the share of prompt
-    tokens served (seed mean and each seed) and the same share minute by
-    minute through the run."""
-    tl = s.get("timeline")
-    if not tl:
-        return []
-    pols = ["ceiling", "lru", "lfu", "fifo"]
+def point3(data: Row, plt, out: Path) -> List[Path]:
+    q = data["q3"]
     fig, (a, b) = plt.subplots(1,
                                2,
-                               figsize=(10, 3.2),
-                               gridspec_kw={"width_ratios": [1, 1.6]})
-    for i, p in enumerate(pols):
-        u = s["headline"][p]["all"]["usable"]
-        color, _, _ = POLICY_STYLE[p]
-        a.barh(i,
-               u["mean"],
-               color="none" if p == "ceiling" else color,
-               edgecolor=color,
-               ls="--" if p == "ceiling" else "-",
-               height=0.6)
-        a.scatter(u["seeds"], [i] * len(u["seeds"]),
-                  s=14,
-                  facecolor="white",
-                  edgecolor="#111a1d",
-                  zorder=3)
-        a.text(max(u["seeds"]) + 0.02,
-               i,
-               f"{100 * u['mean']:.1f}%",
+                               figsize=(9.6, 3.8),
+                               gridspec_kw={"width_ratios": [1.3, 1]})
+    models = q["models"]
+    y = range(len(models))
+    a.barh([i - 0.18 for i in y], [m["accuracy"] for m in models],
+           0.34,
+           color="#1c5cab",
+           label="Requests labelled right")
+    a.barh([i + 0.18 for i in y], [m["balanced"] for m in models],
+           0.34,
+           color="#86b6ef",
+           label="Average of the four workloads")
+    for i, m in enumerate(models):
+        a.text(m["accuracy"] + 0.01,
+               i - 0.18,
+               f"{100 * m['accuracy']:.0f}%",
                va="center",
-               fontsize=8)
-    a.set_yticks(range(len(pols)), [POLICY[p] for p in pols])
+               fontsize=7)
+        a.text(m["balanced"] + 0.01,
+               i + 0.18,
+               f"{100 * m['balanced']:.0f}%",
+               va="center",
+               fontsize=7)
+    maj = q["majority"]
+    a.axvline(maj["accuracy"],
+              color=INK,
+              lw=1.2,
+              ls=(0, (3, 2)),
+              label=f"Always guessing {LABELS[maj['label']]}")
+    a.set_yticks(list(y), [m["label"] for m in models])
     a.invert_yaxis()
-    a.set_xlim(0, 1)
-    a.set_xlabel("Prompt tokens served from the cache, whole mix")
-    a.grid(axis="x", alpha=0.25)
-    edges = tl["lru"]["edges"]
-    minutes = [(lo + hi) / 120 for lo, hi in zip(edges[:-1], edges[1:])]
-    for p in pols:
-        color, _, _ = POLICY_STYLE[p]
-        b.plot(minutes,
-               [math.nan if v is None else v for v in tl[p]["usable"]],
-               color=color,
-               lw=1.6,
-               ls="--" if p == "ceiling" else "-",
-               label=POLICY[p])
-    b.axvline(s["config"]["w0_s"] / 60, color="#7b878b", lw=0.8)
-    b.text(s["config"]["w0_s"] / 60 + 0.3,
-           0.95,
-           "measured from here",
-           fontsize=7,
-           color="#46555a")
-    b.set_xlim(0, 30)
-    b.set_ylim(0, 1)
-    b.set_xlabel("Minute of the run")
-    b.set_ylabel("Served from the cache")
-    b.grid(alpha=0.25)
-    b.legend(fontsize=7, frameon=False, ncol=4, loc="lower center")
+    a.set_xlim(0, 1.1)
+    _pct_axis(a.xaxis)
+    a.set_xlabel("Share right on unseen runs (seeds 2–4)")
+    a.legend(frameon=False,
+             fontsize=7,
+             loc="lower center",
+             bbox_to_anchor=(0.5, 1.0),
+             ncol=2)
+    c = q["confusion"]
+    names = [LABELS[g] for g in c["classes"]]
+    b.imshow(c["share"], cmap="Blues", vmin=0, vmax=1)
+    for i in range(len(names)):
+        for j in range(len(names)):
+            v = c["share"][i][j]
+            b.text(j,
+                   i,
+                   f"{100 * v:.0f}%",
+                   ha="center",
+                   va="center",
+                   fontsize=8,
+                   color="white" if v > 0.5 else INK)
+    b.set_xticks(range(len(names)), names, rotation=30, ha="right")
+    b.set_yticks(range(len(names)), names)
+    b.set_xlabel("Labelled as")
+    b.set_ylabel("Really from")
+    for spine in b.spines.values():
+        spine.set_visible(False)
+    fig.suptitle("Point 3 · Which workload sent a request",
+                 x=0.02,
+                 ha="left",
+                 fontweight="bold",
+                 fontsize=10,
+                 y=1.05)
     fig.tight_layout()
-    return _save(fig, out, "fig0_mixed_baselines")
+    return _save(fig, out, "point3_identification")
 
 
-def capacity_hit_rate(s: Row, plt, out: Path) -> List[Path]:
-    """Cache size against hit rate on the mixed workload: the cache
-    replay's curves (mean of the reported seeds) and the engine runs."""
-    c = s.get("capacity_curve")
-    if not c:
-        return []
-    caps = c["capacities"]
-    fig, ax = plt.subplots(figsize=(6.5, 3.6))
-    for p in ("lru", "lfu", "fifo"):
-        color, marker, _ = POLICY_STYLE[p]
-        ax.plot(
-            caps,
-            [math.nan if v is None else v for v in c["curve"][p]["hit_rate"]],
-            color=color,
-            marker=marker,
-            ms=3,
-            lw=1.6,
-            label=f"{POLICY[p]} (cache replay)")
-        eng = [e for e in c["engine"] if e["policy"] == p]
-        ax.scatter([e["capacity"] for e in eng], [e["engine"] for e in eng],
-                   s=46,
-                   marker=marker,
-                   facecolor="white",
-                   edgecolor=color,
-                   linewidth=1.6,
-                   zorder=3)
-    ax.scatter([], [],
-               s=46,
-               marker="o",
-               facecolor="white",
-               edgecolor="#111a1d",
-               label="Engine run (one seed)")
-    if c.get("ceiling") is not None:
-        ax.axhline(c["ceiling"],
-                   color="#7b878b",
-                   lw=1,
-                   ls="--",
-                   label="No eviction")
-    ax.axvline(c["fixed"], color="#7b878b", lw=0.8)
-    ax.set_xscale("log", base=2)
-    _cap_ticks(ax, caps)
-    ax.set_xlabel("Cache size (tokens)")
-    ax.set_ylabel("Hit rate (prompt tokens from cache)")
-    ax.set_ylim(0.3, 0.8)
-    ax.grid(alpha=0.25)
-    ax.legend(fontsize=7, frameon=False, loc="lower right")
-    return _save(fig, out, "fig6_capacity_hit_rate")
-
-
-def capacity(s: Row, plt, out: Path) -> List[Path]:
-    sim = (s.get("sim") or {}).get("balanced-human")
-    if not sim:
-        return []
-    caps = sorted(int(k) for k in sim["lru"] if k != "ceiling")
-    fig, ax = plt.subplots(figsize=(6.5, 3.4))
-    for p in ("belady", "lru", "lfu", "fifo"):
-        color, marker, _ = POLICY_STYLE[p]
-        ax.plot(caps, [sim[p][str(c)]["all"]["mean"] for c in caps],
-                color=color,
-                marker=marker,
+def point4(data: Row, plt, out: Path) -> List[Path]:
+    q = data["q4"]
+    caps = q["capacities"]
+    fig, ax = plt.subplots(figsize=(7.2, 4))
+    for p in (*POLICIES, "belady"):
+        ax.plot(caps,
+                q["curve"][p],
+                color=COLOR[p],
+                marker=MARKER[p],
                 ms=4,
-                lw=1.8,
-                label=POLICY[p])
-    ceil = sim["ceiling"]["ceiling"]["all"]["mean"]
-    ax.axhline(ceil, color="#7b878b", lw=1, ls="--", label="No eviction")
-    ax.axvline(s["config"]["capacity_tokens"], color="#7b878b", lw=0.8)
-    ax.set_xscale("log", base=2)
-    _cap_ticks(ax, caps)
-    ax.set_xlabel("Cache size (tokens)")
-    ax.set_ylabel("Usable reuse (simulator)")
-    ax.set_ylim(0, 1)
-    ax.grid(alpha=0.25)
-    ax.legend(fontsize=8, frameon=False)
-    return _save(fig, out, "fig5_capacity_sim")
+                lw=2,
+                ls="--" if p == "belady" else "-",
+                label=POLICY_LABELS[p] +
+                (" (offline)" if p == "belady" else ""))
+    for e in q["engine"]:
+        ax.scatter(e["capacity"],
+                   e["engine"],
+                   s=70,
+                   marker=MARKER[e["policy"]],
+                   facecolors="none",
+                   edgecolors=COLOR[e["policy"]],
+                   lw=1.6,
+                   zorder=3)
+        ax.scatter(e["capacity"] * 1.06,
+                   e["replay"],
+                   s=22,
+                   marker="x",
+                   color=COLOR[e["policy"]],
+                   lw=1.2,
+                   zorder=3)
+    ax.axhline(q["ceiling"],
+               color=INK,
+               lw=1.2,
+               ls=(0, (3, 2)),
+               label="No eviction")
+    ax.axvline(q["fixed"], color="#7b878b", lw=0.8)
+    ax.scatter([], [],
+               s=60,
+               marker="o",
+               facecolors="none",
+               edgecolors=INK_2,
+               label="Engine run")
+    ax.scatter([], [],
+               s=22,
+               marker="x",
+               color=INK_2,
+               label="Cache replay, same seeds")
+    ax.set_xscale("log")
+    ax.set_xticks(caps, [tokens(c) for c in caps])
+    ax.minorticks_off()
+    ax.set_ylim(*q["yDomain"])
+    _pct_axis(ax.yaxis)
+    ax.grid(axis="y", color="#dce2e1", lw=0.8)
+    ax.set_xlabel("KV-cache capacity (tokens, log scale)")
+    ax.set_ylabel("Usable prefix reuse")
+    ax.legend(frameon=False, fontsize=7, loc="lower right", ncol=2)
+    ax.set_title(
+        "Point 4 · Mixed workload: cache capacity (lines: cache "
+        "replay)",
+        loc="left",
+        fontweight="bold")
+    return _save(fig, out, "point4_capacity")
+
+
+def point5(data: Row, plt, out: Path) -> List[Path]:
+    q = data["q5"]
+    fig, ax = plt.subplots(figsize=(7.2, 4))
+    _grouped_bars(ax, list(GROUPS), q["values"], q["ceiling"])
+    fig.suptitle("Point 5 · Each workload alone: reuse portion",
+                 x=0.02,
+                 ha="left",
+                 fontweight="bold",
+                 fontsize=10,
+                 y=1.03)
+    paths = _save(fig, out, "point5_alone_portion")
+    fig, axes = plt.subplots(2, 2, figsize=(8.4, 5.6), sharey=True)
+    for ax, g in zip(axes.flat, GROUPS):
+        _interval_axes(ax, q["curves"][g], f"{LABELS[g]} alone")
+    axes[0][0].legend(frameon=False, loc="lower left", fontsize=7)
+    fig.supxlabel("Time the block sat unused before it was needed again",
+                  fontsize=9)
+    fig.supylabel("Share of those reuses served", fontsize=9)
+    fig.suptitle("Point 5 · Each workload alone: reuses served by wait",
+                 x=0.02,
+                 ha="left",
+                 fontweight="bold",
+                 fontsize=10)
+    fig.tight_layout()
+    return paths + _save(fig, out, "point5_alone_interval")
+
+
+def point6(data: Row, plt, out: Path) -> List[Path]:
+    q = data["q6"]
+    fig, ax = plt.subplots(figsize=(7.2, 4.8))
+    labels = []
+    for i, r in enumerate(q["rows"]):
+        y = i + list(GROUPS).index(r["group"]) * 0.8
+        c = COLOR[r["policy"]]
+        ax.plot([r["alone"], r["mixed"]], [y, y], color=c, lw=2.2, alpha=0.7)
+        ax.scatter(r["alone"],
+                   y,
+                   s=40,
+                   marker=MARKER[r["policy"]],
+                   facecolors="white",
+                   edgecolors=c,
+                   lw=1.6,
+                   zorder=3)
+        ax.scatter(r["mixed"],
+                   y,
+                   s=36,
+                   marker=MARKER[r["policy"]],
+                   color=c,
+                   zorder=3)
+        d = 100 * (r["mixed"] - r["alone"])
+        ax.text(1.02, y, f"{d:+.1f} pts", va="center", fontsize=7)
+        labels.append((y, f"{LABELS[r['group']]} · "
+                       f"{POLICY_LABELS[r['policy']]}"))
+    for k, g in enumerate(GROUPS):
+        c = q["ceiling"][g]
+        y0 = 3 * k + k * 0.8
+        ax.plot([c, c], [y0 - 0.5, y0 + 2.5],
+                color=INK,
+                lw=1.3,
+                ls=(0, (3, 2)))
+    ax.set_yticks([y for y, _ in labels], [t for _, t in labels], fontsize=7)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 1.0)
+    _pct_axis(ax.xaxis)
+    ax.set_xlabel("Usable prefix reuse: alone (hollow) → sharing the cache "
+                  "(filled); dashed: no eviction")
+    ax.set_title("Point 6 · Each workload alone against sharing the cache",
+                 loc="left",
+                 fontweight="bold")
+    return _save(fig, out, "point6_alone_vs_mixed")
 
 
 def main(argv=None) -> None:
@@ -344,12 +368,13 @@ def main(argv=None) -> None:
         "axes.spines.top": False,
         "axes.spines.right": False
     })
-    s = json.loads(args.summary.read_text())
+    data = build_data(json.loads(args.summary.read_text()))
+    if not data["q5"]:
+        raise SystemExit("summary.json has no isolated runs yet")
     args.out.mkdir(parents=True, exist_ok=True)
     written = []
-    for draw in (mixed_baselines, come_back, hit_by_interval, usable, lost,
-                 capacity, capacity_hit_rate):
-        written += draw(s, plt, args.out)
+    for draw in (point1, point2, point3, point4, point5, point6):
+        written += draw(data, plt, args.out)
         plt.close("all")
     for path in written:
         print(path)

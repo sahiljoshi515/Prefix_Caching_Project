@@ -1,21 +1,32 @@
-"""Milestone 3 Task 2, Phase 1: build the results page from summary.json.
+"""Milestone 3 Task 2: build the results page from summary.json.
 
     python -m analysis.m3t2_report --summary results/m3-study/summary.json \\
         --out results/m3-study/mixed-workload-reuse.html
 
-Writes one self-contained HTML page (spec 007 FR-011, constitution V):
-every number in its text and charts is read from ``summary.json``
-(``analysis/m3t2_study.py``); the charts are drawn in the browser by
-``analysis/m3t2_page/charts.js`` with Observable Plot, styled by
-``analysis/m3t2_page/style.css``. Cache-replay figures carry a "cache replay"
-badge; everything else comes from ``vllm serve`` runs.
+Writes one self-contained HTML page (spec 007 FR-011, constitution V) that
+answers six questions about LRU, LFU and FIFO on the mixed workload, in
+the order the course asked them:
+
+1. the reuse time interval each policy serves (the mix);
+2. the reuse portion each policy serves (the mix, and per workload);
+3. how a request's workload can be told from what a server sees;
+4. usable reuse against cache size, with offline Belady (the mix);
+5. reuse portion and interval of each workload run alone;
+6. each workload alone against sharing the cache.
+
+Every number in its text and charts is read from ``summary.json``
+(``analysis/m3t2_study.py``, with ``analysis/identify.py``'s report); the
+charts are drawn in the browser by ``analysis/m3t2_page/charts.js`` with
+Observable Plot, styled by ``analysis/m3t2_page/style.css``. Cache-replay
+figures carry a "cache replay" badge; everything else comes from
+``vllm serve`` runs.
 """
 import argparse
 import html
 import json
 import math
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 PAGE = Path(__file__).with_name("m3t2_page")
 TITLE = "Mixed-Workload Reuse Study"
@@ -27,6 +38,37 @@ FONTS = ("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+"
          "0,600;1,400&family=Schibsted+Grotesk:wght@500;700&display=swap")
 Row = Dict[str, Any]
 
+POLICIES = ("lru", "lfu", "fifo")
+GROUPS = ("sharegpt", "agentbank", "ccbench", "bailian")
+LABELS = {
+    "sharegpt": "ShareGPT",
+    "agentbank": "AgentBank",
+    "ccbench": "CC-Bench",
+    "bailian": "Bailian",
+    "all": "Whole mix",
+}
+POLICY_LABELS = {
+    "lru": "LRU",
+    "lfu": "LFU",
+    "fifo": "FIFO",
+    "belady": "Belady",
+    "ceiling": "No eviction",
+}
+# The identification models, in the order the course lists the signals.
+MODELS = {
+    "prompt_length": "Prompt length",
+    "prefix_hashes": "Prefix hashes",
+    "reuse_history": "Reuse history",
+    "interarrival": "Inter-arrival times",
+    "all": "All four together",
+}
+# An interval bin is drawn only with at least this many reuses on offer.
+MIN_OFFERED = 1000
+# Capacity chart: the plot area's height in pixels (charts.js: 340 high,
+# 22 above and 48 below) and the least gap between two end labels.
+PLOT_PX = 270
+LABEL_GAP_PX = 13
+
 
 def pct(x: Optional[float], digits: int = 0) -> str:
     if x is None or (isinstance(x, float) and math.isnan(x)):
@@ -34,10 +76,13 @@ def pct(x: Optional[float], digits: int = 0) -> str:
     return f"{100 * x:.{digits}f}%"
 
 
-def pts(x: Optional[float]) -> str:
+def pts(x: Optional[float], digits: int = 1) -> str:
+    """A difference of two shares in percentage points."""
     if x is None:
         return "–"
-    return f"{100 * x:+.1f} points"
+    v = 100 * x
+    unit = "point" if round(abs(v), digits) == 1 else "points"
+    return f"{abs(v):.{digits}f} {unit}"
 
 
 def secs(s: Optional[float]) -> str:
@@ -45,617 +90,219 @@ def secs(s: Optional[float]) -> str:
         return "–"
     if s < 1:
         return f"{1000 * s:.0f} ms"
-    if s < 90:
+    if s < 60:
         return f"{s:.0f} s" if s >= 10 else f"{s:.1f} s"
-    return f"{s / 60:.1f} min" if s < 600 else f"{s / 60:.0f} min"
+    m = s / 60
+    if abs(m - round(m)) < 0.05 or m >= 10:
+        return f"{m:.0f} min"
+    return f"{m:.1f} min"
 
 
-def mids(edges: List[float]) -> List[float]:
-    """A bin's display position: the geometric middle (the first bin, which
-    starts at 0, at half its upper edge)."""
-    out = []
-    for lo, hi in zip(edges[:-1], edges[1:]):
-        out.append(hi / 2 if lo <= 0 else math.sqrt(lo * hi))
-    return out
-
-
-def _mean(v: Optional[Row]) -> Optional[float]:
-    return None if v is None else v.get("mean")
-
-
-def build_data(s: Row) -> Row:
-    """The compact data object the charts read (window.M3T2)."""
-    cfg = s["config"]
-    W = cfg["workloads"]
-    seeds = [str(x) for x in cfg["reported_seeds"]]
-    mix = {}
-    for w in W:
-        per = [s["mix"][k]["workloads"][w] for k in seeds]
-        pause = [p["pause_s"].get("p50") for p in per if p.get("pause_s")]
-        kept = [
-            p.get("kept_session_fraction") for p in per
-            if p.get("kept_session_fraction") is not None
-        ]
-        mix[w] = {
-            "requests": sum(p["request_share"] for p in per) / len(per),
-            "tokens": sum(p["prompt_token_share"] for p in per) / len(per),
-            "sessions": sum(p["sessions"] for p in per) / len(per),
-            "pause50": sum(pause) / len(pause) if pause else None,
-            "kept": sum(kept) / len(kept) if kept else None,
-        }
-    q1 = s["q1"]
-    retention = {
-        p: s["policy_views"][p]["eviction_ages"]["all"]["quantiles"]
-        for p in cfg["policies"]
-    }
-    hbi = {
-        "edges": q1["hit_by_interval"]["lru"]["edges"],
-        "mids": mids(q1["hit_by_interval"]["lru"]["edges"])
-    }
-    for p in cfg["policies"]:
-        hbi[p] = {w: q1["hit_by_interval"][p][w]["usable_share"] for w in W}
-    lost: Row = {}
-    for p in cfg["policies"]:
-        lost[p] = {}
-        for w in W + ["all"]:
-            vals = [s["lost"][p][k][w] for k in seeds]
-            # Per-seed means, like every other table on the page.
-            lost[p][w] = {
-                key: sum(v[key] for v in vals) / len(vals)
-                for key in ("kept", "evicted", "cut_off")
-            }
-    pos = s["q2"]["position"]
-    edges = pos["all"]["edges"]
-    position = {
-        "mids":
-        mids(edges),
-        "labels": [
-            f"{int(a)}–{int(b) - 1}" if b - a > 1 else f"{int(a)}"
-            for a, b in zip(edges[:-1], edges[1:])
-        ],
-        # A bin with few blocks is noise; leave it out of the lines.
-        "ceiling": {
-            w: [
-                v if n >= 300 else None
-                for v, n in zip(pos[w]["ceiling_share"], pos[w]["blocks"])
-            ]
-            for w in W
-        },
-    }
-    density = {
-        p: {
-            w: {
-                "pool":
-                s["policy_views"][p]["hit_density"][w]["pool_time_share"],
-                "revive":
-                s["policy_views"][p]["hit_density"][w]["revive_share"],
-                "rate":
-                s["policy_views"][p]["hit_density"][w]
-                ["revives_per_block_minute"]
-            }
-            for w in W
-        }
-        for p in cfg["policies"]
-    }
-    evictions = {p: s["policy_views"][p]["evictions"] for p in cfg["policies"]}
-    data: Row = {
-        "workloads": W,
-        "labels": cfg["workload_labels"],
-        "loop": cfg["workload_loop"],
-        "mix": mix,
-        "headline": s["headline"],
-        "comeBack": {
-            "grid": q1["come_back"]["grid"],
-            "series": {w: q1["come_back"][w]["came_back"]
-                       for w in W}
-        },
-        "retention": retention,
-        "intervals":
-        {w: q1["intervals_all"][w].get("quantiles", {})
-         for w in W},
-        "hitByInterval": hbi,
-        "distance": {w: q1["reuse_distance"][w]["beyond_capacity"]
-                     for w in W},
-        "sources": s["q2"]["sources"],
-        "lost": lost,
-        "position": position,
-        "density": density,
-        "evictions": evictions,
-    }
-    data["mixRuns"] = mix_runs_view(s)
-    data["capCurve"] = s.get("capacity_curve")
-    sim = s.get("sim", {}).get("balanced-human")
-    if sim:
-        caps = sorted(int(k) for k in sim["lru"] if k != "ceiling")
-        data["capacity"] = {
-            "capacities": caps,
-            "fixed": cfg["capacity_tokens"],
-            "curves": {
-                p: [_mean(sim[p][str(c)]["all"]) for c in caps]
-                for p in ("belady", "lru", "lfu", "fifo")
-            },
-            "ceiling": _mean(sim["ceiling"]["ceiling"]["all"]),
-        }
-        cap = str(cfg["capacity_tokens"])
-        data["beladySplit"] = {
-            p: {
-                w: _mean((sim[p][cap]
-                          if p != "ceiling" else sim["ceiling"]["ceiling"])[w])
-                for w in W
-            }
-            for p in ("ceiling", "belady", "lru")
-        }
-        data["beladySplit"]["belady_all"] = _mean(sim["belady"][cap]["all"])
-        data["beladySplit"]["lru_all"] = _mean(sim["lru"][cap]["all"])
-    if "identify" in s:
-        data["identify"] = identify_view(s["identify"], W)
-    if "signals" in s:
-        data["signals"] = signals_view(s["signals"])
-    if "paper" in s:
-        data["paper"] = paper_view(s["paper"], cfg["workload_labels"])
-        data["freq_ceiling"] = ceiling_frequency(s["paper"])
-    if data.get("beladySplit"):
-        # Token-weighted: a workload's gain times its share of prompt tokens
-        # (seeds 1-4, the seeds the sweep averages).
-        tok = {
-            w: sum(s["mix"][k]["workloads"][w]["prompt_token_share"]
-                   for k in s["mix"]) / len(s["mix"])
-            for w in W
-        }
-        b = data["beladySplit"]
-        gain = {w: (b["belady"][w] - b["lru"][w]) * tok[w] for w in W}
-        total = sum(gain.values()) or 1
-        b["token_share_of_gain"] = {w: g / total for w, g in gain.items()}
-    return data
-
-
-def mix_runs_view(s: Row) -> Optional[Row]:
-    """The whole mixed workload under each policy: every workload replayed
-    together through one cache, seen as one stream of requests."""
-    cfg = s["config"]
-    tl = s.get("timeline")
-    if not tl:
-        return None
-    pols = ["ceiling"] + list(cfg["policies"])
-    edges = tl["lru"]["edges"]
-    hb = s["q1"]["hit_by_interval"]
-    cdf = s["q1"].get("intervals_mix") or {}
-    ages = {
-        p: s["policy_views"][p]["eviction_ages"]["all"].get("cdf") or {}
-        for p in cfg["policies"]
-    }
-    return {
-        "seeds": cfg["reported_seeds"],
-        "bars": {p: s["headline"][p]["all"]["usable"]
-                 for p in pols},
-        "efficiency": {
-            p: s["headline"][p]["all"]["efficiency"]["mean"]
-            for p in cfg["policies"]
-        },
-        "minutes": [(a + b) / 120 for a, b in zip(edges[:-1], edges[1:])],
-        "w0": cfg["w0_s"] / 60,
-        "timeline": {p: tl[p]["usable"]
-                     for p in pols},
-        "interval": {
-            "edges": hb["lru"]["edges"],
-            "mids": mids(hb["lru"]["edges"]),
-            "served":
-            {p: hb[p]["all"]["usable_share"]
-             for p in cfg["policies"]},
-        },
-        "intervalCdf":
-        {k: cdf.get(k)
-         for k in ("x", "p", "quantiles", "within")},
-        "evictCdf":
-        {p: {
-            "x": a.get("x"),
-            "p": a.get("p")
-        }
-         for p, a in ages.items()},
-        "evictP50": {
-            p: s["policy_views"][p]["eviction_ages"]["all"]["quantiles"]["p50"]
-            for p in cfg["policies"]
-        },
-    }
-
-
-def ceiling_frequency(r: Row) -> Optional[Dict[str, float]]:
-    """No-eviction runs: the chance a block is used again after 0, 1, 2 and
-    3+ past uses (paper check 9's mix values, averaged over runs)."""
-    row = next((x for x in r.get("rows", []) if x.get("claim") == 9), None)
-    if not row or not isinstance(row.get("mix"), dict):
-        return None
-    runs = [
-        v["all"]["future_reuse_by_past_accesses"] for v in row["mix"].values()
-        if isinstance(v, dict) and "all" in v
-    ]
-    if not runs:
-        return None
-    return {k: sum(x[k] for x in runs) / len(runs) for k in runs[0]}
-
-
-# Report views (identification, signals, paper checks) ------------------
-
-TRACE = {
-    "bailian-chat": "A (chat)",
-    "bailian-api": "B (API)",
-    "bailian-thinking": "thinking",
-    "bailian-coder": "coder"
-}
-FEATURE_SETS = [
-    ("idle_age", "Idle time only (all LRU uses)"),
-    ("+inferred_class", "+ inferred workload"),
-    ("+oracle_workload", "+ true workload label"),
-    ("+inferred_turn", "+ inferred turn number"),
-    ("+index", "+ block position in the prompt"),
-    ("+family_popularity", "+ popularity of the prompt's family"),
-    ("+hits_before", "+ past hits (what LFU uses)"),
-    ("label_free", "All label-free signals together"),
-    ("label_free+oracle", "All label-free + true label"),
-]
-
-
-def identify_view(r: Row, workloads: List[str]) -> Row:
-    """Ladder shares, confusion matrix and the sentences for question 3."""
-    p = r["with_timing"]["pooled"]
-    tree = p["tree"]
-    steps = {x["step"]: x for x in p["steps"]}
-    b1, f2 = steps["block1"]["coverage"], steps["family2"]["coverage"]
-    shares = p["step_shares"]
-    values = {
-        "all": {
-            "b1": b1,
-            "f2": f2 - b1,
-            "tree": tree["accuracy"] - f2,
-            "wrong": 1 - tree["accuracy"]
-        }
-    }
-    for w in workloads:
-        sh = shares.get(w, {})
-        lb1 = sh.get("block1", 0.0)
-        lf = sh.get("family2", 0.0) + sh.get("family4", 0.0)
-        rec = tree["recall"][w]
-        values[w] = {
-            "b1": lb1,
-            "f2": lf,
-            "tree": max(rec - lb1 - lf, 0.0),
-            "wrong": 1 - rec
-        }
-    conf = tree["confusion"]
-    share = []
-    for w in workloads:
-        row = conf.get(w, {})
-        tot = sum(row.values()) or 1
-        share.append([row.get(c, 0) / tot for c in workloads])
-    col = {
-        c: sum(conf.get(w, {}).get(c, 0) for w in workloads)
-        for c in workloads
-    }
-    fallback = max(workloads, key=lambda c: col[c] - conf.get(c, {}).get(c, 0))
-    fallback_wrong = (col[fallback] - conf.get(fallback, {}).get(
-        fallback, 0)) / max(1, col[fallback])
-    worst = sorted(((share[i][j], workloads[i], workloads[j])
-                    for i in range(len(workloads))
-                    for j in range(len(workloads)) if i != j),
-                   reverse=True)[:3]
-    no_timing = r["without_timing"]["pooled"]["tree"]["accuracy"]
-    return {
-        "ladder": {
-            "rows": [{
-                "id": "all",
-                "label": "All test requests"
-            }] + [{
-                "id": w,
-                "label": w
-            } for w in workloads],
-            "segments": [
-                {
-                    "id": "b1",
-                    "label": "Named by its first block"
-                },
-                {
-                    "id": "f2",
-                    "label": "Named by its first two blocks"
-                },
-                {
-                    "id": "tree",
-                    "label": "Named by the decision tree"
-                },
-                {
-                    "id": "wrong",
-                    "label": "Named wrongly"
-                },
-            ],
-            "values":
-            values,
-        },
-        "confusion": {
-            "labels": workloads,
-            "predicted": workloads,
-            "share": share
-        },
-        "numbers": {
-            "fingerprint":
-            f2,
-            "block1":
-            b1,
-            "accuracy":
-            tree["accuracy"],
-            "accuracy_no_timing":
-            no_timing,
-            "first":
-            tree["first_accuracy"],
-            "later":
-            tree["later_accuracy"],
-            "propagation":
-            p["propagation"]["accuracy"] if "accuracy" in p.get(
-                "propagation", {}) else None,
-            "fallback":
-            fallback,
-            "fallback_wrong":
-            fallback_wrong,
-            "ccbench_known":
-            tree["ccbench_known_task_accuracy"],
-            "ccbench_new":
-            tree["ccbench_new_task_accuracy"],
-            "worst":
-            worst,
-            "parent":
-            min(v["parent_is_previous_turn"] for v in r["parents"].values())
-        },
-    }
-
-
-LANDMARKS = (0, 5, 30, 120)
-
-
-def signals_view(r: Row) -> Row:
-    """AUC of each feature set among blocks idle equally long (each
-    landmark idle age, one-minute horizon), and pooled per horizon.
-
-    Pooled over idle ages, idle time alone scores above 0.5 only because
-    the pool mixes ages; at one idle age it is exactly 0.5. So the page
-    compares signals at equal idle time."""
-    horizons = [int(h) for h in r["settings"]["horizons_s"]]
-    by_age = {
-        fs:
-        {str(a): r["models"][fs]["H=60"][f"a={a}"]["auc"]
-         for a in LANDMARKS}
-        for fs, _ in FEATURE_SETS if fs in r["models"]
-    }
-    auc = {
-        fs:
-        {str(h): r["models"][fs][f"H={h}"]["pooled"]["auc"]
-         for h in horizons}
-        for fs, _ in FEATURE_SETS if fs in r["models"]
-    }
-    base = r["base_rates"]
-
-    def rate(h: int, a: int, w: str) -> Optional[float]:
-        try:
-            return base[f"H={h}"][f"a={a}"]["test"][w]["reused"]
-        except KeyError:
-            return None
-
-    return {
-        "landmarks":
-        list(LANDMARKS),
-        "by_age":
-        by_age,
-        "horizons":
-        horizons,
-        "rows": [{
-            "id": fs,
-            "label": label
-        } for fs, label in FEATURE_SETS if fs in auc],
-        "auc":
-        auc,
-        "base": {
-            f"{a}": {
-                w: rate(60, a, w)
-                for w in ("ccbench", "agentbank", "sharegpt", "bailian-chat",
-                          "bailian-coder", "bailian-api", "bailian-thinking")
-            }
-            for a in (0, 30, 120)
-        },
-    }
-
-
-def _mix_mean(mix: Row, *path: str) -> Optional[float]:
-    vals = []
-    for run in mix.values():
-        v: Any = run
-        for k in path:
-            v = v.get(k) if isinstance(v, dict) else None
-        if isinstance(v, (int, float)):
-            vals.append(float(v))
-    return sum(vals) / len(vals) if vals else None
-
-
-def _decile_ends(d: Row) -> str:
-    dec = (d.get("prefix") or d).get("by_decile") or []
-    return f"{pct(dec[0])} → {pct(dec[-1])}" if dec else "–"
-
-
-def _future(d: Row) -> str:
-    f = d.get("future_reuse_by_past_accesses") or {}
-    return "/".join(pct(f.get(k)) for k in ("0", "1", "2", "3+"))
-
-
-def _claim_text(c: int, raw: Row, mix: Row,
-                labels: Dict[str, str]) -> Tuple[str, str]:
-    """The raw-trace and mix cells of one scorecard claim, in words."""
-
-    def get(w: str, *k: str) -> Any:
-        return _dig(raw.get(w, {}), *k)
-
-    def mm(*k: str) -> Optional[float]:
-        return _mix_mean(mix, *k)
-
-    a, b, t, c_ = ("bailian-chat", "bailian-api", "bailian-thinking",
-                   "bailian-coder")
-    if c == 1:
-        rtxt = ", ".join(f"{TRACE[w]} {pct(get(w, 'ideal_hit_ratio'))}"
-                         for w in TRACE)
-        ws = [w for w in labels if mm(w, "ideal_hit_ratio") is not None]
-        lo = min(ws, key=lambda w: mm(w, "ideal_hit_ratio"))
-        hi = max(ws, key=lambda w: mm(w, "ideal_hit_ratio"))
-        mtxt = (f"whole mix {pct(mm('all', 'ideal_hit_ratio'))}; from "
-                f"{labels[lo]} {pct(mm(lo, 'ideal_hit_ratio'))} to "
-                f"{labels[hi]} {pct(mm(hi, 'ideal_hit_ratio'))}")
-    elif c == 2:
-        same = "same_session_share"
-        top = "top10_block_share_of_reuses"
-        rtxt = (f"same session: A {pct(get(a, same))}, thinking "
-                f"{pct(get(t, same))}, coder {pct(get(c_, same))} (B has "
-                f"one request per session); top 10% of blocks give A "
-                f"{pct(get(a, top))} and B {pct(get(b, top))} of reuses")
-        mtxt = (f"same session {pct(mm('all', same))}; top 10% of blocks "
-                f"give {pct(mm('all', top))}")
-    elif c == 3:
-        key = "turn1_share_of_hits"
-        rtxt = (f"B is all turn 1, so 100% by construction; A "
-                f"{pct(get(a, key))}, thinking {pct(get(t, key))}, coder "
-                f"{pct(get(c_, key))}")
-        mtxt = (f"Bailian API {pct(mm(b, key))}; whole mix "
-                f"{pct(mm('all', key))}")
-    elif c == 4:
-        rtxt = "80% of reuses within: " + ", ".join(
-            f"{TRACE[w]} {secs(get(w, 'p80'))}" for w in TRACE)
-        mtxt = (f"whole mix {secs(mm('all', 'p80'))}; Bailian API "
-                f"{secs(mm(b, 'p80'))} after thinning")
-    elif c == 5:
-        ks = [get(a, "categories", "text-1", k) for k in ("ks", "cure_ks")]
-        kb = [get(b, "categories", "api-1", k) for k in ("ks", "cure_ks")]
-        rtxt = (f"turn-1 fits are poor: KS {ks[0]:.2f} (A), {kb[0]:.2f} "
-                f"(B); allowing a share never reused helps ({ks[1]:.2f}, "
-                f"{kb[1]:.2f}) but not enough")
-        mtxt = ("same pattern: reuse within seconds (shared prompts) and "
-                "within minutes (history) mix in one category")
-    elif c == 6:
-        pairs = ((a, "text"), (b, "api"), (t, "thinking"), (c_, "coder"))
-        rr = {
-            w: get(w, "categories", f"{k}-1", "rate_ratio")
-            for w, k in pairs
-        }
-        rtxt = "hour 2's rate against hour 1's: " + ", ".join(
-            f"{TRACE[w]} {v:.2f}×" for w, v in rr.items() if v)
-        own = [_dig(v, "ks_own_fit_weighted") for v in mix.values()]
-        refit = [_dig(v, "ks_refit_weighted") for v in mix.values()]
-        within = [_dig(v, "rate_within_1_5x_share") for v in mix.values()]
-        if all(x is not None for x in own + refit + within) and own:
-            mtxt = ("a fit to a run's first half is almost as good as "
-                    "refitting its second half (KS " + "/".join(f"{x:.2f}"
-                                                                for x in own) +
-                    " against " + "/".join(f"{x:.2f}" for x in refit) +
-                    "), but rates stay within 1.5× for only " +
-                    f"{pct(min(within))}–{pct(max(within))} of blocks")
-        else:
-            mtxt = "–"
-    elif c == 7:
-        parts = []
-        for w in (a, t, c_):
-            bt = get(w, "by_turn") or {}
-            parts.append(f"{TRACE[w]} {pct(bt.get('1'))} at turn 1 → "
-                         f"{pct(bt.get('6+'))} at turn 6+")
-        rtxt = "; ".join(parts)
-        mtxt = ("rises for human traffic; flat for agent loops, which "
-                "nearly always continue")
-    elif c == 8:
-        rtxt = (f"first vs last tenth of a prompt: A "
-                f"{_decile_ends(raw[a])}, B {_decile_ends(raw[b])}")
-        firsts = [(v.get("all", {}).get("by_decile") or [None])[0]
-                  for v in mix.values()]
-        lasts = [(v.get("all", {}).get("by_decile") or [None])[-1]
-                 for v in mix.values()]
-        mtxt = (f"whole mix {pct(_avg(firsts))} → {pct(_avg(lasts))}")
-    elif c == 9:
-        rtxt = ("chance a block is used again after 0/1/2/3+ past uses: "
-                f"A {_future(raw[a])}, B {_future(raw[b])}")
-        keys = ("0", "1", "2", "3+")
-        m0 = {
-            "future_reuse_by_past_accesses": {
-                k: _mix_mean(mix, "all", "future_reuse_by_past_accesses", k)
-                for k in keys
-            }
-        }
-        mtxt = (f"whole mix {_future(m0)} (mean of seeds 2–4): frequency "
-                "is informative")
-    else:
-        m0 = next(iter(mix.values()), {}).get("live_blocks", {})
-        rtxt = "blocks with a future reuse (full rate): " + ", ".join(
-            f"{TRACE[w]} {get(w, 'live_blocks', 'mean') or 0:,.0f}"
-            for w in TRACE)
-        mtxt = (f"{m0.get('mean', 0):,.0f} on average against 8,192 "
-                "cached; see the capacity chart")
-    return rtxt, mtxt
-
-
-def _avg(values: List[Optional[float]]) -> Optional[float]:
-    vals = [v for v in values if v is not None]
-    return sum(vals) / len(vals) if vals else None
-
-
-def paper_view(r: Row, labels: Dict[str, str]) -> List[Row]:
-    """One plain row per claim: the paper's number, ours on the raw traces
-    and in our mix, and the verdict."""
-    out = []
-    for row in r["rows"]:
-        rtxt, mtxt = _claim_text(row["claim"],
-                                 row.get("raw") or {},
-                                 row.get("mix") or {}, labels)
-        verdict = row.get("verdict", "").replace("not testable here",
-                                                 "not testable")
-        chip = {
-            "holds": "holds",
-            "partly": "partly",
-            "no": "no"
-        }.get(verdict, "na")
-        out.append({
-            "claim": row["statement"],
-            "paper": row["paper"],
-            "raw": rtxt,
-            "mix": mtxt,
-            "verdict": verdict,
-            "chip": chip
-        })
-    return out
-
-
-def _dig(d: Any, *keys: str) -> Any:
-    for k in keys:
-        if not isinstance(d, dict):
-            return None
-        d = d.get(k)
-    return d
-
-
-# Page ---------------------------------------------------------------------
+def tokens(n: int) -> str:
+    """A cache size in tokens: 131072 -> 128K (1K = 1,024 tokens)."""
+    return f"{n // 1048576}M" if n >= 1048576 else f"{n // 1024}K"
 
 
 def esc(text: str) -> str:
     return html.escape(text, quote=False)
 
 
+def mean(v: Optional[Row]) -> Optional[float]:
+    return None if not v else v.get("mean")
+
+
+def label_offsets(ends: Dict[str, Optional[float]],
+                  span: float) -> Dict[str, int]:
+    """Vertical pixel offsets (positive: down) that keep end-of-line labels
+    `LABEL_GAP_PX` apart on a y axis `span` units tall, highest value first;
+    a line without an end value gets none."""
+    order = sorted((k for k in ends if ends[k] is not None),
+                   key=lambda k: -ends[k])
+    out: Dict[str, int] = {}
+    last_y = -math.inf
+    for k in order:
+        y = (1 - ends[k]) * PLOT_PX / span
+        placed = max(y, last_y + LABEL_GAP_PX)
+        out[k] = round(placed - y)
+        last_y = placed
+    return out
+
+
+# --- What each chart reads ----------------------------------------------
+
+
+def q2_view(s: Row) -> Row:
+    """Point 2: the mixed runs' usable reuse, whole mix and per workload."""
+    mg = s["mixed_groups"]
+    rows = ["all", *GROUPS]
+    return {
+        "rows": rows,
+        "values": {p: {k: mg[k][p]["usable"]
+                       for k in rows}
+                   for p in POLICIES},
+        "ceiling": {k: mg[k]["ceiling"]["usable"]
+                    for k in rows},
+    }
+
+
+def q3_view(c: Row) -> Row:
+    """Point 3: each model's scores and the whole model's confusion matrix
+    (rows: the true workload; shares of the row)."""
+    models = [{
+        "id": k,
+        "label": label,
+        "accuracy": c["models"][k]["accuracy"],
+        "balanced": c["models"][k]["balanced_accuracy"],
+        "tokens": c["models"][k]["token_accuracy"],
+    } for k, label in MODELS.items()]
+    confusion = c["models"]["all"]["confusion"]
+    counts = [[confusion.get(t, {}).get(p, 0) for p in GROUPS] for t in GROUPS]
+    share = [[v / sum(row) if sum(row) else 0.0 for v in row]
+             for row in counts]
+    return {
+        "models": models,
+        "majority": {
+            **c["majority"], "balanced": 1 / len(GROUPS)
+        },
+        "confusion": {
+            "classes": list(GROUPS),
+            "counts": counts,
+            "share": share
+        },
+    }
+
+
+def y_range(values: List[Optional[float]]) -> List[float]:
+    """A y domain on 5-point steps with room around `values`."""
+    vals = [v for v in values if v is not None]
+    lo = math.floor((min(vals) - 0.02) * 20) / 20
+    hi = math.ceil((max(vals) + 0.03) * 20) / 20
+    return [max(0.0, lo), min(1.0, hi)]
+
+
+def q4_view(c: Row) -> Row:
+    """Point 4: the replay curves (with Belady), the ceiling, and the
+    engine runs (with the replay of the same seeds) averaged per policy and
+    size; engine runs without a replay value are left out."""
+    pols = [*POLICIES, "belady"]
+    curve = {p: c["curve"][p]["hit_rate"] for p in pols}
+    engine: Dict[tuple, List[Row]] = {}
+    for e in c["engine"]:
+        if e["engine"] is not None and e["replay"] is not None:
+            engine.setdefault((e["policy"], e["capacity"]), []).append(e)
+    marks = [{
+        "policy": p,
+        "capacity": cap,
+        "engine": sum(e["engine"] for e in es) / len(es),
+        "replay": sum(e["replay"] for e in es) / len(es),
+        "seeds": sorted(e["seed"] for e in es),
+    } for (p, cap), es in sorted(engine.items())]
+    values = [v for p in pols for v in curve[p]]
+    values += [m["engine"] for m in marks] + [c["ceiling"]]
+    domain = y_range(values)
+    ends = {p: curve[p][-1] for p in pols}
+    return {
+        "capacities": c["capacities"],
+        "curve": curve,
+        "ceiling": c["ceiling"],
+        "fixed": c["fixed"],
+        "engine": marks,
+        "yDomain": domain,
+        "labelDy": label_offsets(ends, domain[1] - domain[0]),
+    }
+
+
+def q5_view(iso: Row) -> Row:
+    """Point 5: each workload alone, usable reuse and served intervals."""
+    rows = iso["rows"]
+    return {
+        "values":
+        {p: {g: rows[g][p]["alone"]
+             for g in GROUPS}
+         for p in POLICIES},
+        "ceiling": {g: rows[g]["ceiling"]
+                    for g in GROUPS},
+        "curves": {
+            g: {p: iso["intervals"][g][p]["curve"]
+                for p in POLICIES}
+            for g in GROUPS
+        },
+    }
+
+
+# A verdict on alone minus sharing, as the chart's table words it.
+AGREE = {
+    "higher": "yes: lower when sharing",
+    "lower": "yes: higher when sharing",
+    "tie": "no (a tie by the rule)",
+}
+# What the page needs from summary.json.
+REQUIRED = ("mixed_intervals", "mixed_groups", "ceiling_intervals_by_group",
+            "capacity_window", "isolation", "mix", "config")
+
+
+def q6_view(iso: Row) -> Row:
+    """Point 6: alone against sharing, per workload and policy."""
+    rows = iso["rows"]
+    return {
+        "rows": [{
+            "group": g,
+            "policy": p,
+            "alone": mean(rows[g][p]["alone"]),
+            "mixed": mean(rows[g][p]["mixed"]),
+            "agree": AGREE[rows[g][p]["verdict"]],
+        } for g in GROUPS for p in POLICIES],
+        "ceiling": {g: mean(rows[g]["ceiling"])
+                    for g in GROUPS},
+    }
+
+
+def build_data(s: Row) -> Row:
+    """The compact data object the charts read (window.M3T2)."""
+    iso = s.get("isolation")
+    return {
+        "policies": list(POLICIES),
+        "groups": list(GROUPS),
+        "labels": LABELS,
+        "policyLabels": POLICY_LABELS,
+        "minOffered": MIN_OFFERED,
+        "q1": {
+            "curves": {p: s["mixed_intervals"][p]["curve"]
+                       for p in POLICIES}
+        },
+        "q2": q2_view(s),
+        "q3": q3_view(s["identify"]["characteristics"]),
+        "q4": q4_view(s["capacity_window"]),
+        "q5": q5_view(iso) if iso else None,
+        "q6": q6_view(iso) if iso else None,
+    }
+
+
+# --- The page -------------------------------------------------------------
+
+
 def figure(fig_id: str,
            claim: str,
            badges: List[str],
            takeaway: str,
-           note: str = "") -> str:
-    tags = "".join(f'<span class="badge {b}">{esc(label)}</span>'
-                   for b, label in [(x.split(":")[0], x.split(":", 1)[1])
-                                    for x in badges])
-    note_html = f'<p class="prose">{note}</p>' if note else ""
+           intro: str = "") -> str:
+    """One finding: the claim with its badges ("measured:..." or
+    "sim:..."), an optional intro, the chart, and what it shows."""
+    tags = "".join(f'<span class="badge {kind}">{esc(label)}</span>'
+                   for kind, label in (b.split(":", 1) for b in badges))
+    intro_html = f'<p class="prose">{intro}</p>' if intro else ""
     return (f'<div class="finding"><div class="claim"><h3>{claim}</h3>{tags}'
-            f'</div>{note_html}<figure class="chart" id="{fig_id}"></figure>'
-            f'<p class="takeaway"><b>For the design</b>{takeaway}</p></div>')
+            f'</div>{intro_html}<figure class="chart" id="{fig_id}"></figure>'
+            f'<div class="takeaway"><b class="label">What this shows</b>'
+            f'{takeaway}</div></div>')
 
 
-def render(s: Row, data: Row, sections: Dict[str, str]) -> str:
+def render(data: Row, sections: List[str]) -> str:
     css = (PAGE / "style.css").read_text()
     js = (PAGE / "charts.js").read_text()
     payload = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     scripts = "".join(f'<script src="{u}"></script>' for u in PLOT)
+    body = "\n".join(sections)
     return f"""<title>{TITLE}</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -663,21 +310,7 @@ def render(s: Row, data: Row, sections: Dict[str, str]) -> str:
 <link rel="stylesheet" href="{FONTS}">
 <style>{css}</style>
 <main class="page">
-{sections["header"]}
-{sections["answers"]}
-{sections["example"]}
-{sections["glossary"]}
-{sections["mix"]}
-{sections["baselines"]}
-{sections["headline"]}
-{sections["q1"]}
-{sections["q2"]}
-{sections["q3"]}
-{sections["paper"]}
-{sections["headroom"]}
-{sections["signals"]}
-{sections["checks"]}
-{sections["method"]}
+{body}
 </main>
 {scripts}
 <script>window.M3T2 = {payload};</script>
@@ -696,9 +329,17 @@ def main(argv=None) -> None:
                                      "mixed-workload-reuse.html"))
     args = parser.parse_args(argv)
     s = json.loads(args.summary.read_text())
+    missing = [k for k in REQUIRED if not s.get(k)]
+    if not (s.get("identify") or {}).get("characteristics"):
+        missing.append("identify.characteristics")
+    if missing:
+        raise SystemExit(f"summary.json lacks {', '.join(missing)}: run "
+                         "the isolated grid, analysis.tables, "
+                         "analysis.identify, the windowed sweep and "
+                         "analysis.m3t2_study first")
     data = build_data(s)
     from analysis.m3t2_narrative import sections
-    page = render(s, data, sections(s, data))
+    page = render(data, sections(s, data))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(page)
     print(f"Wrote {args.out} ({len(page) // 1024} KB)")

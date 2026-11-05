@@ -251,6 +251,27 @@ reuse times are not exponential (shared prompts return within seconds,
 history within minutes), so the score should be learned per prompt family
 or class from observed returns rather than fitted to one curve.
 
+### Report revision (2026-11-04)
+
+The results page was cut to six points at the owners' request (reuse
+interval, reuse portion, identification, capacity, each workload alone,
+alone against sharing). What this added after the Phase 1 freeze:
+
+- `analysis/m3t2_config.json` gained `served_interval_edges_s` (0, 10, 60
+  and 300 s), the bins the page quotes for the share of reuses served by
+  wait. It changes no earlier number.
+- The `isolated` grid: each workload's requests of the reported seeds'
+  balanced plans, unchanged, so its traffic intensity is the same alone as
+  in the mix. Under 1% of any workload's no-eviction reuse comes from
+  another workload, so the alone runs use the mix's ceiling.
+- Identification over the four workloads (Bailian's traces as one): one
+  CART tree per signal set, depth chosen on seed 1, scored on seeds 2–4.
+  Inheriting a parent's label is dropped there: in a trial it carried one
+  wrong label across a whole session and lowered accuracy, so each request
+  is labelled on its own.
+- The capacity curve counts the measurement window ([600, 1800) s) like
+  the engine numbers, so the page's points agree at 131,072 tokens.
+
 ## Phases
 
 Target dates are proposals for the owners to confirm; the project is due

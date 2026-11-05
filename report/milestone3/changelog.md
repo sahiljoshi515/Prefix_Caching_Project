@@ -68,6 +68,16 @@ on branch `milestone3_task2`; the policy itself is Phase 2.
   131,072 tokens and 16-token blocks, plus a simulator sweep of cache size
   for LRU, LFU, FIFO and Belady. Results:
   [`task2-mixed-workload-policy.md`](task2-mixed-workload-policy.md).
+- **Added:** each workload run alone with the requests it sends in the mix
+  (`analysis/isolate.py`, the `isolated` grid; `56980db6`): 36 engine runs
+  (4 workloads x LRU, LFU, FIFO x seeds 2–4). The cache replay can count
+  only the measurement window (`sim --window`).
+- **Changed:** the results page, its figures and the results note now cover
+  six points only: reuse interval and reuse portion on the mix, workload
+  identification over the four workloads (each observable signal alone and
+  together, accuracy and confusion matrix), usable reuse against cache size
+  from 32K to 384K tokens with Belady, and each workload alone against
+  sharing the cache.
 
 ### Unreleased (branch `milestone3-marcus-mixed-workload-spec`)
 

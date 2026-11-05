@@ -18,7 +18,7 @@ design and test notes are in
 | 2, Task 1 | Client simulator and ShareGPT preprocessing | Done | `client_simulator/` |
 | 2, Task 2 | Cache event log, prefix-sharing metrics, single- vs multi-turn replay | In progress | `vllm/core/block/cache_events.py`, `analysis/`, `specs/004-*` |
 | 2, Task 3 | Cache size, block size and eviction policies | Done: 54-run grid, [findings](report/milestone2/task3-cache-tuning.md) | `vllm/core/eviction_policies.py`, `analysis/sweep.py`, `analysis/run_m2_task3.py`, `specs/005-*` |
-| 3, Task 2 | Mixed workload: generator, LRU/LFU/FIFO baselines, reuse study | Phase 1 done: 21-run grid, [findings](report/milestone3/task2-mixed-workload-policy.md); the policy is Phase 2 | `analysis/mix.py`, `analysis/run_m3_task2.py`, `analysis/m3t2_study.py`, `specs/007-*` |
+| 3, Task 2 | Mixed workload: generator, LRU/LFU/FIFO baselines, reuse study | Phase 1 done: 21-run mixed grid and 36 isolated runs, [findings](report/milestone3/task2-mixed-workload-policy.md); the policy is Phase 2 | `analysis/mix.py`, `analysis/run_m3_task2.py`, `analysis/m3t2_study.py`, `specs/007-*` |
 | 3, Task 1 | Eviction policies across workloads | Planned | `specs/006-*` |
 
 How the team works (branches, pull requests, tests, CI, documentation) is
@@ -324,6 +324,8 @@ data/raw/ccbench/train.parquet --output data/processed/ccbench.responses.jsonl
 ```bash
 python -m analysis.run_m3_task2 plans --grid phase1   # analysis/mix.py, 1,800 s plans
 python -m analysis.run_m3_task2 grid --grid phase1    # 21 engine runs, 6 at a time
+python -m analysis.run_m3_task2 plans --grid isolated # each workload alone (analysis/isolate.py)
+python -m analysis.run_m3_task2 grid --grid isolated --jobs 12   # 36 engine runs
 python -m analysis.tables results/m3-task2/*          # per-run lookup/residency/request tables
 python -m analysis.identify --train data/processed/m3/balanced-human-s1 \
     --test data/processed/m3/balanced-human-s{2,3,4} --out results/m3-study/identify.json
@@ -333,8 +335,11 @@ python -m analysis.paper_checks --ceiling results/m3-task2/balanced-human-s2-cei
     --plan data/processed/m3/balanced-human-s1 ... --out results/m3-study/paper.json
 python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 ... \
     --policies lru lfu fifo belady --capacities 32768 ... 393216 --out results/m3-sim/sweep.jsonl
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
+    --policies lru lfu fifo belady --capacities 32768 ... 393216 ceiling \
+    --window 600 1800 --out results/m3-sim/capacity-window.jsonl   # point 4's curve
 python -m analysis.m3t2_study      # results/m3-study/summary.json
-python -m analysis.m3t2_report     # the results page (HTML)
+python -m analysis.m3t2_report     # the results page (HTML): the six points
 python -m analysis.m3t2_figures    # report/milestone3/figures/task2/
 ```
 
