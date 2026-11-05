@@ -84,16 +84,42 @@ def _log(value: Optional[float]) -> float:
     return math.log1p(max(value, 0.0))
 
 
-# The tree's inputs, computed from a `request_features` row.
-TREE_FEATURES: Dict[str, Callable[[Row], float]] = {
+# What a tree can take as input, computed from a `request_features` row.
+FEATURES: Dict[str, Callable[[Row], float]] = {
     "log_prompt_tokens": lambda r: math.log1p(r["prompt_tokens"]),
     "inferred_turn": lambda r: float(r["inferred_turn"]),
     "log_growth": lambda r: _log(r["growth_tokens"]),
     "log_parent_age": lambda r: _log(r["parent_age_s"]),
     "matched_depth": lambda r: float(r["matched_depth"]),
     "log_family_popularity": lambda r: math.log1p(r["family_popularity"]),
+    "log_time_since_family": lambda r: _log(r["time_since_family_s"]),
 }
-TIMING_TREE_FEATURES = ("log_parent_age", )
+# The ladder's tree inputs by default.
+TREE_FEATURES = ("log_prompt_tokens", "inferred_turn", "log_growth",
+                 "log_parent_age", "matched_depth", "log_family_popularity")
+TIMING_TREE_FEATURES = ("log_parent_age", "log_time_since_family")
+# The four observable characteristics the course names, each as the part of
+# the ladder that reads it: the hash lookups, or tree inputs.
+CHARACTERISTICS: Dict[str, Dict[str, Any]] = {
+    "prompt_length": {
+        "features": ("log_prompt_tokens", ),
+        "lookups": False
+    },
+    "prefix_hashes": {
+        "features": (),
+        "lookups": True
+    },
+    "reuse_history": {
+        "features": ("matched_depth", "inferred_turn", "log_growth",
+                     "log_family_popularity"),
+        "lookups":
+        False
+    },
+    "interarrival": {
+        "features": ("log_parent_age", "log_time_since_family"),
+        "lookups": False
+    },
+}
 
 # --------------------------------------------------------------------------
 # Features
@@ -361,7 +387,7 @@ def _lookup(tables: Dict[int, Dict[int, str]],
 
 
 def tree_matrix(rows: Sequence[Row], features: Sequence[str]) -> np.ndarray:
-    return np.array([[TREE_FEATURES[f](r) for f in features] for r in rows],
+    return np.array([[FEATURES[f](r) for f in features] for r in rows],
                     dtype=float).reshape(len(rows), len(features))
 
 
@@ -658,15 +684,20 @@ def _pool(per_test: Dict[str, List[Row]]) -> List[Row]:
     return [r for rows in per_test.values() for r in rows]
 
 
-def identify_report(train_plan_dir: Path,
-                    test_plan_dirs: Sequence[Path],
-                    block_size: int = 16,
-                    min_share: float = 0.9,
-                    max_depth: int = 4,
-                    min_leaf: int = 5) -> Dict[str, Any]:
+def identify_report(
+        train_plan_dir: Path,
+        test_plan_dirs: Sequence[Path],
+        block_size: int = 16,
+        min_share: float = 0.9,
+        max_depth: int = 4,
+        min_leaf: int = 5,
+        group_of: Optional[Callable[[str], str]] = None) -> Dict[str, Any]:
     """The ladder learned on one plan and scored on others, with and
     without the timing feature; family purity, unseen families and the
-    parent check per plan."""
+    parent check per plan; and, over the course's four workloads, each
+    observable characteristic alone and together
+    (`characteristics_report`; `group_of` maps a workload to its group,
+    by default `analysis.isolate.group_of`)."""
     from analysis.mix import ccbench_task
     train = plan_features(train_plan_dir, block_size)
     tests = {
@@ -703,6 +734,14 @@ def identify_report(train_plan_dir: Path,
                for name, rows in tests.items()},
         },
     }
+    if group_of is None:
+        from analysis.isolate import group_of
+    report["characteristics"] = characteristics_report(
+        grouped(train, group_of),
+        {name: grouped(rows, group_of)
+         for name, rows in tests.items()},
+        min_share,
+        known_tasks=known_tasks)
     for timing in (True, False):
         ladder = fit_ladder(train, timing, min_share, max_depth, min_leaf)
         labelled = {
@@ -722,6 +761,218 @@ def identify_report(train_plan_dir: Path,
             "pooled": evaluate(_pool(labelled), known_tasks),
         }
     return report
+
+
+def grouped(rows: Sequence[Row], group_of: Callable[[str], str]) -> List[Row]:
+    """`rows` with each oracle workload replaced by its group (the course's
+    four workloads: `analysis.isolate.group_of`)."""
+    return [{**r, "workload": group_of(r["workload"])} for r in rows]
+
+
+def lookup_inputs(rows: Sequence[Row], tables: Dict[int, Dict[int, str]],
+                  classes: Sequence[str]) -> np.ndarray:
+    """The hash lookups as tree inputs: one column per workload, set where
+    the first lookup that resolves the row (block 1, then families of 2
+    and 4 blocks) names it, and a last column for rows none resolves."""
+    index = {c: i for i, c in enumerate(classes)}
+    out = np.zeros((len(rows), len(classes) + 1))
+    for i, r in enumerate(rows):
+        label = _lookup(tables, r)[1]
+        out[i, index[label] if label in index else len(classes)] = 1.0
+    return out
+
+
+def crossfit_lookup_inputs(rows: Sequence[Row], classes: Sequence[str],
+                           min_share: float) -> np.ndarray:
+    """`lookup_inputs` for training rows, each half of the sessions looked
+    up in tables learned on the other half: what the lookups would say of a
+    session they had never seen, as at test time."""
+    folds = session_folds(rows)
+    out = np.zeros((len(rows), len(classes) + 1))
+    for fold in (0, 1):
+        other = [r for r in rows if folds[r["session_id"]] != fold]
+        tables = {k: lookup_table(other, k, min_share) for k in LOOKUPS}
+        mine = [
+            i for i, r in enumerate(rows) if folds[r["session_id"]] == fold
+        ]
+        out[mine] = lookup_inputs([rows[i] for i in mine], tables, classes)
+    return out
+
+
+def _balanced(y: np.ndarray, pred: np.ndarray, n_classes: int) -> float:
+    """Mean recall over the classes present in `y`."""
+    recalls = [(pred[y == c] == c).mean() for c in range(n_classes)
+               if (y == c).any()]
+    return float(np.mean(recalls))
+
+
+def pick_depth(x: np.ndarray, y: np.ndarray, folds: np.ndarray, n_classes: int,
+               depths: Sequence[int], min_leaf: int) -> int:
+    """The tree depth with the best balanced accuracy when each half of the
+    training sessions is predicted by a tree grown on the other half (ties:
+    the shallower tree). The halves are the ones `crossfit_lookup_inputs`
+    uses, so a held-out half's lookup inputs came from tables of the other
+    half: the search is not nested, but it never leaves the training plan.
+    """
+    best, best_score = depths[0], -1.0
+    for depth in depths:
+        scores = []
+        for fold in (0, 1):
+            train, test = folds != fold, folds == fold
+            tree = fit_tree(x[train], y[train], n_classes, depth, min_leaf)
+            scores.append(
+                _balanced(y[test], predict_tree(tree, x[test]), n_classes))
+        if np.mean(scores) > best_score + 1e-12:
+            best, best_score = depth, float(np.mean(scores))
+    return best
+
+
+def _model_scores(rows: Sequence[Row],
+                  pred: Sequence[str],
+                  known_tasks: Optional[Set[str]] = None) -> Dict[str, Any]:
+    """Accuracy (share of requests), balanced accuracy (mean recall, each
+    workload counted once), token accuracy (share of prompt tokens),
+    recall, the confusion matrix (true -> predicted -> requests), first
+    requests (inferred turn 0) against later ones, and, with `known_tasks`
+    (the CC-Bench tasks the training plan ran), CC-Bench's requests of
+    known tasks against new ones (`_task_split`)."""
+    confusion: Dict[str, Counter] = defaultdict(Counter)
+    right_tokens = tokens = 0
+    for r, label in zip(rows, pred):
+        confusion[r["workload"]][label] += 1
+        tokens += r["prompt_tokens"]
+        right_tokens += r["prompt_tokens"] * (label == r["workload"])
+
+    def accuracy(keep: Callable[[Row], bool]) -> Optional[float]:
+        pairs = [(r, p) for r, p in zip(rows, pred) if keep(r)]
+        return _share(sum(p == r["workload"] for r, p in pairs), len(pairs))
+
+    recall = {
+        w: _share(c[w], sum(c.values()))
+        for w, c in sorted(confusion.items())
+    }
+    return {
+        "requests": len(rows),
+        "accuracy": accuracy(lambda r: True),
+        "balanced_accuracy": float(np.mean(list(recall.values()))),
+        "token_accuracy": _share(right_tokens, tokens),
+        "recall": recall,
+        "confusion": {w: dict(c)
+                      for w, c in sorted(confusion.items())},
+        "first_accuracy": accuracy(lambda r: r["inferred_turn"] == 0),
+        "later_accuracy": accuracy(lambda r: r["inferred_turn"] > 0),
+        **({} if known_tasks is None else _task_split(rows, pred, known_tasks)),
+    }
+
+
+def _task_split(rows: Sequence[Row], pred: Sequence[str],
+                known_tasks: Set[str]) -> Dict[str, Any]:
+    """CC-Bench's requests whose task the training plan also ran, against
+    those of new tasks: counts and accuracy. Its 74 tasks repeat across
+    seeds, so the hash lookups can recognise a task they have seen."""
+    from analysis.mix import ccbench_task
+    out: Dict[str, Any] = {}
+    for name, want in (("known", True), ("new", False)):
+        pairs = [(r, p) for r, p in zip(rows, pred)
+                 if r["workload"] == "ccbench" and (
+                     ccbench_task(r["session_id"]) in known_tasks) == want]
+        out[f"ccbench_{name}_requests"] = len(pairs)
+        out[f"ccbench_{name}_accuracy"] = _share(
+            sum(p == r["workload"] for r, p in pairs), len(pairs))
+    return out
+
+
+def characteristics_report(
+        train: Sequence[Row],
+        tests: Dict[str, Sequence[Row]],
+        min_share: float = 0.9,
+        depths: Sequence[int] = (2, 4, 6, 8, 10),
+        min_leaf: int = 20,
+        known_tasks: Optional[Set[str]] = None) -> Dict[str, Any]:
+    """How well each observable characteristic (`CHARACTERISTICS`) tells
+    the workload on its own, and all of them together.
+
+    Each model is one CART tree learned on `train` (a labelled profiling
+    plan) and run on each test plan, whose labels it never sees. Its inputs
+    are the characteristic's features, and for prefix hashes the hash
+    lookups (`lookup_inputs`, cross-fitted on the training plan). Its depth
+    is chosen on the training plan alone (`pick_depth`). ``all`` takes
+    every input; ``all_but_timing`` drops the inter-arrival inputs, which
+    for ShareGPT and AgentBank are pacing inputs rather than measurements.
+    ``majority`` labels every request with the training plan's most common
+    workload: the accuracy to beat. Scores pool the test plans;
+    ``per_test`` gives each plan's. With `known_tasks`, the pooled scores
+    also split CC-Bench by whether the training plan ran the task.
+    """
+    classes = sorted({r["workload"] for r in train})
+    index = {c: i for i, c in enumerate(classes)}
+    y = np.array([index[r["workload"]] for r in train])
+    fold_of = session_folds(train)
+    folds = np.array([fold_of[r["session_id"]] for r in train])
+    tables = {k: lookup_table(train, k, min_share) for k in LOOKUPS}
+    train_lookups = crossfit_lookup_inputs(train, classes, min_share)
+    everything = tuple(
+        dict.fromkeys(f for spec in CHARACTERISTICS.values()
+                      for f in spec["features"]))
+    models = dict(CHARACTERISTICS)
+    models["all"] = {"features": everything, "lookups": True}
+    models["all_but_timing"] = {
+        "features":
+        tuple(f for f in everything if f not in TIMING_TREE_FEATURES),
+        "lookups": True
+    }
+
+    def inputs(rows: Sequence[Row], spec: Dict[str, Any],
+               lookups: Optional[np.ndarray]) -> np.ndarray:
+        parts = [tree_matrix(rows, spec["features"])]
+        if spec["lookups"]:
+            parts.append(lookups if lookups is not None else lookup_inputs(
+                rows, tables, classes))
+        return np.hstack(parts)
+
+    counts = Counter(r["workload"] for r in train)
+    majority = min(counts, key=lambda w: (-counts[w], w))
+    pooled = [r for rows in tests.values() for r in rows]
+    out: Dict[str, Any] = {
+        "classes": classes,
+        "train_requests": len(train),
+        "min_leaf": min_leaf,
+        "majority": {
+            "label":
+            majority,
+            "accuracy":
+            _share(sum(r["workload"] == majority for r in pooled),
+                   len(pooled)),
+        },
+        "models": {},
+    }
+    for name, spec in models.items():
+        x = inputs(train, spec, train_lookups)
+        depth = pick_depth(x, y, folds, len(classes), depths, min_leaf)
+        tree = fit_tree(x, y, len(classes), depth, min_leaf)
+        preds = {
+            plan:
+            [classes[i] for i in predict_tree(tree, inputs(rows, spec, None))]
+            for plan, rows in tests.items()
+        }
+        out["models"][
+            name] = {
+                "features": list(spec["features"]),
+                "lookups": spec["lookups"],
+                "depth": depth,
+                **_model_scores(pooled, [
+                    p for plan in tests for p in preds[plan]
+                ], known_tasks),
+                "per_test": {
+                    plan: {
+                        k: v
+                        for k, v in _model_scores(rows, preds[plan]).items()
+                        if k in ("accuracy", "balanced_accuracy")
+                    }
+                    for plan, rows in tests.items()
+                },
+            }
+    return out
 
 
 def _print_summary(report: Dict[str, Any]) -> None:

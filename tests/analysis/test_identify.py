@@ -278,6 +278,72 @@ def test_tree_features_mark_missing_parents():
     assert "log_parent_age" not in without.features
 
 
+def test_each_characteristic_alone_and_together():
+    train = [{**r, "time_since_family_s": None} for r in TRAIN]
+    test = [{**r, "time_since_family_s": None} for r in TEST]
+    report = idf.characteristics_report(train, {"t": test},
+                                        depths=(1, 2, 3),
+                                        min_leaf=1)
+    assert report["classes"] == ["wa", "wb", "wc"]
+    # wb and wc tie with 4 training requests each: the first name wins.
+    assert report["majority"] == {"label": "wb", "accuracy": 0.2}
+    models = report["models"]
+    assert list(models) == [
+        "prompt_length", "prefix_hashes", "reuse_history", "interarrival",
+        "all", "all_but_timing"
+    ]
+    # Length alone: 50 -> wa, 10 -> wb, 1000 -> wc, so the short later turn
+    # of t3 and the long wa request are wrong. One split cannot tell three
+    # lengths apart, so cross-validation on TRAIN picks depth 2.
+    length = models["prompt_length"]
+    assert length["features"] == ["log_prompt_tokens"]
+    assert length["depth"] == 2
+    assert length["accuracy"] == pytest.approx(0.6)
+    assert length["recall"] == {"wa": 0.5, "wb": 1.0, "wc": 0.5}
+    assert length["balanced_accuracy"] == pytest.approx(2 / 3)
+    assert length["token_accuracy"] == pytest.approx(1060 / 2070)
+    assert length["confusion"]["wc"] == {"wc": 1, "wb": 1}
+    assert length["first_accuracy"] == 0.75
+    assert length["later_accuracy"] == 0.0
+    # Hashes alone: in training, only wa's block 1 is known to the other
+    # half of the sessions, so the tree learns "wa lookup -> wa, else wb"
+    # (wb and wc tie); t1 and t2 are right.
+    hashes = models["prefix_hashes"]
+    assert hashes["features"] == [] and hashes["lookups"]
+    assert hashes["accuracy"] == pytest.approx(0.4)
+    assert models["all"]["accuracy"] == pytest.approx(0.6)
+    assert models["all"]["per_test"]["t"]["accuracy"] == pytest.approx(0.6)
+    assert "log_parent_age" not in models["all_but_timing"]["features"]
+    assert "log_parent_age" in models["all"]["features"]
+
+
+def test_lookup_inputs_are_one_hot_with_a_column_for_unresolved():
+    tables = {1: {100: "wa"}, 2: {201: "wb"}, 4: {}}
+    x = idf.lookup_inputs(TEST[:3], tables, ["wa", "wb", "wc"])
+    assert x.tolist() == [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1]]
+    # Cross-fitted: a training session is looked up in the other half's
+    # tables, so the a1 request (fold 0) is known from a2 (fold 1), and no
+    # wb or wc session's own family can resolve it.
+    x = idf.crossfit_lookup_inputs(TRAIN, ["wa", "wb", "wc"], 0.9)
+    assert x[:, 0].tolist() == [1, 1] + [0] * 8
+    assert x[2:, 3].tolist() == [1] * 8
+
+
+def test_depth_is_picked_on_the_training_halves():
+    x = np.array([[0.0], [1.0], [2.0], [0.0], [1.0], [2.0]])
+    y = np.array([0, 1, 2, 0, 1, 2])
+    folds = np.array([0, 0, 0, 1, 1, 1])
+    assert idf.pick_depth(x, y, folds, 3, (1, 2, 3), 1) == 2
+
+
+def test_grouped_rows_take_their_group_as_workload():
+    rows = idf.grouped([{
+        "workload": "bailian-api",
+        "x": 1
+    }], lambda w: w.split("-")[0])
+    assert rows == [{"workload": "bailian", "x": 1}]
+
+
 def write(path, requests):
     write_plan(requests, path / "plan.jsonl.gz", path / "responses.jsonl")
     return path
@@ -293,7 +359,10 @@ def test_identify_report_on_toy_plans(tmp_path):
         R("wa:s9:0", [1, 2, 40, 41], [42], 0.0),
         R("wb:s8:0", [7, 8, 9, 10], [43], 1.0),
     ])
-    report = idf.identify_report(train, [test], block_size=BS, min_leaf=1)
+    report = idf.identify_report(train, [test],
+                                 block_size=BS,
+                                 min_leaf=1,
+                                 group_of=lambda w: w)
     pooled = report["with_timing"]["pooled"]
     assert [s["accuracy"] for s in pooled["steps"]] == [1.0] * 5
     assert report["unseen_family_share"]["test"] == {
@@ -310,3 +379,23 @@ def test_identify_report_on_toy_plans(tmp_path):
     families = report["families"]["train"]["1"]
     assert families["purity_without_singletons"] == 1.0
     assert report["parents"]["test"]["later_turns"] == 0
+    chars = report["characteristics"]
+    assert chars["classes"] == ["wa", "wb"]
+    assert chars["models"]["all"]["requests"] == 2
+
+
+def test_ccbench_is_split_by_whether_training_ran_the_task():
+    from analysis.mix import ccbench_task
+    rows = [{
+        "workload": "ccbench",
+        "session_id": s,
+        "prompt_tokens": 1,
+        "inferred_turn": 0
+    } for s in ("ccbench:t1@m", "ccbench:t2@m")]
+    known = {ccbench_task("ccbench:t1@m")}
+    out = idf._model_scores(rows, ["ccbench", "bailian"], known)
+    assert out["ccbench_known_requests"] == 1
+    assert out["ccbench_known_accuracy"] == 1.0
+    assert out["ccbench_new_accuracy"] == 0.0
+    assert "ccbench_known_requests" not in idf._model_scores(
+        rows, ["ccbench"] * 2)
