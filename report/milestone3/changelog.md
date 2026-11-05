@@ -7,8 +7,20 @@ notes, and each task's owner and status are in the
 [spec index](../../specs/README.md).
 
 Commit dates are the author's local date; merge dates are GitHub's (UTC).
-Last updated 2026-10-31. Each PR that adds to the milestone adds its entry
+Last updated 2026-11-04. Each PR that adds to the milestone adds its entry
 here.
+
+## Repository
+
+### 2026-11-04: `milestone-2` renamed to `milestone-3`, the default branch (sahiljoshi515)
+
+- The branch keeps its history (head `7d191529`); GitHub moved the open PRs
+  to `milestone-3`. CI already runs on `milestone-*` branches.
+- `Makefile` (`BASE`), `CONTRIBUTING.md` and `tools/pr_check/check_pr.py`
+  now compare against `origin/milestone-3`.
+- In an existing clone: `git branch -m milestone-2 milestone-3`, then
+  `git fetch origin --prune`, `git branch -u origin/milestone-3 milestone-3`
+  and `git remote set-head origin -a`.
 
 ## Task 1: eviction policies across workloads
 

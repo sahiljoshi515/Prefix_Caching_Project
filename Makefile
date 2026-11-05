@@ -6,7 +6,7 @@ PYTHON_VERSION ?= 3.12
 VENV ?= .venv
 # Branch PRs merge into (the default branch on GitHub); `lint` and
 # `check-pr` compare against it. Update it when the default branch changes.
-BASE ?= origin/milestone-2
+BASE ?= origin/milestone-3
 # Extra pytest arguments, e.g. `make test-m1 ARGS="-k prefix -x"`.
 ARGS ?=
 # PR description file for `check-pr`; without it the description is skipped.
