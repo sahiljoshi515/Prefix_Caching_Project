@@ -28,6 +28,8 @@
   };
   const tokens = (n) => n >= 1048576 ? (n / 1048576) + "M" : (n / 1024) + "K";
   const tickSecs = (s) => s < 60 ? s + " s" : (s / 60) + " min";
+  // Below this chart width, axes thin or tilt their tick labels.
+  const NARROW = 560;
 
   function el(tag, attrs, text) {
     const e = document.createElement(tag);
@@ -203,11 +205,14 @@
     o.rowLabels.forEach((rl, i) => o.colLabels.forEach((cl, j) => {
       rows.push({ r: rl, c: cl, v: o.values[i][j], title: o.title(i, j) });
     }));
+    const tilt = width(node) < NARROW;  // long names would run together
     node.append(Plot.plot({
-      width: Math.min(width(node), 560), height: 70 + 48 * o.rowLabels.length,
-      marginLeft: 104, marginBottom: 46, marginTop: 8, style: baseStyle(),
+      width: Math.min(width(node), 560), height: 70 + 48 * o.rowLabels.length +
+        (tilt ? 24 : 0),
+      marginLeft: 104, marginBottom: tilt ? 70 : 46, marginTop: 8,
+      style: baseStyle(),
       x: { domain: o.colLabels, label: o.xLabel, axis: "bottom",
-           tickSize: 0 },
+           tickSize: 0, tickRotate: tilt ? -35 : 0 },
       y: { domain: o.rowLabels, label: o.yLabel, tickSize: 0 },
       color: { type: "linear", domain: [0, 1],
                range: [tok("--seq-1"), tok("--seq-5")], interpolate: "rgb" },
@@ -224,8 +229,6 @@
   /* Reuse-interval bins as points: the geometric middle of each bin with
      enough reuses on offer under every policy. */
   const INTERVAL_TICKS = [0.1, 1, 10, 60, 300, 1200];
-  // Below this chart width, axes keep every other kind of tick.
-  const NARROW = 560;
   const binLabel = (b) => b.hi == null ? "over " + secs(b.lo) :
     (b.lo <= 0 ? "under " + secs(b.hi) : secs(b.lo) + " to " + secs(b.hi));
 
