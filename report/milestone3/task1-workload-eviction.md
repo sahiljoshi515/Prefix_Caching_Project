@@ -43,7 +43,7 @@ LFU has 115 zero reuse requests (3.83%), LRU has 271 (9.03%) and
 FIFO has 501 (16.70%). While the mean request reuse is 41.13%, the percentage
 of token reuse is 18.59%. This is due to short prompts skewing the percentage up
 due to them having less tokens and reusable tokens take up a higher percentage of
-the prompt. Therefore, this does not necessarily translate to fraction of all prompts
+these prompt. Therefore, this does not necessarily translate to the same percentage of all prompts
 tokens being reusable.
 
 Under all three policies LFU, LRU and FIFO, the percentage of block hits of one conversation
@@ -63,26 +63,13 @@ response's tokens, reducing the percentage of zero hit blocks.
 
 FIFO has **2,409 hits after a miss in 144 requests** (4.8% of requests).
 These hits contain 38,544 tokens that are not part of a reusable prefix due
-to FIFO's evicting the oldest blocks and causing prefix fragmentations. LRU and LFU have no such hits.
+to FIFO's evicting the oldest blocks and causing prefix fragmentations.
+LRU and LFU have no such hits.
 
-Reuse intervals nearly overlap: the median is about **47 seconds**, p90
-about **224 seconds**, and the median gap is **172 intervening requests**.
-The metric includes insertions/reinsertions as well as hits, so it largely
-reflects access spacing in the common workload and is not a policy ranking.
-The longer segment exposes more widely separated accesses than the pilot.
+Reuse intervals are very similar across all three policies. The median is about 47 seconds
+and the median gap is 172 intervening requests.
 
 ## Limitations
 
-- One contiguous 13.8-minute prefix of a two-hour trace, with one run per
-  policy, cannot establish a universal winner or sampling uncertainty.
-  Additional segments and repeats would assess stability.
-- Synthetic full blocks preserve recorded input-prefix sharing and lengths.
-  Request-specific tails and responses cannot reproduce all original
-  output-to-next-input reuse, especially within conversations, or true
-  cross-dataset sharing. This affects hit attribution and zero-hit profiles.
-- Image/search/file types are metadata; their operations are not executed.
-  Model computation and KV tensors are simulated, so no real GPU throughput
-  or latency conclusion follows from these timings.
-- API cached-token fields are unavailable. Usable reuse is event-derived;
-  per-request API/log gap checks remain unknown rather than independent
-  validation. The server's aggregate block hit rate is independently checked.
+- This analysis only contains 13.8 minute prefix of a 2 hour trace. Running all three policies replays across 3000 requests take ~40 minutes.
+- Generating synthetic response blocks cannot reproduce all original response-to-next-prompt-reuse within conversations or cross conversation since our randomly generated response blocks cannot be matched with the correct hash of the next input. This affects hit attribution and zero-hit profiles.

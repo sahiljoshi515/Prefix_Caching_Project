@@ -6,7 +6,8 @@ import urllib.request
 from itertools import islice
 from pathlib import Path
 
-TRACE_FILES = ("qwen_traceA_blksz_16.jsonl", "qwen_traceB_blksz_16.jsonl", "qwen_thinking_blksz_16.jsonl", "qwen_coder_blksz_16.jsonl")
+TRACE_FILES = ("qwen_traceA_blksz_16.jsonl", "qwen_traceB_blksz_16.jsonl",
+               "qwen_thinking_blksz_16.jsonl", "qwen_coder_blksz_16.jsonl")
 
 
 def check_download(raw_path):
@@ -26,19 +27,27 @@ def check_download(raw_path):
         temporary.unlink(missing_ok=True)
 
 
-def load_token_requests(raw_path, tokenizer, seed=0, limit=None, block_size=16):
+def load_token_requests(raw_path,
+                        tokenizer,
+                        seed=0,
+                        limit=None,
+                        block_size=16):
     if block_size != 16:
         raise ValueError("Bailian files require block size 16")
     if tokenizer.eos_token_id is None:
         raise ValueError("Tokenizer needs an EOS token")
     special = set(tokenizer.all_special_ids)
-    vocab = [i for i in sorted(set(tokenizer.get_vocab().values())) if i not in special and tokenizer.decode([i]).strip()]
+    vocab = [
+        i for i in sorted(set(tokenizer.get_vocab().values()))
+        if i not in special and tokenizer.decode([i]).strip()
+    ]
     if not vocab:
         raise ValueError("Tokenizer has no ordinary tokens")
     namespace = Path(raw_path).stem
 
     def tokens(key, count):
-        return random.Random(f"{seed}:{namespace}:{key}").choices(vocab, k=count)
+        return random.Random(f"{seed}:{namespace}:{key}").choices(vocab,
+                                                                  k=count)
 
     # -1 is the marker for a request with no parent
     roots = {-1: -1}
@@ -53,7 +62,8 @@ def load_token_requests(raw_path, tokenizer, seed=0, limit=None, block_size=16):
             turn = row["turn"]
             integers = [cid, parent, length, output, turn, *hashes]
             if (any(type(i) is not int for i in integers) or cid in roots
-                    or length <= 0 or output < 0 or turn < 1 or len(hashes) != (length + 15) // 16 or timestamp < 0
+                    or length <= 0 or output < 0 or turn < 1 or len(hashes) !=
+                (length + 15) // 16 or timestamp < 0
                     or not math.isfinite(timestamp)
                     or timestamp < previous_time):
                 raise ValueError(f"{raw_path}:{line_number}: invalid record")

@@ -137,6 +137,7 @@ def request_starts(events: Iterable[Event]) -> Dict[str, float]:
 def reuse_intervals(events: Iterable[Event]) -> List[Row]:
     """Gaps between consecutive accesses (insert or hit) of each hash.
 
+    Input must support repeated iteration (a list or EventFile).
     ``requests_between`` counts the other requests whose first allocate
     event falls strictly inside the gap: a rate-independent distance.
     """

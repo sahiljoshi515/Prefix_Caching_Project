@@ -83,9 +83,11 @@ def load_tokens(path, responses, limit=None):
             row, reply = json.loads(raw), json.loads(answer)
             rid = row["request_id"]
             timestamp = row["timestamp_s"]
-            prompt, output = row["prompt_token_ids"], reply["response_token_ids"]
+            prompt, output = row["prompt_token_ids"], reply[
+                "response_token_ids"]
             if (rid != reply["request_id"] or rid in seen or not prompt
-                    or len(output) != row.pop("output_length") or any(type(t) is not int or t < 0 for t in prompt + output)
+                    or len(output) != row.pop("output_length") or any(
+                        type(t) is not int or t < 0 for t in prompt + output)
                     or not math.isfinite(timestamp) or timestamp < previous):
                 raise ValueError(f"Invalid paired token request: {rid}")
             seen.add(rid)

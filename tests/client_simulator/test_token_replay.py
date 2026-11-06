@@ -43,7 +43,7 @@ def transport(seen, wrong=False):
                                   })
         data = json.loads(req.content)
         seen.append((req.headers["X-Request-Id"], data))
-        choice = ({
+        choice: dict = ({
             "logprobs": {
                 "tokens": ["token_id:99"]
                 if wrong else ["token_id:7", "token_id:8", "token_id:0"]
@@ -70,7 +70,8 @@ def transport(seen, wrong=False):
 
 @pytest.mark.asyncio
 async def test_recorded_times_exact_tokens_and_unknown_api_cache(monkeypatch):
-    seen, output = [], io.StringIO()
+    seen: list = []
+    output = io.StringIO()
     now = [1000.0]
     original_sleep = asyncio.sleep
 
@@ -95,7 +96,8 @@ async def test_recorded_times_exact_tokens_and_unknown_api_cache(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_context_skip_does_not_suppress_later_token_request():
-    output, seen = io.StringIO(), []
+    output = io.StringIO()
+    seen: list = []
     async with httpx.AsyncClient(transport=transport(seen)) as http:
         replay = client.ReplayClient(http, "http://test/v1", "test", output)
         summary = await replay.run_tokens(
@@ -130,7 +132,8 @@ async def test_mixed_chat_and_tokens_share_global_limit(tmp_path):
                 "content": "answer"
             }]
         }) + "\n")
-    seen, active, maximum = [], 0, 0
+    seen: list = []
+    active, maximum = 0, 0
     sync = transport(seen)
 
     async def respond(req):
