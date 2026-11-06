@@ -191,20 +191,26 @@ def quantiles(values: Sequence[float]) -> Optional[Dict[str, float]]:
 
 def analyze_run(run_dir: Path, window_s: float) -> Dict[str, Any]:
     """Write the metrics CSVs and summary.json of one run folder."""
-    log = ev.load_events(run_dir / "events.jsonl")
+    log = ev.load_events(run_dir / "events.jsonl", stream=True)
     events = log.events
     block_size = log.header["block_size"]
-    rows, excluded = m.cached_fractions(
-        ev.load_results(run_dir / "client.jsonl"))
+    results = ev.load_results(run_dir / "client.jsonl")
+    rows, excluded = m.cached_fractions(results)
     gaps = m.cached_token_gaps(rows, events, block_size)
     for row, gap in zip(rows, gaps):
         row["logged_hits"] = gap["logged_hits"]
         row["gap_tokens"] = gap["gap_tokens"]
-    m.add_usable_fractions(rows, m.prefix_hits(events), block_size)
+    prefixes = m.prefix_hits(events)
+    if any(r["cached_tokens"] is None and r["prompt_tokens"] >= block_size
+           and r["request_id"] not in prefixes for r in rows):
+        raise ValueError("Completed request has no measured prompt lookups")
+    m.add_usable_fractions(rows, prefixes, block_size)
     hits = m.hits_per_block(events)
     intervals = m.reuse_intervals(events)
     windows = m.windowed_hit_rate(events, window_s)
-    sources = m.hit_sources(events)
+    sources = m.hit_sources(
+        events, {r["request_id"]: r.get("conversation_id")
+                 for r in results})
     write_csv(run_dir / "requests.csv", rows)
     write_csv(run_dir / "blocks.csv", ({
         "hash": h,
@@ -217,7 +223,7 @@ def analyze_run(run_dir: Path, window_s: float) -> Dict[str, Any]:
     metric_rate = ev.read_metric(run_dir / "client.jsonl.metrics.after.txt",
                                  HIT_RATE_METRIC)
     gap_signs = Counter(
-        "zero" if g["gap_tokens"] ==
+        "unknown" if g["gap_tokens"] is None else "zero" if g["gap_tokens"] ==
         0 else "negative" if g["gap_tokens"] < 0 else "positive" for g in gaps)
     total_hits = sum(sources.values())
     summary = {
@@ -229,8 +235,10 @@ def analyze_run(run_dir: Path, window_s: float) -> Dict[str, Any]:
         log.complete,
         "event_counts":
         dict(Counter(e.ev for e in events)),
-        "mean_cached_fraction":
-        statistics.fmean(r["cached_fraction"] for r in rows) if rows else None,
+        "mean_cached_fraction": (statistics.fmean(
+            r["cached_fraction"]
+            for r in rows) if rows and all(r["cached_fraction"] is not None
+                                           for r in rows) else None),
         "token_reused_fraction":
         m.token_reused_fraction(rows),
         "mean_cached_fraction_by_turn":
@@ -276,6 +284,23 @@ def analyze_run(run_dir: Path, window_s: float) -> Dict[str, Any]:
             for (who, op), n in sorted(sources.items(), key=str)
         } if total_hits else {},
     }
+    summary["valid_measurement"] = log.complete and summary["sc003_pass"]
+    summary["workloads"] = {}
+    for name in sorted({r["workload"] for r in results if "workload" in r}):
+        selected = [r for r in rows if r.get("workload") == name]
+        summary["workloads"][name] = {
+            "statuses":
+            dict(
+                Counter(r["status"] for r in results
+                        if r.get("workload") == name)),
+            "usable_reused_fraction":
+            m.token_reused_fraction(selected, "usable_cached_tokens")
+        }
+    for field in ("arrival_drift_s", "dispatch_delay_s",
+                  "conversation_start_drift_s", "latency_s"):
+        summary[field] = quantiles([
+            r[field] for r in results if isinstance(r.get(field), (int, float))
+        ])
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     if not log.complete:
         print(f"warning: {run_dir}/events.jsonl has no end line; the "

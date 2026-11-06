@@ -1,0 +1,17 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "capacity_tokens": 65536,
+  "block_size": 16,
+  "max_model_len": 32768,
+  "max_concurrency": 32,
+  "seed": 0,
+  "workloads": [
+    {
+      "name": "bailian",
+      "format": "tokens",
+      "trace": "../data/processed/bailian/requests.jsonl",
+      "responses": "../data/processed/bailian/responses.jsonl",
+      "limit": 20
+    }
+  ]
+}

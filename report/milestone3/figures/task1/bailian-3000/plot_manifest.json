@@ -1,0 +1,77 @@
+{
+  "settings": {
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "capacity_tokens": 65536,
+    "block_size": 16,
+    "max_model_len": 32768,
+    "max_concurrency": 32,
+    "seed": 0,
+    "workloads": [
+      {
+        "name": "bailian",
+        "format": "tokens",
+        "trace": "/Users/trietchau/Documents/rice/senior/fall/COMP436/Prefix_Caching_Project/data/processed/bailian-3000/requests.jsonl",
+        "responses": "/Users/trietchau/Documents/rice/senior/fall/COMP436/Prefix_Caching_Project/data/processed/bailian-3000/responses.jsonl",
+        "limit": 3000,
+        "mode": "multi",
+        "conversation_rate": 1,
+        "think_time": 0,
+        "offset_s": 0,
+        "seed": 0
+      }
+    ]
+  },
+  "inputs_sha256": {
+    "results/bailian-3000-cap65536/experiment.json": "450cdcd43eaf2d44e785807bf70fbf77c03613528af64add9db44a367b3784ee",
+    "results/bailian-3000-cap65536/lru-bs16-cap65536/requests.csv": "7858dbda443a0f4cc8f5982b9f267cb6cf5e8d93f08ae6682b0427706dbd1d34",
+    "results/bailian-3000-cap65536/lru-bs16-cap65536/blocks.csv": "898e25fecd8d04e025317d61f77f77a4a8f7d1a6d3078bf236380bec74fb1836",
+    "results/bailian-3000-cap65536/lru-bs16-cap65536/reuse_intervals.csv": "4bafd15885b2d2fbc4a70f1d8df9eed050dacb74659d8598b1fbad5c3cfc68d2",
+    "results/bailian-3000-cap65536/lru-bs16-cap65536/hit_rate_windows.csv": "6f1752a6ae2e699a9208615e4e44fb7d1e0528af972b30f822cf4aab5e8a2a4f",
+    "results/bailian-3000-cap65536/lru-bs16-cap65536/summary.json": "4acc0ad76d48af7836057d15d24f5ca854e6987a2bef4f85e1dd3b4dc17446ab",
+    "results/bailian-3000-cap65536/lru-bs16-cap65536/client.jsonl": "dde393b285c41333d2f5a74160f5189c2dc18bc46b4fa04184565e1e1db95d5f",
+    "results/bailian-3000-cap65536/lru-bs16-cap65536/run.json": "296ca0e7efd551bbedb1af2bc9ddb219585ba64feb61ffa2750a914fc002dc4c",
+    "results/bailian-3000-cap65536/lfu-bs16-cap65536/requests.csv": "ed83d8d80b7da5355e46546a764525e6d3798dca476e6391e4cb7aca03449f12",
+    "results/bailian-3000-cap65536/lfu-bs16-cap65536/blocks.csv": "26c37fe86901fe9a378d08dc6edda18e277232123dee067be2197fd61511d063",
+    "results/bailian-3000-cap65536/lfu-bs16-cap65536/reuse_intervals.csv": "d59df5f6a22807ffcb25c33e511f38690ef0747a25e9981262d07ddb7ecd5920",
+    "results/bailian-3000-cap65536/lfu-bs16-cap65536/hit_rate_windows.csv": "8a3ffde17f5dc2a0232cf50df40785fe9c697d4b4316be9154b95e5090adbc55",
+    "results/bailian-3000-cap65536/lfu-bs16-cap65536/summary.json": "40033f2738dabfa0bb8367f8c80362ae97b4f628afd53ee1cd4e84e2d92f169b",
+    "results/bailian-3000-cap65536/lfu-bs16-cap65536/client.jsonl": "a66511cacdbb01aa7a0850dba8f2c9e4c748832299f30c16024a70a171f2204a",
+    "results/bailian-3000-cap65536/lfu-bs16-cap65536/run.json": "93f369ae5084d5b5cea0c82d2ec5579363cfc2171eccb2ce99f0972774c0e3ad",
+    "results/bailian-3000-cap65536/fifo-bs16-cap65536/requests.csv": "86e006a2b80d5bde7c7e26eb513e3282d5f5f1a97523f2cfeed35a7d1b8e7a54",
+    "results/bailian-3000-cap65536/fifo-bs16-cap65536/blocks.csv": "49be22a2e3a8926bf2233504938e7d6d417aba5d751e07c8573bbb3deb72e1cf",
+    "results/bailian-3000-cap65536/fifo-bs16-cap65536/reuse_intervals.csv": "a6f0e708cd4cd59e8a6d7a495c8933ec4826d520f199d28b4fb324db82db49ed",
+    "results/bailian-3000-cap65536/fifo-bs16-cap65536/hit_rate_windows.csv": "efc6b9c14e116fbde9461d3934726b6bdc01c64b07d9745f95bf1e3dc209ce6c",
+    "results/bailian-3000-cap65536/fifo-bs16-cap65536/summary.json": "a9a7a27e7af44d378840fc784dd08be2f5222233634fa0729e16f722729d03f4",
+    "results/bailian-3000-cap65536/fifo-bs16-cap65536/client.jsonl": "8a95e367ffcc4b759524a7f23e88c424eaf6c15860b0696738a4ac7ccbbc2367",
+    "results/bailian-3000-cap65536/fifo-bs16-cap65536/run.json": "cc508aa4e8038d60bb3efd4e030ca0f3f610527e713631cdfdff4676776d8844"
+  },
+  "plot_source_sha256": "fbfb1e667f0f8261568a342262c721e975e035867f9a69d16ffa225c796b6301",
+  "plot_base_commit": "1760e9ad1ca44d48b9738fb53ae1778fe183dcd7",
+  "completed_per_policy": 3000,
+  "excluded_per_policy": {},
+  "zero_hit_blocks": {
+    "lru": 266132,
+    "lfu": 266229,
+    "fifo": 266128
+  },
+  "figures": [
+    "report/milestone3/figures/task1/bailian-3000/fig1_policy_comparison.pdf",
+    "report/milestone3/figures/task1/bailian-3000/fig1_policy_comparison.png",
+    "report/milestone3/figures/task1/bailian-3000/fig2_reuse_profiles.pdf",
+    "report/milestone3/figures/task1/bailian-3000/fig2_reuse_profiles.png",
+    "report/milestone3/figures/task1/bailian-3000/block_hit_rate_log.pdf",
+    "report/milestone3/figures/task1/bailian-3000/block_hit_rate_log.png",
+    "report/milestone3/figures/task1/bailian-3000/usable_reused_fraction.pdf",
+    "report/milestone3/figures/task1/bailian-3000/usable_reused_fraction.png",
+    "report/milestone3/figures/task1/bailian-3000/eviction_rate_per_1k_lookups.pdf",
+    "report/milestone3/figures/task1/bailian-3000/eviction_rate_per_1k_lookups.png",
+    "report/milestone3/figures/task1/bailian-3000/cached_cdf.pdf",
+    "report/milestone3/figures/task1/bailian-3000/cached_cdf.png",
+    "report/milestone3/figures/task1/bailian-3000/hits_cdf.pdf",
+    "report/milestone3/figures/task1/bailian-3000/hits_cdf.png",
+    "report/milestone3/figures/task1/bailian-3000/intervals_cdf.pdf",
+    "report/milestone3/figures/task1/bailian-3000/intervals_cdf.png",
+    "report/milestone3/figures/task1/bailian-3000/fig3_hit_rate_over_time.pdf",
+    "report/milestone3/figures/task1/bailian-3000/fig3_hit_rate_over_time.png"
+  ]
+}
