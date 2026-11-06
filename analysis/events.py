@@ -2,8 +2,8 @@
 import gzip
 import json
 from pathlib import Path
-from typing import (Any, Dict, Iterator, List, NamedTuple, Optional, Tuple,
-                    Union)
+from typing import (Any, Dict, Iterable, Iterator, List, NamedTuple, Optional,
+                    Tuple, Union)
 
 PathLike = Union[str, Path]
 
@@ -22,7 +22,7 @@ class Event(NamedTuple):
 
 class EventLog(NamedTuple):
     header: Dict[str, Any]
-    events: List[Event]
+    events: Iterable[Event]
     # False when the final {"ev": "end"} line is missing: the engine was
     # killed before closing the log, so its tail may be lost.
     complete: bool
@@ -35,7 +35,23 @@ def _lines(path: PathLike) -> Iterator[str]:
         yield from f
 
 
-def load_events(path: PathLike) -> EventLog:
+class EventFile:
+    """Reopen a log for each metric pass instead of retaining every event."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def __iter__(self):
+        for line in _lines(self.path):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row["ev"] not in ("header", "end"):
+                yield Event(row["t"], row["ev"], row["hash"], row["block"],
+                            row["req"], row["op"])
+
+
+def load_events(path: PathLike, stream=False) -> EventLog:
     header: Dict[str, Any] = {}
     events: List[Event] = []
     complete = False
@@ -48,11 +64,11 @@ def load_events(path: PathLike) -> EventLog:
             header = row
         elif kind == "end":
             complete = True
-        else:
+        elif not stream:
             events.append(
                 Event(row["t"], kind, row["hash"], row["block"], row["req"],
                       row["op"]))
-    return EventLog(header, events, complete)
+    return EventLog(header, EventFile(path) if stream else events, complete)
 
 
 def load_results(path: PathLike) -> List[Dict[str, Any]]:
@@ -68,8 +84,7 @@ def parse_request_id(request_id: Optional[str]) -> Optional[Tuple[str, int]]:
     """
     if request_id is None:
         return None
-    if request_id.startswith(ENGINE_CHAT_PREFIX):
-        request_id = request_id[len(ENGINE_CHAT_PREFIX):]
+    request_id = client_request_id(request_id)
     conversation, _, turn = request_id.rpartition(":")
     if not conversation or not turn.isdigit():
         return None
@@ -80,6 +95,10 @@ def client_request_id(engine_request_id: str) -> str:
     """Engine request id -> the id the client sent."""
     if engine_request_id.startswith(ENGINE_CHAT_PREFIX):
         return engine_request_id[len(ENGINE_CHAT_PREFIX):]
+    if engine_request_id.startswith("cmpl-"):
+        base = engine_request_id[len("cmpl-"):]
+        prefix, separator, index = base.rpartition("-")
+        return prefix if separator and index.isdigit() else base
     return engine_request_id
 
 

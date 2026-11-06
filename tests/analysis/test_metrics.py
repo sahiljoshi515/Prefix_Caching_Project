@@ -307,3 +307,17 @@ def test_cdf_points():
     xs, ys = m.cdf([3, 1, 2, 2])
     assert xs == [1, 2, 2, 3]
     assert ys == [0.25, 0.5, 0.75, 1.0]
+
+
+@pytest.mark.parametrize("compress", [False, True])
+def test_streamed_events_can_be_reused_by_multiple_metrics(tmp_path, compress):
+    path = tmp_path / ("events.jsonl.gz" if compress else "events.jsonl")
+    write_log(path, LOG, compress=compress)
+    streamed = ev.load_events(path, stream=True)
+    assert streamed.complete
+    assert list(streamed.events) == LOG
+    assert list(streamed.events) == LOG
+    assert m.block_hit_rate(streamed.events) == m.block_hit_rate(LOG)
+    assert m.prefix_hits(streamed.events) == m.prefix_hits(LOG)
+    assert m.reuse_intervals(streamed.events) == m.reuse_intervals(LOG)
+    assert m.windowed_hit_rate(streamed.events) == m.windowed_hit_rate(LOG)

@@ -396,3 +396,30 @@ opening one.
   ids, so it never matches a trace and only yields filler tokens.
 - `gpt2` has no chat template; use `--chat-template` or a chat model for
   `/v1/chat/completions`.
+
+### Bailian and shared workload experiments (Milestone 3)
+
+`process_raw_traces --dataset bailian` prepares reproducible token requests
+from the anonymous block hashes. The same experiment runner handles chat,
+token and mixed workloads, using the existing server launcher and sweep:
+
+```bash
+python -m analysis.run_experiment --config examples/bailian_experiment.json \
+  --out results/bailian-smoke
+```
+
+Prepare the inputs first; see the
+[Bailian preparation, formats and mixed-run commands](client_simulator/README.md#bailian-token-traces-and-shared-experiments).
+The default experiment uses 16-token blocks, 65,536-token capacity and a
+32,768-token context. It ranks usable token reuse from cache events; raw
+completion responses do not expose per-request cached-token counts.
+
+Generate figures from a completed comparison without starting servers:
+
+```bash
+python -m analysis.plot_experiment --out results/bailian-500-cap65536 \
+  --figures report/milestone3/figures/task1/bailian
+```
+
+The [Bailian result note](report/milestone3/task1-workload-eviction.md)
+explains the validated results and report figures.

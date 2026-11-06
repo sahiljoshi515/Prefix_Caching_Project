@@ -23,6 +23,22 @@ Entry format:
 
 ## Entries
 
+### Pending PR: Bailian adapter and shared experiment runner
+
+- **Tools:** OpenAI Codex.
+- **Used for:** adapting milestone 2 runners into a common runner;
+  reusing the shared analyzer; document changes.
+- **Prompts:** "adapt milestone 2 runners in the analysis folder into
+  a common runner capable of repeating the experiment on any workload
+  for milestone 3 such as qwen balian or any future workload such as
+  mixed workload. Make sure this runner reuse any analyzer that
+  milestone 2 already implemented such as LFU, MRU, etc. For this runner,
+  have one of its argument be a config file that will specify invariants
+  such as cache capacity, block size, etc (that will be kept the same
+  across all replays), eviction policy analysis workloads (such as sharegpt,
+  qwen balian, or multiple) and put an template of these files in example
+  folder. After that, document my adapter implementation and the shared runner."
+
 ### PR #7: Add contributing guide, spec-kit specs and project CI
 
 - **Tools:** Claude Code (Claude Opus 5.5).
@@ -66,8 +82,7 @@ Entry format:
   check that an unset variable replays identically to `milestone-2`, and
   the document updates. Jasmine chose the full 1,000-conversation sample
   for the sweep and to keep spec 005's capacity range as written.
-- **Prompts:** "now milestone 2 task 2 is finished. start working on task
-  3. read the specs/ and report/ folders first. ask me if anything's
+- **Prompts:** "now milestone 2 task 2 is finished. start working on task 3. read the specs/ and report/ folders first. ask me if anything's
   unclear, don't just assume."
 
 ### PR #11: Milestone 2 Task 3, Phase 2: cache sweep runner

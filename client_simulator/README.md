@@ -82,3 +82,139 @@ Conversations overlap, but turns within each conversation are sequential.
   skipped requests.
 - With `--capture-metrics`, `OUTPUT.metrics.before.txt` and
   `OUTPUT.metrics.after.txt` save the server's Prometheus metrics.
+
+## Bailian token traces and shared experiments
+
+Bailian Trace A is a two-hour anonymous production trace. The local file
+has 43,058 requests; timestamps are in seconds. Source/schema/license:
+[Qwen Bailian](https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon)
+(Apache-2.0). Hashes describe already-templated token inputs, so replay
+must not apply another chat template. The adapter supports the upstream
+16-token Trace A/B, thinking and coder filenames; other releases require
+format verification first.
+
+Prepare a 500-request sample (or omit `--limit` for the entire file):
+
+```bash
+python -m client_simulator.process_raw_traces --dataset bailian \
+  --raw data/raw/qwen_traceA_blksz_16.jsonl --seed 0 --limit 500 \
+  --client-output data/processed/bailian/requests.jsonl \
+  --output data/processed/bailian/responses.jsonl
+```
+
+Existing raw files are reused; otherwise the adapter downloads the named
+upstream trace (Trace A by default). Existing token outputs are refused;
+choose new paths for a different seed/sample. Full-block hashes become
+reproducible 16-token sequences from ordinary model tokens. The final
+partial block is request-specific and preserves the exact input length.
+Synthetic outputs preserve output length but do not reconstruct original
+answer text, answer-to-next-input sharing or true cross-dataset sharing.
+Image/search/file labels are
+retained as metadata; replay does not perform those operations.
+
+Client JSONL contains `request_id`, parent-root `conversation_id`, zero-based
+`turn_index`, `timestamp_s`, `prompt_token_ids`, `output_length`,
+`eos_token_id`, `block_size` and `request_type`. Server JSONL contains the
+same `request_id` and `response_token_ids`, in the same order. The adapter
+namespaces IDs and synthesis by the source filename; keep that name stable
+when rebuilding a sample.
+
+The shared runner below starts the server and calls the client for you.
+For a server already running, the client can read the same workload config.
+Workload limits, rates and think times come from that JSON file:
+
+```bash
+python -m client_simulator.client_sim \
+  --workloads examples/bailian_experiment.json \
+  --model Qwen/Qwen2.5-0.5B-Instruct \
+  --output results/bailian-manual.jsonl --capture-metrics
+```
+
+The client submits complete token inputs to `/v1/completions` at recorded
+times relative to the first request, validates exact token IDs, and includes
+one EOS token in the context budget. It records lateness/concurrency waits,
+latency, failures and context skips. A skipped parent does not suppress a
+later timestamped request. The ShareGPT chat/Poisson path keeps its existing
+behavior.
+
+### One runner for individual and mixed workloads
+
+Use the shared runner instead of adding a runner for each dataset:
+
+```bash
+# First 20 prepared requests, all three policies on fresh local servers.
+python -m analysis.run_experiment --config examples/bailian_experiment.json \
+  --out results/bailian-smoke
+# Recompute the existing metrics without replaying.
+python -m analysis.run_experiment --config examples/bailian_experiment.json \
+  --out results/bailian-smoke --analyze-only
+# A mixture uses the same command with another configuration.
+python -m analysis.run_experiment --config examples/mixed_experiment.json \
+  --out results/mixed-smoke
+```
+
+The example fixes capacity 65,536 tokens, block size 16, context 32,768,
+concurrency 32 and seed 0. For the larger experiment, change the workload's
+`limit` to 500 and choose a new `--out`. The 500 arrivals span 167.407 s;
+three recorded-time runs take about nine minutes plus startup. The 20-request
+smoke is a transport/measurement check and may not cause cache pressure.
+The final sample/repeats and mixed proportions remain experimental choices.
+
+Config paths are relative to the config file. Each `workloads` entry has a
+unique `name`, `format` (`chat` or `tokens`), prepared `trace`, `responses`
+and optional `limit`. Chat entries can set `mode`, `conversation_rate`,
+`think_time` and `seed`. Token entries use recorded timestamps. `offset_s`
+shifts either stream relative to the shared start. Multiple entries overlay
+on one server and share one concurrency limit; sample counts/rates/offsets
+explicitly define the mix, with no automatic balancing. Input request IDs
+must be unique across workloads. Future text adapters emit the existing
+chat format; future timestamped token adapters emit the token format.
+
+`experiment.json` freezes the selected workload files, merged responses,
+settings, request IDs, checksums and commit/dirty state. A different sample
+or setting needs a new output directory. Use a new output directory when
+changing replay code too; the runner does not back up source files.
+`--analyze-only` recomputes measurements from saved traffic.
+Each policy directory holds server/events/client logs, metric snapshots,
+`run.json`, `summary.json` and the shared analysis CSVs. `summary.csv`
+compares policies; each summary also has per-workload statuses and usable
+reuse, timing quantiles and validity checks. Raw results stay under ignored
+`results/`; do not mix these runs with old experiment folders.
+
+**Measurement:** the pinned completion endpoint omits API cached-token
+counts. Its raw `cached_tokens` and API cached fraction remain null, not
+zero. Use event-derived `usable_cached_tokens`, `usable_cached_fraction`
+and summary `usable_reused_fraction` to compare policies. These count only
+consecutive cached blocks before the first miss. API `token_reused_fraction`
+remains unknown for token/mixed runs; API/log gap checks are unknown there,
+not an independent success check. Block hit rate is independently checked
+against the server's metric. Metrics retain zero-hit blocks and use parent
+roots for intra-conversation attribution.
+
+The experiment and report figure plan is in
+[spec 006](../specs/006-m3-workload-eviction/plan.md#bailian-experiment-and-report-plan-2026-11-05).
+Generate report figures from a finished comparison, without replaying:
+
+```bash
+python -m analysis.plot_experiment --out results/bailian-500-cap65536 \
+  --figures report/milestone3/figures/task1/bailian
+```
+
+The command makes combined report panels and individual PNG/PDF bars/CDFs,
+plus windowed hit rate, using the existing plotting/metric helpers. Zero-hit
+blocks and zero intervals remain included; an inset exposes the block-CDF
+tail. It checks populations and aggregate values before drawing and records
+input/plot-source checksums. The
+[Milestone 3 note](../report/milestone3/task1-workload-eviction.md) contains
+results, reading instructions, a short Overleaf paragraph and limitations.
+
+The primary completed Bailian comparison uses 3,000 requests. Regenerate
+its figures with:
+
+```bash
+python -m analysis.plot_experiment --out results/bailian-3000-cap65536 \
+  --figures report/milestone3/figures/task1/bailian-3000
+```
+
+The 500-request files/figures remain an earlier pilot. The result note uses
+the larger sample and includes the short analysis in plain text.

@@ -12,7 +12,7 @@ here.
 
 ## Task 1: eviction policies across workloads
 
-[Spec 006](../../specs/006-m3-workload-eviction/spec.md). Not started.
+[Spec 006](../../specs/006-m3-workload-eviction/spec.md).
 
 ### Unreleased (Milestone 2, Task 2 branch)
 

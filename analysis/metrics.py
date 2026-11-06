@@ -26,8 +26,8 @@ ACCESSES = ("insert", "hit")
 def cached_fractions(results: Iterable[Row]) -> Tuple[List[Row], Counter]:
     """Per-request cached fraction for completed requests.
 
-    A request without a hit has fraction 0.0 (never missing). Requests that
-    did not complete are left out and counted by status.
+    Known zero hits give fraction 0.0; unavailable API counts stay None.
+    Requests that did not complete are left out and counted by status.
     """
     rows: List[Row] = []
     excluded: Counter = Counter()
@@ -36,14 +36,23 @@ def cached_fractions(results: Iterable[Row]) -> Tuple[List[Row], Counter]:
             excluded[result.get("status")] += 1
             continue
         prompt = result["prompt_tokens"]
-        cached = result.get("cached_tokens") or 0
+        cached = result.get("cached_tokens")
         rows.append({
-            "request_id": result["request_id"],
-            "conversation_id": result["conversation_id"],
-            "turn_index": result["turn_index"],
-            "prompt_tokens": prompt,
-            "cached_tokens": cached,
-            "cached_fraction": cached / prompt,
+            "request_id":
+            result["request_id"],
+            "conversation_id":
+            result["conversation_id"],
+            "turn_index":
+            result["turn_index"],
+            "prompt_tokens":
+            prompt,
+            "cached_tokens":
+            cached,
+            "cached_fraction":
+            cached / prompt if cached is not None else None,
+            **({
+                "workload": result["workload"]
+            } if "workload" in result else {}),
         })
     return rows, excluded
 
@@ -52,6 +61,8 @@ def token_reused_fraction(rows: Sequence[Row],
                           key: str = "cached_tokens") -> Optional[float]:
     """Sum of cached tokens over sum of prompt tokens."""
     prompt = sum(r["prompt_tokens"] for r in rows)
+    if any(r[key] is None for r in rows):
+        return None
     return sum(r[key] for r in rows) / prompt if prompt else None
 
 
@@ -77,7 +88,8 @@ def mean_by_turn(rows: Sequence[Row],
                  key: str = "cached_fraction") -> Dict[int, float]:
     by_turn: Dict[int, List[float]] = defaultdict(list)
     for r in rows:
-        by_turn[r["turn_index"]].append(r[key])
+        if r[key] is not None:
+            by_turn[r["turn_index"]].append(r[key])
     return {t: sum(v) / len(v) for t, v in sorted(by_turn.items())}
 
 
@@ -122,31 +134,32 @@ def request_starts(events: Iterable[Event]) -> Dict[str, float]:
     return starts
 
 
-def reuse_intervals(events: Sequence[Event]) -> List[Row]:
+def reuse_intervals(events: Iterable[Event]) -> List[Row]:
     """Gaps between consecutive accesses (insert or hit) of each hash.
 
+    Input must support repeated iteration (a list or EventFile).
     ``requests_between`` counts the other requests whose first allocate
     event falls strictly inside the gap: a rate-independent distance.
     """
     starts = request_starts(events)
     start_times = sorted(starts.values())
-    last: Dict[int, Event] = {}
+    last: Dict[int, float] = {}
     rows: List[Row] = []
     for e in events:
         if e.ev not in ACCESSES:
             continue
         previous = last.get(e.hash)
-        last[e.hash] = e
+        last[e.hash] = e.t
         if previous is None:
             continue
-        lo = bisect.bisect_right(start_times, previous.t)
+        lo = bisect.bisect_right(start_times, previous)
         hi = bisect.bisect_left(start_times, e.t)
         between = hi - lo
-        if e.req in starts and previous.t < starts[e.req] < e.t:
+        if e.req in starts and previous < starts[e.req] < e.t:
             between -= 1
         rows.append({
             "hash": e.hash,
-            "interval_s": e.t - previous.t,
+            "interval_s": e.t - previous,
             "requests_between": between,
             "kind": e.ev,
         })
@@ -207,16 +220,16 @@ def eviction_rate(events: Iterable[Event]) -> Optional[float]:
     return 1000 * counts["evict"] / lookups if lookups else None
 
 
-def windowed_hit_rate(events: Sequence[Event],
+def windowed_hit_rate(events: Iterable[Event],
                       window_s: float = 10.0) -> List[Row]:
     """Hit rate per window of `window_s`, from the first event."""
-    lookups = [e for e in events if e.ev in LOOKUPS]
-    if not lookups:
-        return []
-    t0 = events[0].t
+    t0 = None
     bins: Dict[int, Counter] = defaultdict(Counter)
-    for e in lookups:
-        bins[math.floor((e.t - t0) / window_s)][e.ev] += 1
+    for e in events:
+        if t0 is None:
+            t0 = e.t
+        if e.ev in LOOKUPS:
+            bins[math.floor((e.t - t0) / window_s)][e.ev] += 1
     rows = []
     for index in sorted(bins):
         c = bins[index]
@@ -229,7 +242,8 @@ def windowed_hit_rate(events: Sequence[Event],
     return rows
 
 
-def hit_sources(events: Iterable[Event]) -> Dict[Tuple[str, Any], int]:
+def hit_sources(events: Iterable[Event],
+                conversations=None) -> Dict[Tuple[str, Any], int]:
     """Count hits by who inserted the block in its current residency.
 
     Keys are (``intra`` | ``cross`` | ``unknown``, insert op): ``intra`` if
@@ -245,12 +259,20 @@ def hit_sources(events: Iterable[Event]) -> Dict[Tuple[str, Any], int]:
             inserted_by.pop(e.hash, None)
         elif e.ev == "hit":
             insert = inserted_by.get(e.hash)
-            hitter = parse_request_id(e.req)
-            owner = parse_request_id(insert.req) if insert else None
+            if conversations is None:
+                hitter_id = parse_request_id(e.req)
+                owner_id = parse_request_id(insert.req) if insert else None
+                hitter = hitter_id[0] if hitter_id else None
+                owner = owner_id[0] if owner_id else None
+            else:
+                hitter = conversations.get(client_request_id(
+                    e.req)) if e.req else None
+                owner = conversations.get(client_request_id(
+                    insert.req)) if insert and insert.req else None
             if insert is None or hitter is None or owner is None:
                 counts[("unknown", insert.op if insert else None)] += 1
             else:
-                same = hitter[0] == owner[0]
+                same = hitter == owner
                 counts[("intra" if same else "cross", insert.op)] += 1
     return dict(counts)
 
@@ -273,8 +295,8 @@ def cached_token_gaps(rows: Sequence[Row], events: Iterable[Event],
         r["cached_tokens"],
         "logged_hits":
         hits[r["request_id"]],
-        "gap_tokens":
-        r["cached_tokens"] - block_size * hits[r["request_id"]],
+        "gap_tokens": (r["cached_tokens"] - block_size * hits[r["request_id"]]
+                       if r["cached_tokens"] is not None else None),
     } for r in rows]
 
 
