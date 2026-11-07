@@ -1,0 +1,20 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "capacity_tokens": 65536,
+  "block_size": 16,
+  "max_model_len": 32768,
+  "max_concurrency": 32,
+  "seed": 0,
+  "workloads": [
+    {
+      "name": "agentbank",
+      "format": "chat",
+      "trace": "../data/processed/agentbank.conversations.jsonl",
+      "responses": "../data/processed/agentbank.responses.jsonl",
+      "limit": 1000,
+      "mode": "multi",
+      "conversation_rate": 1,
+      "think_time": 5
+    }
+  ]
+}

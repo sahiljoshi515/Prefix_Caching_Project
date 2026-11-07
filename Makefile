@@ -41,7 +41,7 @@ else
 		--extra-index-url $(PYTORCH_CPU_INDEX) --index-strategy unsafe-best-match
 endif
 	uv pip install --python $(PY) pytest==8.3.3 pytest-asyncio==0.24.0 \
-		matplotlib==3.9.2 -c constraints-simulator.txt
+		matplotlib==3.9.2 pyarrow==18.0.0 -c constraints-simulator.txt
 	$(SIM_ENV) $(PY) -c "from vllm.platforms import current_platform; \
 		assert current_platform.is_cpu(); print('Setup OK:', current_platform)"
 

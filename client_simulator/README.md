@@ -83,6 +83,68 @@ Conversations overlap, but turns within each conversation are sequential.
 - With `--capture-metrics`, `OUTPUT.metrics.before.txt` and
   `OUTPUT.metrics.after.txt` save the server's Prometheus metrics.
 
+## AgentBank and CC-Bench agent trajectories
+
+Both are text trajectories, prepared into the same conversation format as
+ShareGPT and replayed through `/v1/chat/completions` with the model's chat
+template. Each assistant message is one request with the full history
+before it. Reading them needs `pyarrow` (`make setup` installs it).
+
+| | AgentBank | CC-Bench trajectories |
+|---|---|---|
+| Source | [Solaris99/AgentBank](https://huggingface.co/datasets/Solaris99/AgentBank), revision `6d718ff7` | [zai-org/CC-Bench-trajectories](https://huggingface.co/datasets/zai-org/CC-Bench-trajectories), revision `792c6d32` |
+| Licence | Apache-2.0 | MIT |
+| Raw format | 19 subsets (ALFWorld, WebShop, Mind2Web, InterCode, GSM8K, ...), one parquet file each; rows `id`, `conversations` (`from`: `human`/`gpt`, `value`) | One parquet file; each row's `trajectory` is a Claude Code session log (JSON events linked by `uuid`/`parentUuid`) |
+| Size | 53,205 trajectories, 243,598 requests | 370 sessions (74 coding tasks × 5 models), 498 threads, 18,184 requests |
+| Conversation id | `agentbank:<subset>:<id>` (ids repeat across subsets) | `ccbench:<row id>:<thread>` |
+
+Role mapping (spec 006): the task and environment observations (AgentBank
+`human`) and the developer's prompts and tool results (CC-Bench) become
+`user`; the agent's reasoning, actions and tool calls become `assistant`.
+Neither dataset has a system prompt. Consecutive messages with the same
+role are merged with a blank line; a trajectory must start with a user
+message, and a final unanswered user message is dropped.
+
+CC-Bench logs need more rules:
+
+- **Threads.** An event without a parent starts a thread and every other
+  event joins its parent's thread. Roots are session starts, sub-agent
+  (sidechain) starts and `/compact` boundaries, which replace the history
+  with a summary; each thread is its own conversation with its own context.
+  Within a thread, events keep file order.
+- **Rendering.** A tool call is `<tool_use name="NAME">INPUT_JSON</tool_use>`,
+  a result `<tool_result>TEXT</tool_result>` (an image `[image]`). Thinking
+  blocks are dropped.
+- **Dropped events:** `system` and `summary` events, `isMeta` messages,
+  local slash commands (`<command-name>`, `<local-command-stdout>`) and API
+  error messages.
+- **Not in the logs, so not replayed:** Claude Code's system prompt and
+  tool definitions (about 12K tokens that every real session shares), and
+  when a sub-agent ran inside its parent session.
+
+Both adapters write conversations in a seeded random order (`--seed`), so
+the first N lines are a seeded sample: of all 19 AgentBank subsets mixed,
+and of CC-Bench without the five models' runs of one task arriving
+together. The raw files are downloaded into `--raw` if missing.
+
+```bash
+python -m client_simulator.process_raw_traces --dataset agentbank \
+  --raw data/raw/agentbank --seed 0 \
+  --output data/processed/agentbank.responses.jsonl \
+  --client-output data/processed/agentbank.conversations.jsonl
+python -m client_simulator.process_raw_traces --dataset ccbench \
+  --raw data/raw/ccbench/train.parquet --seed 0 \
+  --output data/processed/ccbench.responses.jsonl \
+  --client-output data/processed/ccbench.conversations.jsonl
+```
+
+Context: with Qwen's tokenizer, AgentBank's first 1,000 conversations
+(4,992 requests) all fit in 32,768 tokens (median prompt 460 tokens).
+CC-Bench prompts are long (median 12,778 tokens among those that fit):
+about 36% of its requests are over 32,768. The client skips such a turn
+and the rest of its conversation, so CC-Bench replays each thread until
+its history passes 32K, and the run reports the skipped share.
+
 ## Bailian token traces and shared experiments
 
 Bailian Trace A is a two-hour anonymous production trace. The local file

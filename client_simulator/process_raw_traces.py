@@ -1,17 +1,20 @@
 """Prepare compact client conversations and server responses before serving."""
 
 import argparse
+import inspect
 import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
 
-from client_simulator.adapters import qwenbailian, sharegpt
+from client_simulator.adapters import agentbank, ccbench, qwenbailian, sharegpt
 from client_simulator.schema import Conversation, request_id
 
 ADAPTERS = {
     "sharegpt": sharegpt,
     "bailian": qwenbailian,
+    "agentbank": agentbank,
+    "ccbench": ccbench,
 }
 
 
@@ -133,8 +136,15 @@ def main() -> None:
         print(f"Prepared {count} token requests")
     else:
         from itertools import islice
-        write_traces(islice(adapter.load_conversations(args.raw), args.limit),
-                     client_path, args.output)
+
+        # Adapters that sample (AgentBank, CC-Bench) take the seed.
+        options = ({
+            "seed": args.seed
+        } if "seed" in inspect.signature(adapter.load_conversations).parameters
+                   else {})
+        write_traces(
+            islice(adapter.load_conversations(args.raw, **options),
+                   args.limit), client_path, args.output)
 
 
 if __name__ == "__main__":

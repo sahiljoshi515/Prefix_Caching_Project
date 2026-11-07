@@ -4,18 +4,18 @@
 
 ## Phase 0: Research
 
-- [ ] T001 [P] AgentBank: format, size, licence, role mapping; update
+- [x] T001 [P] AgentBank: format, size, licence, role mapping; update
   `client_simulator/README.md`
-- [ ] T002 [P] CC-Bench-trajectories: same
+- [x] T002 [P] CC-Bench-trajectories: same
 - [x] T003 [P] qwen-bailian-usagetraces-anon: same, plus its block size and
   timestamp unit
-- [ ] T004 Choose the fixed capacity and block size from `005` results;
-  record why
+- [x] T004 Choose the fixed capacity and block size from `005` results;
+  record why (`plan.md`: 65,536 tokens, block size 16)
 
 ## Phase 1: User Story 1 — adapters (P1)
 
-- [ ] T005 [P] [US1] AgentBank adapter + fixture + tests
-- [ ] T006 [P] [US1] CC-Bench adapter + fixture + tests
+- [x] T005 [P] [US1] AgentBank adapter + fixture + tests
+- [x] T006 [P] [US1] CC-Bench adapter + fixture + tests
 - [x] T007 [P] [US1] Bailian adapter with token synthesis + fixture + tests
 - [x] T008 [US1] Client: recorded timestamps and token-id prompts + tests
   (`client_simulator/client_sim.py`, `schema.py`)

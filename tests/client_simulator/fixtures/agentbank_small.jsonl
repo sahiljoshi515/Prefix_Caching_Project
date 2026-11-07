@@ -1,0 +1,4 @@
+{"subset": "alfworld", "id": "alfworld_0", "conversations": [{"from": "human", "value": "You are in a room. Your task is to: put a cup in the sink."}, {"from": "gpt", "value": "Thought: find a cup.\nAction: go to table 1"}, {"from": "human", "value": "Observation: On the table 1, you see a cup 1."}, {"from": "gpt", "value": "Action: take cup 1 from table 1"}]}
+{"subset": "mbpp", "id": "mbpp_7", "conversations": [{"from": "human", "value": "Write a function that adds two numbers."}, {"from": "gpt", "value": "def add(a, b):\n    return a + b"}, {"from": "human", "value": "Observation: all tests passed."}]}
+{"subset": "mbpp_before", "id": "mbpp_7", "conversations": [{"from": "human", "value": "Write a function that adds two numbers."}, {"from": "human", "value": "Use Python."}, {"from": "gpt", "value": "def add(a, b): return a + b"}]}
+{"subset": "gsm8k", "id": "gsm8k_3", "conversations": [{"from": "human", "value": "What is 2 + 3?"}]}

@@ -146,6 +146,29 @@ which policy it favors.
    tokens, request-specific partial tails, context filtering, one trace
    segment and simulator-only latency all limit generalization.
 
+### AgentBank and CC-Bench experiment plan (2026-11-07)
+
+Same fixed configuration as Bailian: capacity 65,536 tokens, block size 16,
+context 32,768 (Qwen2.5-0.5B's maximum), 32 concurrent requests, a fresh
+server per policy. Both are chat workloads (`format: chat`) replayed like
+Milestone 2's multi-turn ShareGPT: 1 conversation/s Poisson arrivals and a
+5 s think time, since neither dataset has arrival times across sessions.
+The policy comparison then reflects the workloads' content, not pacing.
+
+- **AgentBank:** the first 1,000 conversations of a seeded random order
+  over all 19 subsets (`examples/agentbank_1000.json`), 4,992 requests; all
+  fit in 32,768 tokens.
+- **CC-Bench:** all 370 sessions, split into 498 threads (session,
+  sub-agent and post-`/compact` contexts), 18,184 requests
+  (`examples/ccbench_full.json`). About 36% of the requests are over
+  32,768 tokens; the client skips such a turn and the rest of its thread,
+  and the run reports the share. Raising the context would require a cache
+  larger than 65,536 tokens (vLLM refuses a context larger than the cache),
+  so CC-Bench would no longer share the other workloads' capacity.
+- **Not reproduced:** Claude Code's system prompt and tool definitions
+  (about 12K tokens shared by every real session) are not in the logs and
+  no stand-in is added; nor is the timing of sub-agents inside a session.
+
 ### Role mapping for agent trajectories
 
 The system prompt or task description becomes `system`; the agent's actions
