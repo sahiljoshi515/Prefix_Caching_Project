@@ -36,7 +36,9 @@
   the shared-block label rule, prefix closure, unknown modes refused
   (`tests/eviction/test_wa_evictor.py`)
 - [ ] T007 [US3] `WorkloadAwareEvictor` and registration
-  (`vllm/core/eviction_policies.py`, `vllm/core/evictor.py`)
+  (`vllm/core/eviction_policies.py`, `vllm/core/evictor.py`); a prototype
+  with oracle and none modes is in `vllm/core/wa_evictor.py`, with
+  replay results in `plan.md` (2026-11-08), pending T005's review
 - [ ] T008 [US3] Label hand-off that works with the event log off, oracle
   and none modes (`vllm/core/block/cache_events.py`, `vllm/envs.py`,
   FR-002); engine test: same `cached_tokens` with the log on and off
@@ -50,7 +52,9 @@
 - [ ] T016 [US4] `lru_leaf` control on `LeafScoreEvictor`, with a test that
   `wa` in `none` mode with refinements off picks the same victims (FR-012;
   `tests/eviction/test_lru_leaf.py`); replay and engine runs at 131,072
-  tokens on seeds 2–4 (SC-005)
+  tokens on seeds 2–4 (SC-005). Done: both controls and their tests, and
+  the replay (they evict the same blocks as LRU); still to do: the engine
+  runs and the `wa` equality test, which waits for T005
 - [ ] T017 [US4] Label-error runs: corrupt oracle labels at the rates of
   User Story 4, scenario 6, in the replay (FR-014, figure 7 of FR-011)
 - [ ] T018 [US4] Optional: export the mixes to PrefixSim's JSONL, run its

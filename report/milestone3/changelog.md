@@ -7,7 +7,7 @@ notes, and each task's owner and status are in the
 [spec index](../../specs/README.md).
 
 Commit dates are the author's local date; merge dates are GitHub's (UTC).
-Last updated 2026-11-05. Each PR that adds to the milestone adds its entry
+Last updated 2026-11-08. Each PR that adds to the milestone adds its entry
 here.
 
 ## Repository
@@ -42,6 +42,24 @@ here.
 [Spec 007](../../specs/007-m3-mixed-workload-policy/spec.md). Owners: Sahil
 Joshi and Xin Liang Chia. Phase 1 (the reuse study and the baselines) done
 on branch `milestone3_task2`; the policy itself is Phase 2.
+
+### Unreleased (branch `milestone3-marcus-wa-spec`, PR #16): Phase 2 spec and first experiments
+
+- **Changed:** spec 007 revised for Phase 2 from Phase 1's results: the
+  findings as Background 8–13, the class hit-density design as `wa`'s
+  starting point, and FR-012 to FR-015 (a leaf-only LRU control, the full
+  comparison set, label errors and a safeguard, an optional PrefixSim
+  check); `plan.md` lists refinements for T005's review and `tasks.md` adds
+  T016–T018 (marcus, `0cc2e85a`).
+- **Added:** the `lru_leaf` and `lru_leaf_free` controls, an exploratory
+  label probe (`wa_probe`, with `analysis/hazard_table.py`) and a first
+  `wa` evictor with oracle and none modes, learned online (marcus,
+  `090be78d`); `analysis/sim_table.py` for the replay tables.
+- **Ran:** cache replay of the balanced mix, settings on seed 1, seeds 2–4
+  at 64K, 128K and 256K, recorded in `plan.md`. The leaf-only rule evicts
+  the same blocks as LRU. `wa` with oracle labels is above LRU on every
+  seed (+4.3 points at 128K) and above RACE-RP at 128K and 256K; without
+  labels it ties RACE-RP. Not yet run on the engine.
 
 ### Unreleased (branch `milestone3_task2`, PR pending): Phase 1
 

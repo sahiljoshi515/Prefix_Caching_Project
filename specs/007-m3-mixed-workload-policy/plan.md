@@ -385,6 +385,86 @@ block id. Choices the code makes:
   k ∈ {4, 16, 64}, chosen as for TTDF and RACE-RP. The `policies` grid adds
   its five engine runs (15 in all).
 
+## Phase 2 first experiments (2026-11-08, branch `milestone3-marcus-wa-spec`)
+
+Run before T005's review, to give it evidence: cache replay only (model
+timing), the balanced mix with human pacing, measured over 600–1800 s.
+Settings were chosen on seed 1 only; seeds 2–4 were run once with the
+chosen settings. The replay ran this branch's code before it was committed,
+on top of `ef5fe385` (the rows record that commit as dirty); the commits
+since change formatting only.
+
+```bash
+python -m analysis.run_m3_task2 plans --grid phase1
+# seed 1 without eviction, on the engine: RACE-RP's training and the probe's table
+python -m analysis.run_m3_task2 replay --plan data/processed/m3/balanced-human-s1 \
+    --out results/m3-task2/balanced-human-s1-ceiling --capacity 11851680
+python -m analysis.race_train --sketch 16x6 --out results/m3-race
+python -m analysis.hazard_table --run results/m3-task2/balanced-human-s1-ceiling \
+    --out results/m3-explore/hazard-s1.json
+# wa settings on seed 1 at 131,072 tokens: labels oracle|none x buckets 1|0
+# x half_life 120|600|1800
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 \
+    --policies lru 'wa:labels=oracle,buckets=1,half_life=600' ... \
+    --capacities 131072 --window 600 1800 --out results/m3-explore/wa-tune-s1.jsonl
+# held-out seeds
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
+    --policies lru lru_leaf lru_leaf_free ttdf \
+    race_rp:sketch=results/m3-race/sketch-L16-P6.json \
+    'wa:labels=oracle,buckets=1,half_life=600' 'wa:labels=none,buckets=1,half_life=1800' \
+    --capacities 65536 131072 262144 --window 600 1800 --out results/m3-explore/<rows>.jsonl
+python -m analysis.sim_table results/m3-explore/<rows>.jsonl ... --against lru
+```
+
+**Reproduction.** With the data, plans and RACE-RP sketch rebuilt on
+another laptop, the replay at 131,072 tokens gives LRU 55.79%, TTDF 56.75%,
+RACE-RP 58.73% and no eviction 78.06%, as in the Phase 1 note.
+
+Usable reuse, seeds 2–4 (mean; per-seed verdict against LRU by the note's
+rule):
+
+| Policy | 64K | 128K | 256K |
+|---|---|---|---|
+| `wa`, oracle labels (buckets on, half-life 600 s) | 54.58% | 60.13% | 64.42% |
+| `wa`, no labels (buckets on, half-life 1,800 s) | 53.40% | 58.88% | 63.34% |
+| RACE-RP | 54.28% | 58.73% | 63.15% |
+| TTDF | 51.65% | 56.75% | 61.98% |
+| LRU, `lru_leaf`, `lru_leaf_free` | 50.74% | 55.79% | 61.13% |
+
+- **The leaf-only rule changes nothing.** `lru_leaf` and `lru_leaf_free`
+  evict the same blocks as LRU at every capacity (same evictions per
+  workload, same usable reuse), so TTDF's and RACE-RP's gains come from
+  their scores (spec SC-005, in the replay).
+- **`wa` with oracle labels** is above LRU on every seed at every capacity
+  (+3.85, +4.34, +3.29 points), above RACE-RP at 128K and 256K (+1.39,
+  +1.27) and tied with it at 64K (+0.30). It is above `wa` without labels
+  by 1.1–1.2 points at every capacity, so the label pays off.
+- **`wa` without labels** ties RACE-RP at 128K and 256K and is below it at
+  64K (−0.88).
+- **Per workload, oracle against LRU:** at 128K the largest loss is
+  bailian-api's (−0.55) and ShareGPT gains 8.3; at 256K bailian-thinking
+  loses 4.9 points while ShareGPT gains 31.4. The decision gate above (no
+  workload down by more than 2 points) therefore holds at 128K and fails at
+  256K.
+- **Cost per eviction in the replay** at 128K: LRU 1.6 µs, `wa` without
+  labels 23 µs, `wa` with oracle labels 51 µs, RACE-RP 63 µs.
+- **The label probe** (`wa_probe`: survival curves per workload from the
+  seed-1 engine run, horizon chosen on seed 1) is above LRU on every seed
+  with oracle labels (+1.9, +2.1, +1.7 points) and ties it without labels.
+  It helps ShareGPT and CC-Bench at Bailian's expense. `wa` supersedes it.
+
+**For T005's review.**
+- **Scoring rule.** The prototype scores each leaf at its own age, as LHD
+  does, not the head of each class's LRU queue as step 4 of the design
+  says. It therefore does not reduce to `lru_leaf` with one label (spec
+  User Story 3, scenario 6). Either build the head-of-class rule, or change
+  the scenario.
+- **Bailian at 256K.** The loss to bailian-thinking needs a look before
+  the engine runs.
+- **Not yet run:** engine runs of `wa`, inferred labels, label errors and
+  the chat-heavy and agent-heavy mixes. TTDF and RACE-RP keep their
+  specified settings, while `wa` had 12 settings tried on seed 1.
+
 ## Phases
 
 Target dates are proposals for the owners to confirm; the project is due

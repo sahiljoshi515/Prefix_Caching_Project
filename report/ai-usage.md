@@ -131,3 +131,17 @@ Entry format:
   branch called milestone3_task2 [...] commit and push code to this new
   branch. Create a good, interpretable, coherent artifact".
 
+
+### PR #16: Milestone 3 Task 2, Phase 2: spec revision and first wa experiments
+
+- **Tools:** Claude Code (Claude Opus 5.5), with one multi-agent literature
+  search that informed the spec revision.
+- **Used for:** the spec 007 revision, the leaf-LRU controls, the label
+  probe, the `wa` prototype and their tests, the table script, rebuilding
+  the data and Phase 1's runs on a second laptop, the cache-replay
+  experiments and their record in `plan.md`, and this PR's documents.
+  Marcus chose to revise the spec on a branch off `milestone3_task2`, to
+  run experiments before planning, and to test `wa` before its review.
+- **Prompts:** "can you help me to write the spec of milestone 3 task 2?";
+  "Can you do some experiment first? and then we need to plan how to do
+  it."; "Can you test the wa first? and get some result"; "write a pr?".
