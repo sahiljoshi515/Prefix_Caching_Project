@@ -1,6 +1,7 @@
 """AgentBank adapter on a handcrafted fixture (spec 006, SC-002)."""
 import json
 from pathlib import Path
+from typing import Any, Dict, List
 
 import pytest
 
@@ -79,7 +80,7 @@ def test_an_unknown_role_is_an_error():
 def test_reads_the_parquet_subsets_and_writes_replay_traces(tmp_path):
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
-    rows = {}
+    rows: Dict[str, List[Dict[str, Any]]] = {}
     for subset, record in records():
         rows.setdefault(subset, []).append(record)
     message = pa.struct([("from", pa.string()), ("value", pa.string())])
