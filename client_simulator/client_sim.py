@@ -144,11 +144,20 @@ class ReplayClient:
                 f"{self.model!r} is not served; available: {available}")
 
     async def tokenize(self, **payload):
-        response = await self.http.post(self.root + "/tokenize",
-                                        json={
-                                            "model": self.model,
-                                            **payload
-                                        })
+        # vLLM closes idle connections after 5 s, the usual think time, so
+        # the first call of a turn can reuse a connection as it closes.
+        # Tokenizing has no side effects, so one retry is safe (spec 003).
+        for attempt in range(2):
+            try:
+                response = await self.http.post(self.root + "/tokenize",
+                                                json={
+                                                    "model": self.model,
+                                                    **payload
+                                                })
+                break
+            except httpx.TransportError:
+                if attempt:
+                    raise
         response.raise_for_status()
         return response.json()
 
