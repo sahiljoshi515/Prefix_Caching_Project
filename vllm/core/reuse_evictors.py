@@ -401,6 +401,62 @@ class TTDFEvictor(LeafScoreEvictor):
         return {**super().metadata_words(), "counters": 3 * len(self.blocks)}
 
 
+# --- Leaf-LRU controls -------------------------------------------------------
+
+
+class LeafLRUEvictor(LeafScoreEvictor):
+    """``lru_leaf``: LRU over the same idle leaves as TTDF and RACE-RP, by
+    the same access clock (``record_access``). Only the score differs from
+    them, so a policy's gain over this control is its score's (spec 007
+    FR-012)."""
+
+    @classmethod
+    def from_params(cls, text: Optional[str]) -> "LeafLRUEvictor":
+        params = parse_params(text, ())
+        return cls(stats_path=params.get("stats"))
+
+    def _scores(self, hashes: Sequence[int], blocks: Sequence[_Block],
+                now: float) -> List[float]:
+        return [b.last for b in blocks]
+
+
+class LeafLRUFreeEvictor(LeafLRUEvictor):
+    """``lru_leaf_free``: the same leaves, ordered by the scheduler's stamp
+    (``last_accessed`` at ``add`` and ``update``), the time vLLM's
+    ``LRUEvictor`` orders by. Against ``lru_leaf`` it isolates the clock;
+    against ``lru`` the leaf-only rule."""
+
+    def __init__(self,
+                 clock: Optional[Callable[[], float]] = None,
+                 stats_path: Optional[str] = None) -> None:
+        super().__init__(clock, stats_path)
+        self.stamps: Dict[int, float] = {}  # content hash -> stamp
+
+    def add(self, block_id: int, content_hash: int, num_hashed_tokens: int,
+            last_accessed: float):
+        self.stamps[content_hash] = last_accessed
+        super().add(block_id, content_hash, num_hashed_tokens, last_accessed)
+
+    def update(self, block_id: int, last_accessed: float):
+        super().update(block_id, last_accessed)
+        content_hash = self.free_table[block_id]
+        self.stamps[content_hash] = last_accessed
+        block = self.blocks[content_hash]
+        self._bump(block)
+        if block.children == 0:
+            self._keep_heap(content_hash, block)
+
+    def _on_evict(self, content_hash: int, block: _Block, now: float) -> None:
+        self.stamps.pop(content_hash, None)
+
+    def _scores(self, hashes: Sequence[int], blocks: Sequence[_Block],
+                now: float) -> List[float]:
+        return [self.stamps.get(h, b.last) for h, b in zip(hashes, blocks)]
+
+    def metadata_words(self) -> Dict[str, int]:
+        return {**super().metadata_words(), "stamps": len(self.stamps)}
+
+
 # --- RACE-RP -----------------------------------------------------------------
 
 
