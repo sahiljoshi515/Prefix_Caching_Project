@@ -39,7 +39,7 @@ Entry format:
   qwen balian, or multiple) and put an template of these files in example
   folder. After that, document my adapter implementation and the shared runner."
 
-### Pending PR: Milestone 3 Task 1, AgentBank and CC-Bench
+### PR #17: Milestone 3 Task 1: AgentBank and CC-Bench
 
 - **Tools:** Claude Code (Claude Opus 5.5).
 - **Used for:** the AgentBank and CC-Bench adapters, fixtures and tests,
