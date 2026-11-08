@@ -24,7 +24,8 @@
 ## Phase 1: Design
 
 - [ ] T005 Finalize the scoring rule from T004's evidence; update `plan.md`
-  (FR-004) and get review before coding
+  (FR-004) and get review before coding, including the refinements of
+  2026-11-07 and the label safeguard (FR-014)
 - [x] T013 Choose the capacity under pressure and record why (FR-007):
   131,072 tokens; in the simulator pre-flight, LRU's usable reuse (0.527)
   is 0.22 below the ceiling (0.746), against a seed spread of 0.05
@@ -46,8 +47,19 @@
 
 ## Phase 3: User Story 4 — evaluation (P2)
 
+- [ ] T016 [US4] `lru_leaf` control on `LeafScoreEvictor`, with a test that
+  `wa` in `none` mode with refinements off picks the same victims (FR-012;
+  `tests/eviction/test_lru_leaf.py`); replay and engine runs at 131,072
+  tokens on seeds 2–4 (SC-005)
+- [ ] T017 [US4] Label-error runs: corrupt oracle labels at the rates of
+  User Story 4, scenario 6, in the replay (FR-014, figure 7 of FR-011)
+- [ ] T018 [US4] Optional: export the mixes to PrefixSim's JSONL, run its
+  LRU, ARC, S3-FIFO, SIEVE, LHD, `workload_aware` and Belady with
+  `--dump-holes`, and recompute usable reuse; check its LRU against the
+  replay first (FR-015)
 - [ ] T010 [US4] Grid command extending `analysis/sweep.py` (FR-009): mixes
-  × seeds × policies × label modes, ceilings, single-workload traces
+  × seeds × policies (FR-013) × label modes × label-error rates, ceilings,
+  single-workload traces
   (`analysis/run_m3_task2.py`; Phase 1 has the `plans`, `grid` and `sim`
   commands; label modes wait for `wa`)
 - [ ] T014 [US4] Pacing-sensitivity run: one mix at another think time and
@@ -64,3 +76,5 @@
   sweep runner, and `004`'s recorder with the usable reused fraction
   (PR #12).
 - T005 needs T004; T006 to T009 need T005; T010 needs T007 and T008.
+- T016 needs nothing new and can start before T005's review; T006's
+  regression test needs it. T017 needs T007; T018 needs only the mixes.

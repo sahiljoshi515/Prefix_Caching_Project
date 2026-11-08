@@ -209,6 +209,35 @@ least two mixes at the FR-007 capacity, it beats LRU by more than the seed
 spread without lowering any workload by more than 2 points. Otherwise the
 alternative is tried, and a negative result is reported (SC-003).
 
+### Refinements for review (2026-11-07, spec revision for Phase 2)
+
+Proposed after Phase 1 and a literature study; part of T005's review,
+none of them built yet.
+
+1. **Candidate set.** Use Phase 1's `LeafScoreEvictor`
+   (`vllm/core/reuse_evictors.py`) for the leaf-only pool instead of a new
+   `record_insert` hook. TTDF and RACE-RP already rely on it.
+2. **Control.** Add `lru_leaf` (spec FR-012) on the same base. Step 5's
+   claim "`none` without buckets is exactly LRU" becomes "is exactly
+   `lru_leaf`", and that equality is the regression test (spec User Story
+   3, scenario 6).
+3. **Seeing past its own evictions.** Hit-density statistics only see
+   blocks the policy kept. A sampled, bounded record of evicted hashes (for
+   example 1 in 8, held up to 20 min) lets a later lookup record the age at
+   which the block would have been reused. LHD's explorers and UCP's
+   sampled monitors solve the same problem.
+4. **Shrinkage.** A class's estimate is pulled toward the pooled estimate
+   in proportion to how few observations it has (spec Edge Cases, cold
+   start).
+5. **Label safeguard** (spec FR-014). In inferred mode, a request below a
+   confidence threshold tuned on seed 1 gets the pooled class. Optionally,
+   a shadow `lru_leaf` over hashes compares misses over a sliding window,
+   and `wa` follows its choice while it is doing worse (Chłędowski et al.,
+   ICML 2021).
+6. **Label-error runs.** Oracle labels corrupted by the classifier's
+   confusion matrix at 1×, 2× and 4× its error, and uniformly at 10%, 20%
+   and 40% (spec User Story 4, scenario 6).
+
 ## Phase 1 study (2026-11-04, branch `milestone3_task2`)
 
 Phase 1 measured the course's three questions on engine runs before any
