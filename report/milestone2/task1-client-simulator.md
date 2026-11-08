@@ -96,6 +96,9 @@ From Task 2's runs: seed 0, 1 conversation/s, think time 5 s,
   connection errors, would avoid it (spec 003, T015). Since a failed turn
   ends its conversation, each such failure also drops the conversation's
   remaining turns; this one was the conversation's last turn.
+  Confirmed and fixed in Milestone 3 Task 1: three more such failures each
+  came exactly 5.0 s after the previous turn, and `/tokenize` is now retried
+  once on a connection error (spec 003, T015).
 - **Spec 003's follow-ups** (Phase 5 of its
   [tasks](../../specs/003-m2-client-simulator/tasks.md)): keep replaying
   after an answer mismatch, exit with an error only on failures, unit tests,

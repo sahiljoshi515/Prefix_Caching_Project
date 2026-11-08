@@ -7,12 +7,28 @@ notes, and each task's owner and status are in the
 [spec index](../../specs/README.md).
 
 Commit dates are the author's local date; merge dates are GitHub's (UTC).
-Last updated 2026-10-21. Each PR that adds to the milestone adds its entry
+Last updated 2026-11-08. Each PR that adds to the milestone adds its entry
 here.
 
 ## Task 1: eviction policies across workloads
 
 [Spec 006](../../specs/006-m3-workload-eviction/spec.md).
+
+### Unreleased (`milestone3-jasmine-agentbank-ccbench`)
+
+- **Added:** AgentBank and CC-Bench adapters with fixtures and tests
+  (`client_simulator/adapters/agentbank.py`, `ccbench.py`), their configs
+  (`examples/agentbank_1000.json`, `examples/ccbench_full.json`) and
+  `pyarrow==18.0.0` for the parquet files (imleznupar, `c9aa4e13`).
+- **Fixed:** the client retries `/tokenize` once on a dropped connection,
+  the keep-alive race that failed one request in three of the runs
+  (spec 003, T015) (imleznupar, `1d785f91`).
+- **Added:** the AgentBank (1,000 trajectories) and CC-Bench (all 370
+  sessions) comparisons, their figures, and the best policy per workload in
+  [`task1-workload-eviction.md`](task1-workload-eviction.md): LRU for
+  AgentBank (89.47% usable reuse), LFU for Bailian, and LFU only marginally
+  for CC-Bench, which thrashes the cache under every policy at 1
+  conversation/s (imleznupar).
 
 ### Unreleased (Milestone 2, Task 2 branch)
 

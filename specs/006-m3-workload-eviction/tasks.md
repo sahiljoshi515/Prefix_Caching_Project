@@ -23,12 +23,12 @@
 ## Phase 2: User Story 2 — comparison runs (P1)
 
 - [x] T009 [US2] `analysis/run_experiment.py` (shared prepared chat/token/mixed runner)
-- [ ] T010 [US2] Run all pairs on the agreed samples
+- [x] T010 [US2] Run all pairs on the agreed samples
 
 ## Phase 3: User Story 3 — analysis (P2)
 
-- [ ] T011 [US3] Per-workload reuse-profile figures and the comparison plot
-- [ ] T012 [US3] Write-up (`report/milestone3/task1-workload-eviction.md`)
+- [x] T011 [US3] Per-workload reuse-profile figures and the comparison plot
+- [x] T012 [US3] Write-up (`report/milestone3/task1-workload-eviction.md`)
 
 ## Dependencies
 
@@ -51,3 +51,11 @@ remain a pilot. The three saved runs passed audit with no exclusions,
 failures or preemptions, and their figures/plain-text findings replace the
 pilot as the main analysis. Other workloads and repeat/segment stability
 checks remain open.
+
+AgentBank and CC-Bench complete (2026-11-08): AgentBank's first 1,000
+seeded trajectories and all of CC-Bench, at capacity 65,536/block size 16,
+1 conversation/s and 5 s think time, under LRU/FIFO/LFU. All six runs
+passed the runner's checks with no failures; CC-Bench skips 36.2% of its
+turns (too long for 32,768 tokens) and has 2-7 preemptions per run. The
+Task 1 note now has all three workloads and the best policy per workload,
+which closes T010-T012. Repeat/segment stability checks were not run.
