@@ -23,7 +23,8 @@ def iter_requests(conversation: Conversation,
     """Each request contains the history before its recorded answer"""
     if mode not in {"single", "multi"}:
         raise ValueError("mode must be 'single' or 'multi'")
-    for i in range(1, len(conversation.messages), 2):
+    for i in range(2 * conversation.first_turn + 1, len(conversation.messages),
+                   2):
         turn = i // 2
         rid = request_id(conversation.conversation_id, turn)
         yield ReplayRequest(rid, conversation.conversation_id, turn,
@@ -53,10 +54,14 @@ def load_conversations(path):
                     if (message.role != role
                             or not isinstance(message.content, str)):
                         raise ValueError(f"invalid message {i}")
+                first_turn = row.get("first_turn", 0)
+                if (not isinstance(first_turn, int)
+                        or not 0 <= first_turn < len(messages) // 2):
+                    raise ValueError("invalid first_turn")
             except (ValueError, KeyError, TypeError) as exc:
                 raise ValueError(f"{path}:{line_number}: {exc}") from exc
             seen.add(cid)
-            yield Conversation(cid, messages)
+            yield Conversation(cid, messages, first_turn)
 
 
 def schedule_conversations(conversations, rate, seed, limit=None):
@@ -219,7 +224,9 @@ class ReplayClient:
 
     async def replay_conversation(self, conversation, arrival_s):
         actual_start = self.elapsed()
-        turns = 1 if self.mode == "single" else len(conversation.messages) // 2
+        turns = (conversation.first_turn +
+                 1 if self.mode == "single" else len(conversation.messages) //
+                 2)
         self.counts["conversations"] += 1
         for request in iter_requests(conversation, self.mode):
             result = {

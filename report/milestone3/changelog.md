@@ -7,7 +7,7 @@ notes, and each task's owner and status are in the
 [spec index](../../specs/README.md).
 
 Commit dates are the author's local date; merge dates are GitHub's (UTC).
-Last updated 2026-11-08. Each PR that adds to the milestone adds its entry
+Last updated 2026-11-09. Each PR that adds to the milestone adds its entry
 here.
 
 ## Task 1: eviction policies across workloads
@@ -29,6 +29,14 @@ here.
   AgentBank (89.47% usable reuse), LFU for Bailian, and LFU only marginally
   for CC-Bench, which thrashes the cache under every policy at 1
   conversation/s (imleznupar).
+- **Fixed (review):** the CC-Bench adapter follows each session's
+  `uuid`/`parentUuid` tree, skips copied events, drops list-form local
+  commands and synthetic API errors, and sends a re-run branch's shared
+  turns as history only (`first_turn`); AgentBank and CC-Bench tests cover
+  these cases. CC-Bench was rerun: LRU and LFU tie (1.96% and 2.16% usable
+  reuse), and the note scopes both workloads' rankings to this load against
+  Task 2's runs and explains LFU's AgentBank result by blocks of finished
+  conversations filling the cache (imleznupar).
 
 ### Unreleased (Milestone 2, Task 2 branch)
 

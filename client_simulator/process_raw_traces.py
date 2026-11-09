@@ -42,10 +42,13 @@ def write_traces(conversations: Iterable[Conversation], client_path: Path,
                     "conversation_id": conversation.conversation_id,
                     "messages": [asdict(m) for m in conversation.messages],
                 }
+                if conversation.first_turn:
+                    record["first_turn"] = conversation.first_turn
                 client_file.write(
                     json.dumps(record, ensure_ascii=False) + "\n")
                 # History slices are only needed at replay time.
-                for index in range(1, len(conversation.messages), 2):
+                for index in range(2 * conversation.first_turn + 1,
+                                   len(conversation.messages), 2):
                     rid = request_id(conversation.conversation_id, index // 2)
                     answer = {
                         "request_id": rid,

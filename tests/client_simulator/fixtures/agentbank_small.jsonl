@@ -2,3 +2,4 @@
 {"subset": "mbpp", "id": "mbpp_7", "conversations": [{"from": "human", "value": "Write a function that adds two numbers."}, {"from": "gpt", "value": "def add(a, b):\n    return a + b"}, {"from": "human", "value": "Observation: all tests passed."}]}
 {"subset": "mbpp_before", "id": "mbpp_7", "conversations": [{"from": "human", "value": "Write a function that adds two numbers."}, {"from": "human", "value": "Use Python."}, {"from": "gpt", "value": "def add(a, b): return a + b"}]}
 {"subset": "gsm8k", "id": "gsm8k_3", "conversations": [{"from": "human", "value": "What is 2 + 3?"}]}
+{"subset": "webshop", "id": "webshop_9", "conversations": [{"from": "gpt", "value": "I will search."}, {"from": "human", "value": "Observation: results."}, {"from": "gpt", "value": "click[item]"}]}

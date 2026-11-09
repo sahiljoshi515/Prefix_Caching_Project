@@ -15,6 +15,9 @@ from raw fragments. It outputs:
 
 - **Client conversations:** one JSON object per reconstructed conversation,
   with `conversation_id` and a `messages` list. Each message is stored once.
+  An optional `first_turn` (default 0) marks the turns before it as history
+  only: they are not replayed, because another conversation already
+  replayed them (CC-Bench's re-run branches).
 - **Server responses:** one JSON object per turn, containing only `request_id`
   and `response`. This is the file the server loads:
 
@@ -95,29 +98,40 @@ before it. Reading them needs `pyarrow` (`make setup` installs it).
 | Source | [Solaris99/AgentBank](https://huggingface.co/datasets/Solaris99/AgentBank), revision `6d718ff7` | [zai-org/CC-Bench-trajectories](https://huggingface.co/datasets/zai-org/CC-Bench-trajectories), revision `792c6d32` |
 | Licence | Apache-2.0 | MIT |
 | Raw format | 19 subsets (ALFWorld, WebShop, Mind2Web, InterCode, GSM8K, ...), one parquet file each; rows `id`, `conversations` (`from`: `human`/`gpt`, `value`) | One parquet file; each row's `trajectory` is a Claude Code session log (JSON events linked by `uuid`/`parentUuid`) |
-| Size | 53,205 trajectories, 243,598 requests | 370 sessions (74 coding tasks × 5 models), 498 threads, 18,184 requests |
-| Conversation id | `agentbank:<subset>:<id>` (ids repeat across subsets) | `ccbench:<row id>:<thread>` |
+| Size | 53,205 trajectories, 243,598 requests | 370 sessions (74 coding tasks × 5 models), 511 conversations (495 threads and 16 re-run branches), 18,124 requests |
+| Conversation id | `agentbank:<subset>:<id>` (ids repeat across subsets) | `ccbench:<row id>:<thread>`, and `ccbench:<row id>:<thread>b<k>` for a re-run branch |
 
 Role mapping (spec 006): the task and environment observations (AgentBank
 `human`) and the developer's prompts and tool results (CC-Bench) become
 `user`; the agent's reasoning, actions and tool calls become `assistant`.
-Neither dataset has a system prompt. Consecutive messages with the same
+AgentBank has no system prompt; CC-Bench's sessions had Claude Code's,
+but the logs do not include it. Consecutive messages with the same
 role are merged with a blank line; a trajectory must start with a user
 message, and a final unanswered user message is dropped.
 
 CC-Bench logs need more rules:
 
-- **Threads.** An event without a parent starts a thread and every other
-  event joins its parent's thread. Roots are session starts, sub-agent
-  (sidechain) starts and `/compact` boundaries, which replace the history
-  with a summary; each thread is its own conversation with its own context.
-  Within a thread, events keep file order.
+- **Threads.** Events form a tree through `parentUuid`; an event without a
+  parent starts a thread. Roots are session starts, sub-agent (sidechain)
+  starts, `/compact` boundaries and older "This session is being
+  continued..." summaries without a boundary event, which replace the
+  history with a summary, and a `/clear` restart. An event whose uuid was already seen is skipped: a
+  resumed session copies its earlier history into the log (rows 161 and
+  173).
+- **Re-run branches.** Parallel tool calls are chained one after another,
+  so every fork in a thread is a re-run: a request sent again after a
+  rewind or retry, with the abandoned branch still in the log (16 forks in
+  13 threads). Each request's history is the path from its root down to
+  it. The first root-to-leaf path is the thread's conversation; each later
+  path is a conversation whose turns shared with an earlier path are
+  history only (`first_turn`), so no request is replayed twice.
 - **Rendering.** A tool call is `<tool_use name="NAME">INPUT_JSON</tool_use>`,
   a result `<tool_result>TEXT</tool_result>` (an image `[image]`). Thinking
   blocks are dropped.
 - **Dropped events:** `system` and `summary` events, `isMeta` messages,
-  local slash commands (`<command-name>`, `<local-command-stdout>`) and API
-  error messages.
+  local slash commands (`<command-name>`, `<local-command-stdout>`, as a
+  string or a list of blocks) and API error messages, including unflagged
+  ones from the `<synthetic>` model.
 - **Not in the logs, so not replayed:** Claude Code's system prompt and
   tool definitions (about 12K tokens that every real session shares), and
   when a sub-agent ran inside its parent session.
@@ -140,10 +154,11 @@ python -m client_simulator.process_raw_traces --dataset ccbench \
 
 Context: with Qwen's tokenizer, AgentBank's first 1,000 conversations
 (4,992 requests) all fit in 32,768 tokens (median prompt 460 tokens).
-CC-Bench prompts are long (median 12,778 tokens among those that fit):
-about 36% of its requests are over 32,768. The client skips such a turn
-and the rest of its conversation, so CC-Bench replays each thread until
-its history passes 32K, and the run reports the skipped share.
+CC-Bench prompts are long (median 12,599 tokens among those that fit).
+The client skips a turn over 32,768 tokens and the rest of its
+conversation, so CC-Bench replays each thread until its history passes
+32K, and the run reports the skipped share: in the full run, 178 turns
+were too long and 6,262 later turns were not sent, 35.5% of 18,124.
 
 ## Bailian token traces and shared experiments
 

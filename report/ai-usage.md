@@ -59,6 +59,12 @@ Entry format:
   just keep the arrive rate the same right? so if cc-bench failed under
   that arrive rate, we should just report that?"; "yes do that" (the
   retry fix and the CC-Bench rerun).
+- **Review fix:** Claude Code checked the reviewer's points against the
+  CC-Bench logs and the event logs, fixed the adapter (session trees,
+  re-run branches, dropped events) with tests, reran CC-Bench, and rewrote
+  the CC-Bench conclusion and the LFU explanation for AgentBank. Prompts:
+  "got some feedback on the PR, is this related to CC-bench crashing bc
+  arrive rate?"; "sounds good, go with the plan".
 
 ### PR #7: Add contributing guide, spec-kit specs and project CI
 

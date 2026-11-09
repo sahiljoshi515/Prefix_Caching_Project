@@ -158,11 +158,11 @@ The policy comparison then reflects the workloads' content, not pacing.
 - **AgentBank:** the first 1,000 conversations of a seeded random order
   over all 19 subsets (`examples/agentbank_1000.json`), 4,992 requests; all
   fit in 32,768 tokens.
-- **CC-Bench:** all 370 sessions, split into 498 threads (session,
-  sub-agent and post-`/compact` contexts), 18,184 requests
-  (`examples/ccbench_full.json`). About 36% of the requests are over
-  32,768 tokens; the client skips such a turn and the rest of its thread,
-  and the run reports the share. Raising the context would require a cache
+- **CC-Bench:** all 370 sessions, split into 495 threads (session,
+  sub-agent and post-`/compact` contexts) and 16 re-run branches that send
+  only their new turns, 18,124 requests (`examples/ccbench_full.json`).
+  The client skips a turn over 32,768 tokens and the rest of its thread
+  (35.5% of requests in the full run), and the run reports the share. Raising the context would require a cache
   larger than 65,536 tokens (vLLM refuses a context larger than the cache),
   so CC-Bench would no longer share the other workloads' capacity.
 - **Not reproduced:** Claude Code's system prompt and tool definitions

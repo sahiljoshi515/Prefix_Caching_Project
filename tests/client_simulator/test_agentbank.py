@@ -53,6 +53,14 @@ def test_roles_ids_merging_and_unanswered_turns():
     ]
 
 
+def test_a_trajectory_that_starts_with_the_agent_is_skipped(capsys):
+    assert "agentbank:webshop:webshop_9" not in by_id()
+    printed = capsys.readouterr().out
+    counts = json.loads(printed.split("AgentBank: ", 1)[1])
+    assert counts["skipped_assistant_first"] == 1
+    assert counts["source_trajectories"] == 5
+
+
 def test_the_order_is_seeded():
     first = [c.conversation_id for c in adapter.conversations(records(), 0)]
     assert first == [
