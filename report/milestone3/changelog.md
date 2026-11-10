@@ -75,8 +75,10 @@ on branch `milestone3_task2`; the policy itself is Phase 2.
   below it at 256K. The per-workload gate (no workload down more than 2
   points against LRU) fails for `wa` with oracle labels at 256K
   (bailian-thinking −4.1) and without labels at 128K and 256K (ShareGPT
-  −3.9, −2.4); RACE-RP and TTDF fail it at one capacity each. Not yet run
-  on the engine.
+  −3.9, −2.4); RACE-RP and TTDF fail it at one capacity each. S3-FIFO
+  over the idle leaves ties LRU at 64K and 128K and is below it at 256K
+  (−3.1): its small queue drops a conversation's blocks before the next
+  turn. Engine runs at 128K: see the next entry once recorded.
 - **Fixed (review):** `wa`'s density no longer counts ends younger than
   the block in its own age bin, which gave blocks just past their class's
   reuse time the highest score; its candidates are scored again after

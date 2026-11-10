@@ -151,3 +151,11 @@ Entry format:
   held-out replays, compared four bin rules on seed 1, and rewrote the
   results in `plan.md` and the changelog. Marcus passed on the review.
   Prompt: "This is his feedback" (with the review pasted).
+- **Engine runs and scope:** Claude Code found that `wa` had run only in
+  the replay, ran it on the engine, added the runner's `wa` grid, removed
+  the probe and the second control, added S3-FIFO and narrowed spec 007
+  to the basic study Marcus chose. Prompts (Marcus's, translated from
+  Chinese): "Can you check whether our repo has really run it?"; "OK, can
+  you just run it? Has Sahil run it?"; "Can you implement it? I think it
+  should be fine."; "We can do S3-FIFO, but delete the other unnecessary
+  ones"; "I think don't do too much, just the basics".

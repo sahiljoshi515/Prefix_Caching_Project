@@ -414,7 +414,7 @@ User Story 4, with the report still to write before 2026-11-30.
 
 `spec.md` and `tasks.md` mark each dropped requirement and task.
 
-## Phase 2 first experiments (2026-11-08, revised 2026-11-09; branch `milestone3-marcus-wa-spec`)
+## Phase 2 first experiments (2026-11-08, revised 2026-11-09 and 2026-11-10; branch `milestone3-marcus-wa-spec`)
 
 Run before T005's review, to give it evidence: cache replay only (model
 timing), the balanced mix with human pacing, measured over 600–1800 s.
@@ -446,6 +446,12 @@ python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2
     --capacities 65536 131072 262144 --window 600 1800 \
     --out results/m3-explore/wa-fixed-heldout.jsonl
 python -m analysis.sim_table results/m3-explore/wa-fixed-heldout.jsonl --against lru
+# S3-FIFO over the idle leaves (2026-11-10), the authors' settings
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
+    --policies s3fifo_leaf --capacities 65536 131072 262144 --window 600 1800 \
+    --out results/m3-explore/s3fifo-heldout.jsonl
+python -m analysis.sim_table results/m3-explore/wa-fixed-heldout.jsonl \
+    results/m3-explore/s3fifo-heldout.jsonl --against lru
 ```
 
 `lru_leaf` ran the same way in the first batch
@@ -464,6 +470,7 @@ Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
 | RACE-RP | 54.28% | 58.73% | 63.15% |
 | TTDF | 51.65% | 56.75% | 61.98% |
 | LRU, `lru_leaf` | 50.74% | 55.79% | 61.13% |
+| S3-FIFO over the idle leaves (`s3fifo_leaf`) | 50.93% | 54.34% | 58.09% |
 
 - **The leaf-only rule changes nothing.** `lru_leaf` evicts the same
   blocks as LRU at every capacity (same evictions per workload, same usable
@@ -478,6 +485,16 @@ Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
   capacity (+0.75, +1.05, +0.96), so the label pays off.
 - **`wa` without labels** is above LRU on every seed (+2.44, +2.36,
   +1.42), ties RACE-RP at 64K and 128K and is below it at 256K (−0.60).
+- **S3-FIFO over the idle leaves** ties LRU at 64K and 128K (+0.19 and
+  −1.45; the seeds disagree on the sign) and is below it at 256K (−3.05,
+  every seed). A new block stays in its small queue for a tenth of the
+  cache, and must be hit twice there to stay; a conversation's next turn,
+  minutes later, mostly finds it gone, so ShareGPT falls from 10.1% to
+  2.9% at 128K. Its counters show the queues at work (per run at 128K,
+  about 33,000 moves to the main queue, 40,000–58,000 second rounds and
+  57,000–82,000 ghost hits). On seed 1 at 128K, moving a block after one
+  hit (`threshold=1`) gives 50.94% against LRU's 52.22% (the default
+  49.64%), so the threshold is not the cause.
 - **Per workload, against LRU** (`sim_table` lists every workload down by
   more than 2 points, the decision gate above):
 
@@ -487,11 +504,12 @@ Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
   | `wa`, no labels | none | ShareGPT −3.88 | ShareGPT −2.37 |
   | RACE-RP | none | ShareGPT −2.14 | none |
   | TTDF | none | none | ShareGPT −5.97 |
+  | S3-FIFO | bailian-api −2.09, bailian-coder −3.77 | six workloads, ShareGPT −7.24 and bailian-coder −7.73 the largest | six workloads, ShareGPT −19.57 the largest |
 
   `wa` with oracle labels passes the gate at 64K and 128K and fails it at
   256K; `wa` without labels, the version a server could run without being
-  told each request's workload, fails it at 128K and 256K. The baselines
-  fail it too: no policy so far passes at every capacity.
+  told each request's workload, fails it at 128K and 256K. The other
+  policies fail it too: no policy so far passes at every capacity.
 - **Cost per eviction in the replay**, same batch (8 runs at a time):
 
   | Policy | 64K | 128K | 256K |
