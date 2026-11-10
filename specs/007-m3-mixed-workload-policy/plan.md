@@ -395,8 +395,8 @@ Marcus chose to finish the basic study rather than the full grid of
 User Story 4, with the report still to write before 2026-11-30.
 
 - **Kept:** the balanced mix, seeds 2–4. Engine runs at 131,072 tokens of
-  LRU, RACE-RP, S3-FIFO over the idle leaves and `wa` with oracle labels
-  and with none (`grid --grid wa`), beside Phase 1's LFU and FIFO;
+  LRU, RACE-RP and `wa` with oracle labels and with none
+  (`grid --grid wa`), beside Phase 1's LFU and FIFO;
   replays at 64K, 128K and 256K, with `lru_leaf` as the control.
   Per-workload results, the gate and the overhead.
 - **Dropped:**
@@ -407,10 +407,14 @@ User Story 4, with the report still to write before 2026-11-30.
     the balanced mix already mixes seven workloads, and the per-workload
     results show which gain and which pay;
   - `wa`'s pacing-sensitivity run, and the cache-share-over-time figure;
-  - PrefixSim: S3-FIFO, the policy of its set closest to `wa`'s hit
-    buckets, runs in vLLM instead (`s3fifo_leaf`);
+  - PrefixSim and its outside policies;
   - the exploratory probe and the second leaf-LRU control (removed;
-    their code is in `090be78d`).
+    their code is in `090be78d`);
+  - S3-FIFO over the idle leaves (`s3fifo_leaf`), tried and removed the
+    same day to keep the comparison to the course's baselines, RACE-RP
+    and `wa`. It was not above LRU (replay: a tie at 64K and 128K, −3.05
+    points at 256K; engine at 128K: 54.14% against 55.80%); its code and
+    runs are in `4848ead7` to `3b429e99`.
 
 `spec.md` and `tasks.md` mark each dropped requirement and task.
 
@@ -447,12 +451,6 @@ python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2
     --capacities 65536 131072 262144 --window 600 1800 \
     --out results/m3-explore/wa-fixed-heldout.jsonl
 python -m analysis.sim_table results/m3-explore/wa-fixed-heldout.jsonl --against lru
-# S3-FIFO over the idle leaves (2026-11-10), the authors' settings
-python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
-    --policies s3fifo_leaf --capacities 65536 131072 262144 --window 600 1800 \
-    --out results/m3-explore/s3fifo-heldout.jsonl
-python -m analysis.sim_table results/m3-explore/wa-fixed-heldout.jsonl \
-    results/m3-explore/s3fifo-heldout.jsonl --against lru
 ```
 
 `lru_leaf` ran the same way in the first batch
@@ -471,7 +469,6 @@ Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
 | RACE-RP | 54.28% | 58.73% | 63.15% |
 | TTDF | 51.65% | 56.75% | 61.98% |
 | LRU, `lru_leaf` | 50.74% | 55.79% | 61.13% |
-| S3-FIFO over the idle leaves (`s3fifo_leaf`) | 50.93% | 54.34% | 58.09% |
 
 - **The leaf-only rule changes nothing.** `lru_leaf` evicts the same
   blocks as LRU at every capacity (same evictions per workload, same usable
@@ -486,16 +483,6 @@ Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
   capacity (+0.75, +1.05, +0.96), so the label pays off.
 - **`wa` without labels** is above LRU on every seed (+2.44, +2.36,
   +1.42), ties RACE-RP at 64K and 128K and is below it at 256K (−0.60).
-- **S3-FIFO over the idle leaves** ties LRU at 64K and 128K (+0.19 and
-  −1.45; the seeds disagree on the sign) and is below it at 256K (−3.05,
-  every seed). A new block stays in its small queue for a tenth of the
-  cache, and must be hit twice there to stay; a conversation's next turn,
-  minutes later, mostly finds it gone, so ShareGPT falls from 10.1% to
-  2.9% at 128K. Its counters show the queues at work (per run at 128K,
-  about 33,000 moves to the main queue, 40,000–58,000 second rounds and
-  57,000–82,000 ghost hits). On seed 1 at 128K, moving a block after one
-  hit (`threshold=1`) gives 50.94% against LRU's 52.22% (the default
-  49.64%), so the threshold is not the cause.
 - **Per workload, against LRU** (`sim_table` lists every workload down by
   more than 2 points, the decision gate above):
 
@@ -505,7 +492,6 @@ Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
   | `wa`, no labels | none | ShareGPT −3.88 | ShareGPT −2.37 |
   | RACE-RP | none | ShareGPT −2.14 | none |
   | TTDF | none | none | ShareGPT −5.97 |
-  | S3-FIFO | bailian-api −2.09, bailian-coder −3.77 | six workloads, ShareGPT −7.24 and bailian-coder −7.73 the largest | six workloads, ShareGPT −19.57 the largest |
 
   `wa` with oracle labels passes the gate at 64K and 128K and fails it at
   256K; `wa` without labels, the version a server could run without being
@@ -530,9 +516,9 @@ Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
   comparison measures the same thing, so the probe and its survival-table
   script were removed (2026-11-10; they are in `090be78d`).
 
-**Engine runs (2026-11-10).** 15 runs at 131,072 tokens on seeds 2–4:
-LRU, RACE-RP, S3-FIFO over the idle leaves and `wa` with oracle labels and
-with none, each on its own `vllm serve` (simulator executor), 6 at a time.
+**Engine runs (2026-11-10).** 12 runs at 131,072 tokens on seeds 2–4:
+LRU, RACE-RP and `wa` with oracle labels and with none, each on its own
+`vllm serve` (simulator executor), 6 at a time.
 They ran from clean commits (`4d484319` for the first six, `c32b413e` for
 the rest; `wa`, LRU and RACE-RP are the same code in both).
 
@@ -540,7 +526,7 @@ the rest; `wa`, LRU and RACE-RP are the same code in both).
 python -m analysis.run_m3_task2 grid --grid wa --out results/m3-task2
 python -m analysis.tables results/m3-task2/balanced-human-s{2,3,4}-*-cap131072
 python -m analysis.sim_table --against lru \
-    --engine results/m3-task2/balanced-human-s{2,3,4}-{lru,race_rp,wa_oracle,wa_none,s3fifo_leaf}-cap131072
+    --engine results/m3-task2/balanced-human-s{2,3,4}-{lru,race_rp,wa_oracle,wa_none}-cap131072
 ```
 
 | Policy | Usable reuse | Against LRU, per seed | Against RACE-RP | Per eviction |
@@ -549,37 +535,35 @@ python -m analysis.sim_table --against lru \
 | RACE-RP | 58.74% | +2.67 +2.47 +3.69, higher | | 60 µs |
 | `wa`, no labels | 58.21% | +2.64 +2.20 +2.40, higher | −0.53, lower | 45 µs |
 | LRU | 55.80% | | | |
-| S3-FIFO over the idle leaves | 54.14% | −3.49 −1.49 +0.02, tie | −4.60, lower | 4.6 µs |
 | *Phase 1 note:* LFU / FIFO / no eviction | 53.94% / 50.29% / 78.06% | | | |
 
 - **The replay's verdicts hold on the engine.** `wa` with oracle labels is
   above LRU on every seed and ties RACE-RP, oracle labels are above none on
-  every seed (+0.27, +1.25, +1.05; mean +0.86), and S3-FIFO is not above
-  LRU. Each policy is within 0.3 points of its replay mean. The one change:
+  every seed (+0.27, +1.25, +1.05; mean +0.86). Each policy is within 0.3
+  points of its replay mean. The one change:
   `wa` without labels falls just below RACE-RP (every seed below, mean
   −0.53) where the replay had a tie.
 - **The gate at 131,072 tokens:** `wa` with oracle labels lowers no
   workload by more than 2 points; `wa` without labels lowers ShareGPT by
-  4.05, RACE-RP ShareGPT by 2.11, and S3-FIFO six workloads (bailian-coder
-  −7.36 and ShareGPT −7.29 the largest).
+  4.05, and RACE-RP ShareGPT by 2.11.
 - **Every run is sound.** Each completed all its requests (5,386, 5,403
   and 5,396 per seed), none had a hit after a miss, so the cache stayed
   prefix-closed (FR-005), and vLLM's `cached_tokens` equals the usable
-  prefix for every request but one (of 5,403, in an S3-FIFO run). With
+  prefix for every request. With
   oracle labels `wa` learned 21 classes (7 workloads × 3 reuse counts), so
   the labels reach it on the engine; with none, 3.
 - **Reproducible.** This laptop's LRU is within 0.01 points of the Phase 1
   note's engine runs on every seed, and RACE-RP within 0.15. A first set
-  of the same 12 non-S3-FIFO runs, on the same code through a scratch
+  of the same 12 runs, on the same code through a scratch
   script, gives the same means within 0.13 points. Run by run, LRU and
   RACE-RP repeat within 0.15 points but `wa` within 0.6 (seed 3 with
   oracle labels: 61.36% and 61.93%), so a repeated `wa` run moves by
   about as much as its margin over RACE-RP.
 - **Discarded runs.** Six runs fell behind while other programs overloaded
-  the laptop (load above 600), and three more spanned an 11-minute sleep,
-  which shifts the wall-clock ages `wa` scores by. All nine were stopped,
-  deleted and run again; the server logs of the 15 kept runs have no gap
-  over 8 s.
+  the laptop (load above 600), and two of their reruns spanned an
+  11-minute sleep, which shifts the wall-clock ages `wa` scores by. Each
+  was stopped, deleted and run again; the server logs of the 12 kept runs
+  have no gap over 8 s.
 
 **Review fixes (2026-11-09).** PR #16's review found two faults in the
 first `wa`, both now covered by regression tests that fail on the old code:
@@ -624,7 +608,7 @@ review asked.
 - **The gate.** Bailian-thinking at 256K with oracle labels, and ShareGPT
   without labels (128K and 256K, replay and engine), lose more than 2
   points.
-- **Tuning.** TTDF, RACE-RP and S3-FIFO keep their specified settings,
+- **Tuning.** TTDF and RACE-RP keep their specified settings,
   while `wa` had 12 settings tried on seed 1 (twice: before and after the
   fixes) and four bin rules.
 

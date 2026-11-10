@@ -60,13 +60,12 @@ on branch `milestone3_task2`; the policy itself is Phase 2.
   grid policy (`run_policy`) so a later grid finds them; `replay
   --params` for one run's policy settings; `sim_table --engine` for
   engine runs, with the study's usable reuse.
-- **Added:** `s3fifo_leaf`, S3-FIFO (Yang et al., SOSP 2023) with the
-  authors' settings, evicting only idle leaves like TTDF, RACE-RP and
-  `wa`; the `wa` grid runs it too (15 runs).
 - **Removed:** the second leaf-LRU control `lru_leaf_free` (it evicted the
   same blocks as `lru_leaf`), and the label probe `wa_probe` with
   `analysis/hazard_table.py` (`wa` with and without labels measures what
-  the probe did). Their results stay in `plan.md`.
+  the probe did). Also S3-FIFO over the idle leaves (`s3fifo_leaf`),
+  added and removed in this PR: it was not above LRU. Their results stay
+  in `plan.md`.
 - **Ran:** cache replay of the balanced mix, settings on seed 1, seeds 2–4
   at 64K, 128K and 256K, recorded in `plan.md`. The leaf-only rule evicts
   the same blocks as LRU. After the review fixes, `wa` with oracle labels
@@ -75,12 +74,10 @@ on branch `milestone3_task2`; the policy itself is Phase 2.
   below it at 256K. The per-workload gate (no workload down more than 2
   points against LRU) fails for `wa` with oracle labels at 256K
   (bailian-thinking −4.1) and without labels at 128K and 256K (ShareGPT
-  −3.9, −2.4); RACE-RP and TTDF fail it at one capacity each. S3-FIFO
-  over the idle leaves ties LRU at 64K and 128K and is below it at 256K
-  (−3.1): its small queue drops a conversation's blocks before the next
-  turn. Engine runs at 128K (seeds 2–4, `grid --grid wa`) agree within
-  0.3 points: `wa` with oracle labels 59.07%, RACE-RP 58.74%, `wa`
-  without labels 58.21%, LRU 55.80%, S3-FIFO 54.14%.
+  −3.9, −2.4); RACE-RP and TTDF fail it at one capacity each. Engine
+  runs at 128K (seeds 2–4, `grid --grid wa`) agree within 0.3 points:
+  `wa` with oracle labels 59.07%, RACE-RP 58.74%, `wa` without labels
+  58.21%, LRU 55.80%.
 - **Fixed (review):** `wa`'s density no longer counts ends younger than
   the block in its own age bin, which gave blocks just past their class's
   reuse time the highest score; its candidates are scored again after

@@ -3,13 +3,12 @@
 vLLM v0 ships only ``LRUEvictor`` (``vllm/core/evictor.py``). This module adds
 two more policies for the eviction study and lets ``VLLM_EVICTION_POLICY``
 (``lru``, ``lfu``, ``fifo``, ``ttdf``, ``race_rp``, ``sampled_lrfu``,
-``lru_leaf``, ``wa`` or ``s3fifo_leaf``; unset means ``lru``) choose the
-evictor of the GPU prefix-caching allocator. See
-``specs/005-m2-cache-tuning``. TTDF, RACE-RP and their leaf-LRU control
-(Milestone 3) live in ``vllm/core/reuse_evictors.py``, Sampled LRFU in
-``vllm/core/sampled_lrfu.py``, wa in ``vllm/core/wa_evictor.py`` and
-S3-FIFO in ``vllm/core/s3fifo_evictor.py``; they read
-``VLLM_EVICTION_PARAMS``.
+``lru_leaf`` or ``wa``; unset means ``lru``) choose the evictor of the GPU
+prefix-caching allocator. See ``specs/005-m2-cache-tuning``. TTDF, RACE-RP
+and their leaf-LRU control (Milestone 3) live in
+``vllm/core/reuse_evictors.py``, Sampled LRFU in
+``vllm/core/sampled_lrfu.py`` and wa in ``vllm/core/wa_evictor.py``; they
+read ``VLLM_EVICTION_PARAMS``.
 
 Both evictors order the blocks in the free pool (refcount 0) by a key, lowest
 first:
@@ -54,7 +53,6 @@ POLICY_NAMES = {
     "sampled_lrfu": EvictionPolicy.SAMPLED_LRFU,
     "lru_leaf": EvictionPolicy.LRU_LEAF,
     "wa": EvictionPolicy.WA,
-    "s3fifo_leaf": EvictionPolicy.S3FIFO_LEAF,
 }
 
 _Key = Tuple[float, ...]
@@ -230,7 +228,4 @@ def make_project_evictor(policy: EvictionPolicy) -> Optional[Evictor]:
     if policy == EvictionPolicy.WA:
         from vllm.core.wa_evictor import WorkloadAwareEvictor
         return WorkloadAwareEvictor.from_params(envs.VLLM_EVICTION_PARAMS)
-    if policy == EvictionPolicy.S3FIFO_LEAF:
-        from vllm.core.s3fifo_evictor import S3FIFOLeafEvictor
-        return S3FIFOLeafEvictor.from_params(envs.VLLM_EVICTION_PARAMS)
     return None

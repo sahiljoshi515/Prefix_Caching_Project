@@ -62,20 +62,19 @@
 - [x] T017 [US4] Label-error runs: corrupt oracle labels at the rates of
   User Story 4, scenario 6, in the replay (FR-014, figure 7 of FR-011).
   Dropped (scope of 2026-11-10, `plan.md`)
-- [x] T019 [US4] S3-FIFO over the idle leaves (`s3fifo_leaf`,
-  `vllm/core/s3fifo_evictor.py`) with its tests, in the replay and in the
-  `wa` grid (FR-013)
+- [x] T019 [US4] S3-FIFO over the idle leaves (`s3fifo_leaf`), with its
+  tests, in the replay and on the engine. Removed the same day (scope of
+  2026-11-10, `plan.md`): not above LRU; its code is in `4848ead7`
 - [x] T018 [US4] Optional: export the mixes to PrefixSim's JSONL, run its
   LRU, ARC, S3-FIFO, SIEVE, LHD, `workload_aware` and Belady with
   `--dump-holes`, and recompute usable reuse; check its LRU against the
-  replay first (FR-015). Dropped (scope of 2026-11-10); T019 runs S3-FIFO
-  in vLLM instead
+  replay first (FR-015). Dropped (scope of 2026-11-10)
 - [ ] T010 [US4] Grid command extending `analysis/sweep.py` (FR-009): mixes
   × seeds × policies (FR-013) × label modes × label-error rates, ceilings,
   single-workload traces
   (`analysis/run_m3_task2.py`; Phase 1 has the `plans`, `grid` and `sim`
   commands). Done for the scope of 2026-11-10: `grid --grid wa` runs both
-  label modes beside LRU, RACE-RP and S3-FIFO on the balanced mix; the
+  label modes beside LRU and RACE-RP on the balanced mix; the
   mixes, label-error and single-workload axes were dropped
 - [x] T014 [US4] Pacing-sensitivity run: one mix at another think time and
   rate, parameters unchanged (Phase 1 ran the baselines with fast pacing on
@@ -94,4 +93,4 @@
   (PR #12).
 - T005 needs T004; T006 to T009 need T005; T010 needs T007 and T008.
 - T016 needs nothing new and can start before T005's review; T006's
-  regression test needs it. T019 needs `LeafScoreEvictor` only.
+  regression test needs it.

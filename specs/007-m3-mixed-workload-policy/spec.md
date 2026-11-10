@@ -307,8 +307,8 @@ discusses benefits, limitations, trade-offs and overhead.
    and uniform errors of 10%, 20% and 40%. The report plots usable reuse
    against the error rate, next to `lru_leaf` and `wa` in `none` mode
    (FR-014).
-7. **Outside check** (optional; dropped, scope of 2026-11-10, `plan.md`, with S3-FIFO run in
-   vLLM instead): the mixes are also replayed in PrefixSim,
+7. **Outside check** (optional; dropped, scope of 2026-11-10, `plan.md`):
+   the mixes are also replayed in PrefixSim,
    an open simulator with 46 policies, among them a reimplementation of
    the ATC'25 workload-aware policy, ARC, S3-FIFO, SIEVE and LHD (FR-015).
    PrefixSim counts hits after a miss, which vLLM v0 cannot use, so usable
@@ -411,14 +411,13 @@ discusses benefits, limitations, trade-offs and overhead.
   (Background 11).
 - **FR-013**: Every comparison MUST include LRU, LFU and FIFO (the course's
   baselines), `lru_leaf` (the control), TTDF and RACE-RP (Phase 1's
-  label-free policies), `wa` in each label mode, S3-FIFO over the same
-  idle leaves (`s3fifo_leaf`, a strong label-free policy from outside the
-  project), and the no-eviction ceiling. Belady is reported in the cache replay as a reference; for
+  label-free policies), `wa` in each label mode, and the no-eviction
+  ceiling. Belady is reported in the cache replay as a reference; for
   usable reuse it is a strong reference, not a proven bound.
 - **FR-014**: `plan.md` MUST state how `wa` limits the damage of a wrong
   label. (The label-error runs of User Story 4, scenario 6, were dropped,
   scope of 2026-11-10, `plan.md`.)
-- **FR-015** (dropped, scope of 2026-11-10, `plan.md`; S3-FIFO runs in vLLM instead): The
+- **FR-015** (dropped, scope of 2026-11-10, `plan.md`): The
   mixes SHOULD be exported to PrefixSim's JSONL input
   (`hash_ids`, `timestamp`, `session_id`, and the workload as `type`). Its
   LRU, ARC, S3-FIFO, SIEVE, LHD, `workload_aware` and Belady then run at the
@@ -449,7 +448,7 @@ discusses benefits, limitations, trade-offs and overhead.
   differ, and how accurately a request's workload can be identified. It
   also says whether identifying the workload pays off (`oracle` against
   `none`, which bracket a classifier's labels), and whether a label adds
-  anything beyond the label-free RACE-RP and S3-FIFO.
+  anything beyond the label-free TTDF and RACE-RP.
 - **SC-005**: The report separates the leaf-only rule from the scores,
   with the differences of User Story 4 (scenario 5) and their seed spread.
 
