@@ -1,16 +1,15 @@
-"""Leaf-LRU controls of spec 007 FR-012 (``lru_leaf``, ``lru_leaf_free``).
+"""Leaf-LRU control of spec 007 FR-012 (``lru_leaf``).
 
-Both evict an idle block with no cached block after it in a prompt (a
-leaf), as TTDF and RACE-RP do. ``lru_leaf`` takes the leaf whose last
-access (``record_access``) is oldest; ``lru_leaf_free`` the leaf whose
-scheduler stamp (``last_accessed`` at ``add`` or ``update``) is oldest.
-Ties go to the deeper block, then the lower block id.
+It evicts an idle block with no cached block after it in a prompt (a
+leaf), as TTDF, RACE-RP and wa do: the leaf whose last access
+(``record_access``) is oldest. Ties go to the deeper block, then the lower
+block id.
 """
 import pytest
 
 from vllm.core.eviction_policies import POLICY_NAMES, make_project_evictor
 from vllm.core.evictor import EvictionPolicy
-from vllm.core.reuse_evictors import LeafLRUEvictor, LeafLRUFreeEvictor
+from vllm.core.reuse_evictors import LeafLRUEvictor
 
 pytestmark = [pytest.mark.m3, pytest.mark.usefixtures("request_context")]
 
@@ -75,11 +74,9 @@ def test_ties_go_to_the_deeper_block():
     assert evictor.evict()[0] == 3  # depth 2 before depth 1, same time
 
 
-@pytest.mark.parametrize("cls, victim", [(LeafLRUEvictor, 1),
-                                         (LeafLRUFreeEvictor, 2)])
-def test_the_two_controls_differ_only_in_their_clock(cls, victim):
+def test_the_access_clock_not_the_free_stamp_decides():
     clock = Clock(0.0)
-    evictor = cls(clock=clock)
+    evictor = LeafLRUEvictor(clock=clock)
     chain(evictor, 1)
     clock.t = 5.0
     chain(evictor, 2)
@@ -87,28 +84,14 @@ def test_the_two_controls_differ_only_in_their_clock(cls, victim):
     free(evictor, 1, stamp=9.0)
     free(evictor, 2, stamp=7.0)
     clock.t = 10.0
-    assert evictor.evict()[0] == victim
-
-
-def test_free_variant_follows_update():
-    clock = Clock(0.0)
-    evictor = LeafLRUFreeEvictor(clock=clock)
-    chain(evictor, 1)
-    chain(evictor, 2)
-    free(evictor, 1, stamp=1.0)
-    free(evictor, 2, stamp=2.0)
-    evictor.update(1, 3.0)
-    assert evictor.evict()[0] == 2
+    assert evictor.evict()[0] == 1
 
 
 def test_registered_and_built_from_the_environment(monkeypatch):
     assert POLICY_NAMES["lru_leaf"] == EvictionPolicy.LRU_LEAF
-    assert POLICY_NAMES["lru_leaf_free"] == EvictionPolicy.LRU_LEAF_FREE
     monkeypatch.setenv("VLLM_EVICTION_PARAMS", "")
     assert isinstance(make_project_evictor(EvictionPolicy.LRU_LEAF),
                       LeafLRUEvictor)
-    assert isinstance(make_project_evictor(EvictionPolicy.LRU_LEAF_FREE),
-                      LeafLRUFreeEvictor)
 
 
 def test_unknown_settings_are_refused():

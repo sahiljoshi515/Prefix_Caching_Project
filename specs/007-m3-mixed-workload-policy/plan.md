@@ -400,12 +400,10 @@ earlier numbers exactly.
 
 ```bash
 python -m analysis.run_m3_task2 plans --grid phase1
-# seed 1 without eviction, on the engine: RACE-RP's training and the probe's table
+# seed 1 without eviction, on the engine: RACE-RP's training
 python -m analysis.run_m3_task2 replay --plan data/processed/m3/balanced-human-s1 \
     --out results/m3-task2/balanced-human-s1-ceiling --capacity 11851680
 python -m analysis.race_train --sketch 16x6 --out results/m3-race
-python -m analysis.hazard_table --run results/m3-task2/balanced-human-s1-ceiling \
-    --out results/m3-explore/hazard-s1.json
 # wa settings on seed 1 at 131,072 tokens: labels oracle|none x buckets 1|0
 # x half_life 120|600|1800
 python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 \
@@ -421,7 +419,7 @@ python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2
 python -m analysis.sim_table results/m3-explore/wa-fixed-heldout.jsonl --against lru
 ```
 
-`lru_leaf` and `lru_leaf_free` ran the same way in the first batch
+`lru_leaf` ran the same way in the first batch
 (`results/m3-explore/heldout-baselines.jsonl`).
 
 **Reproduction.** With the data, plans and RACE-RP sketch rebuilt on
@@ -436,12 +434,14 @@ Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
 | `wa`, no labels (buckets on, half-life 1,800 s) | 53.18% | 58.14% | 62.55% |
 | RACE-RP | 54.28% | 58.73% | 63.15% |
 | TTDF | 51.65% | 56.75% | 61.98% |
-| LRU, `lru_leaf`, `lru_leaf_free` | 50.74% | 55.79% | 61.13% |
+| LRU, `lru_leaf` | 50.74% | 55.79% | 61.13% |
 
-- **The leaf-only rule changes nothing.** `lru_leaf` and `lru_leaf_free`
-  evict the same blocks as LRU at every capacity (same evictions per
-  workload, same usable reuse), so TTDF's and RACE-RP's gains come from
-  their scores (spec SC-005, in the replay).
+- **The leaf-only rule changes nothing.** `lru_leaf` evicts the same
+  blocks as LRU at every capacity (same evictions per workload, same usable
+  reuse), so TTDF's and RACE-RP's gains come from their scores (spec
+  SC-005, in the replay). A second control, ordered by the scheduler's
+  stamp instead of the access clock, did the same; it was removed as
+  redundant (2026-11-10).
 - **`wa` with oracle labels** is above LRU on every seed at every capacity
   (+3.19, +3.40, +2.38 points) and ties RACE-RP at every capacity (−0.36,
   +0.46, +0.36; the seeds disagree on the sign at 64K and 256K, and at 128K
@@ -476,10 +476,11 @@ Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
   Rescoring the candidates after every end (fix 2) does one scan per
   eviction, of about 33 candidates at 128K; `wa` now costs about as much
   as RACE-RP.
-- **The label probe** (`wa_probe`: survival curves per workload from the
-  seed-1 engine run, horizon chosen on seed 1) is above LRU on every seed
-  with oracle labels (+1.9, +2.1, +1.7 points) and ties it without labels.
-  It helps ShareGPT and CC-Bench at Bailian's expense. `wa` supersedes it.
+- **An exploratory label probe** (survival curves per workload from the
+  seed-1 engine run) was above LRU on every seed with oracle labels (+1.9,
+  +2.1, +1.7 points) and tied it without labels. `wa`'s oracle-against-none
+  comparison measures the same thing, so the probe and its survival-table
+  script were removed (2026-11-10; they are in `090be78d`).
 
 **Review fixes (2026-11-09).** PR #16's review found two faults in the
 first `wa`, both now covered by regression tests that fail on the old code:

@@ -53,7 +53,7 @@
 - [ ] T016 [US4] `lru_leaf` control on `LeafScoreEvictor`, with a test that
   `wa` in `none` mode with refinements off picks the same victims (FR-012;
   `tests/eviction/test_lru_leaf.py`); replay and engine runs at 131,072
-  tokens on seeds 2–4 (SC-005). Done: both controls and their tests, and
+  tokens on seeds 2–4 (SC-005). Done: the control and its tests, and
   the replay (they evict the same blocks as LRU); still to do: the engine
   runs and the `wa` equality test, which waits for T005
 - [ ] T017 [US4] Label-error runs: corrupt oracle labels at the rates of
