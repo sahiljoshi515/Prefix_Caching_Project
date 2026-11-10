@@ -416,8 +416,9 @@ User Story 4, with the report still to write before 2026-11-30.
 
 ## Phase 2 first experiments (2026-11-08, revised 2026-11-09 and 2026-11-10; branch `milestone3-marcus-wa-spec`)
 
-Run before T005's review, to give it evidence: cache replay only (model
-timing), the balanced mix with human pacing, measured over 600–1800 s.
+Run before T005's review, to give it evidence: the cache replay (model
+timing) at three capacities, then engine runs at 131,072 tokens, on the
+balanced mix with human pacing, measured over 600–1800 s.
 Settings were chosen on seed 1 only; seeds 2–4 were run once with the
 chosen settings. The first version of this section reported `wa` from code
 with two scoring faults that PR #16's review found (see **Review fixes**
@@ -529,6 +530,57 @@ Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
   comparison measures the same thing, so the probe and its survival-table
   script were removed (2026-11-10; they are in `090be78d`).
 
+**Engine runs (2026-11-10).** 15 runs at 131,072 tokens on seeds 2–4:
+LRU, RACE-RP, S3-FIFO over the idle leaves and `wa` with oracle labels and
+with none, each on its own `vllm serve` (simulator executor), 6 at a time.
+They ran from clean commits (`4d484319` for the first six, `c32b413e` for
+the rest; `wa`, LRU and RACE-RP are the same code in both).
+
+```bash
+python -m analysis.run_m3_task2 grid --grid wa --out results/m3-task2
+python -m analysis.tables results/m3-task2/balanced-human-s{2,3,4}-*-cap131072
+python -m analysis.sim_table --against lru \
+    --engine results/m3-task2/balanced-human-s{2,3,4}-{lru,race_rp,wa_oracle,wa_none,s3fifo_leaf}-cap131072
+```
+
+| Policy | Usable reuse | Against LRU, per seed | Against RACE-RP | Per eviction |
+|---|---|---|---|---|
+| `wa`, oracle labels | 59.07% | +2.91 +3.45 +3.46, higher | +0.33, tie | 50 µs |
+| RACE-RP | 58.74% | +2.67 +2.47 +3.69, higher | | 60 µs |
+| `wa`, no labels | 58.21% | +2.64 +2.20 +2.40, higher | −0.53, lower | 45 µs |
+| LRU | 55.80% | | | |
+| S3-FIFO over the idle leaves | 54.14% | −3.49 −1.49 +0.02, tie | −4.60, lower | 4.6 µs |
+| *Phase 1 note:* LFU / FIFO / no eviction | 53.94% / 50.29% / 78.06% | | | |
+
+- **The replay's verdicts hold on the engine.** `wa` with oracle labels is
+  above LRU on every seed and ties RACE-RP, oracle labels are above none on
+  every seed (+0.27, +1.25, +1.05; mean +0.86), and S3-FIFO is not above
+  LRU. Each policy is within 0.3 points of its replay mean. The one change:
+  `wa` without labels falls just below RACE-RP (every seed below, mean
+  −0.53) where the replay had a tie.
+- **The gate at 131,072 tokens:** `wa` with oracle labels lowers no
+  workload by more than 2 points; `wa` without labels lowers ShareGPT by
+  4.05, RACE-RP ShareGPT by 2.11, and S3-FIFO six workloads (bailian-coder
+  −7.36 and ShareGPT −7.29 the largest).
+- **Every run is sound.** Each completed all its requests (5,386, 5,403
+  and 5,396 per seed), none had a hit after a miss, so the cache stayed
+  prefix-closed (FR-005), and vLLM's `cached_tokens` equals the usable
+  prefix for every request but one (of 5,403, in an S3-FIFO run). With
+  oracle labels `wa` learned 21 classes (7 workloads × 3 reuse counts), so
+  the labels reach it on the engine; with none, 3.
+- **Reproducible.** This laptop's LRU is within 0.01 points of the Phase 1
+  note's engine runs on every seed, and RACE-RP within 0.15. A first set
+  of the same 12 non-S3-FIFO runs, on the same code through a scratch
+  script, gives the same means within 0.13 points. Run by run, LRU and
+  RACE-RP repeat within 0.15 points but `wa` within 0.6 (seed 3 with
+  oracle labels: 61.36% and 61.93%), so a repeated `wa` run moves by
+  about as much as its margin over RACE-RP.
+- **Discarded runs.** Six runs fell behind while other programs overloaded
+  the laptop (load above 600), and three more spanned an 11-minute sleep,
+  which shifts the wall-clock ages `wa` scores by. All nine were stopped,
+  deleted and run again; the server logs of the 15 kept runs have no gap
+  over 8 s.
+
 **Review fixes (2026-11-09).** PR #16's review found two faults in the
 first `wa`, both now covered by regression tests that fail on the old code:
 
@@ -570,11 +622,11 @@ review asked.
   User Story 3, scenario 6). Either build the head-of-class rule, or change
   the scenario. The bin rule above is part of this choice.
 - **The gate.** Bailian-thinking at 256K with oracle labels, and ShareGPT
-  without labels, need a look before the engine runs.
-- **Not yet run:** engine runs of `wa`, inferred labels, label errors and
-  the chat-heavy and agent-heavy mixes. TTDF and RACE-RP keep their
-  specified settings, while `wa` had 12 settings tried on seed 1 (twice:
-  before and after the fixes) and four bin rules.
+  without labels (128K and 256K, replay and engine), lose more than 2
+  points.
+- **Tuning.** TTDF, RACE-RP and S3-FIFO keep their specified settings,
+  while `wa` had 12 settings tried on seed 1 (twice: before and after the
+  fixes) and four bin rules.
 
 ## Phases
 

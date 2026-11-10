@@ -38,8 +38,8 @@
 - [ ] T007 [US3] `WorkloadAwareEvictor` and registration
   (`vllm/core/eviction_policies.py`, `vllm/core/evictor.py`); a prototype
   with oracle and none modes is in `vllm/core/wa_evictor.py`, with
-  replay results in `plan.md` (2026-11-08, revised 2026-11-09 after PR
-  #16's review), pending T005's review
+  replay and engine results in `plan.md` (2026-11-08, revised after PR
+  #16's review and on 2026-11-10), pending T005's review
 - [ ] T008 [US3] Label hand-off that works with the event log off, oracle
   and none modes (`vllm/core/block/cache_events.py`, `vllm/envs.py`,
   FR-002); engine test: same `cached_tokens` with the log on and off

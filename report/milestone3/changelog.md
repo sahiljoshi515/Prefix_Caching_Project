@@ -78,7 +78,9 @@ on branch `milestone3_task2`; the policy itself is Phase 2.
   −3.9, −2.4); RACE-RP and TTDF fail it at one capacity each. S3-FIFO
   over the idle leaves ties LRU at 64K and 128K and is below it at 256K
   (−3.1): its small queue drops a conversation's blocks before the next
-  turn. Engine runs at 128K: see the next entry once recorded.
+  turn. Engine runs at 128K (seeds 2–4, `grid --grid wa`) agree within
+  0.3 points: `wa` with oracle labels 59.07%, RACE-RP 58.74%, `wa`
+  without labels 58.21%, LRU 55.80%, S3-FIFO 54.14%.
 - **Fixed (review):** `wa`'s density no longer counts ends younger than
   the block in its own age bin, which gave blocks just past their class's
   reuse time the highest score; its candidates are scored again after
