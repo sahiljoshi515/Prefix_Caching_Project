@@ -1,4 +1,4 @@
-"""Conversations whose first turns are history only (re-run branches)."""
+"""Conversations whose first turns are history only (branches)."""
 import io
 import json
 

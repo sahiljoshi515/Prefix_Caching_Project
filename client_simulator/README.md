@@ -17,7 +17,7 @@ from raw fragments. It outputs:
   with `conversation_id` and a `messages` list. Each message is stored once.
   An optional `first_turn` (default 0) marks the turns before it as history
   only: they are not replayed, because another conversation already
-  replayed them (CC-Bench's re-run branches).
+  replayed them (a branch of a CC-Bench log; none in the current data).
 - **Server responses:** one JSON object per turn, containing only `request_id`
   and `response`. This is the file the server loads:
 
@@ -98,8 +98,8 @@ before it. Reading them needs `pyarrow` (`make setup` installs it).
 | Source | [Solaris99/AgentBank](https://huggingface.co/datasets/Solaris99/AgentBank), revision `6d718ff7` | [zai-org/CC-Bench-trajectories](https://huggingface.co/datasets/zai-org/CC-Bench-trajectories), revision `792c6d32` |
 | Licence | Apache-2.0 | MIT |
 | Raw format | 19 subsets (ALFWorld, WebShop, Mind2Web, InterCode, GSM8K, ...), one parquet file each; rows `id`, `conversations` (`from`: `human`/`gpt`, `value`) | One parquet file; each row's `trajectory` is a Claude Code session log (JSON events linked by `uuid`/`parentUuid`) |
-| Size | 53,205 trajectories, 243,598 requests | 370 sessions (74 coding tasks × 5 models), 511 conversations (495 threads and 16 re-run branches), 18,124 requests |
-| Conversation id | `agentbank:<subset>:<id>` (ids repeat across subsets) | `ccbench:<row id>:<thread>`, and `ccbench:<row id>:<thread>b<k>` for a re-run branch |
+| Size | 53,205 trajectories, 243,598 requests | 370 sessions (74 coding tasks × 5 models), 495 conversations, 17,721 requests |
+| Conversation id | `agentbank:<subset>:<id>` (ids repeat across subsets) | `ccbench:<row id>:<thread>`, and `ccbench:<row id>:<thread>b<k>` for a branch |
 
 Role mapping (spec 006): the task and environment observations (AgentBank
 `human`) and the developer's prompts and tool results (CC-Bench) become
@@ -115,16 +115,18 @@ CC-Bench logs need more rules:
   parent starts a thread. Roots are session starts, sub-agent (sidechain)
   starts, `/compact` boundaries and older "This session is being
   continued..." summaries without a boundary event, which replace the
-  history with a summary, and a `/clear` restart. An event whose uuid was already seen is skipped: a
-  resumed session copies its earlier history into the log (rows 161 and
-  173).
-- **Re-run branches.** Parallel tool calls are chained one after another,
-  so every fork that yields a new turn is a re-run: a request sent again after a
-  rewind or retry, with the abandoned branch still in the log (16 forks in
-  13 threads). Each request's history is the path from its root down to
-  it. The first root-to-leaf path is the thread's conversation; each later
-  path is a conversation whose turns shared with an earlier path are
-  history only (`first_turn`), so no request is replayed twice.
+  history with a summary, and a `/clear` restart. An event whose uuid was
+  already seen is skipped: some resumed sessions copy their history with
+  the same uuids (rows 161 and 173).
+- **Resumed sessions.** Parallel tool calls are chained one after another,
+  so a fork in a thread comes from a resumed session that logged its
+  earlier history again under new uuids and continued (14 forks, for
+  example rows 48 and 95). Each request's history is the path from its
+  root down to it, and paths are compared by their text: a path that
+  repeats an earlier conversation word for word and goes on extends that
+  conversation, so no request is replayed twice. A path that left an
+  earlier one part way would be a branch, `<thread>b<k>`, whose shared
+  turns are history only (`first_turn`); the current data has none.
 - **Rendering.** A tool call is `<tool_use name="NAME">INPUT_JSON</tool_use>`,
   a result `<tool_result>TEXT</tool_result>` (an image `[image]`). Thinking
   blocks are dropped.
@@ -154,11 +156,11 @@ python -m client_simulator.process_raw_traces --dataset ccbench \
 
 Context: with Qwen's tokenizer, AgentBank's first 1,000 conversations
 (4,992 requests) all fit in 32,768 tokens (median prompt 460 tokens).
-CC-Bench prompts are long (median 12,599 tokens among those that fit).
+CC-Bench prompts are long (median 12,619 tokens among those that fit).
 The client skips a turn over 32,768 tokens and the rest of its
 conversation, so CC-Bench replays each thread until its history passes
 32K, and the run reports the skipped share: in the full run, 178 turns
-were too long and 6,262 later turns were not sent, 35.5% of 18,124.
+were too long and 6,066 later turns were not sent, 35.2% of 17,721.
 
 ## Bailian token traces and shared experiments
 

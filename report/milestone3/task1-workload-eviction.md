@@ -148,19 +148,19 @@ LRU, which only ever evicted blocks of finished conversations.
 These conclusions hold at this load: a 65,536-token cache, 1 conversation/s
 and a 5 s think time, about 4,000 prompt tokens/s. In the
 [Milestone 3 Task 2](https://github.com/sahiljoshi515/Prefix_Caching_Project/pull/16)
-runs (`report/milestone3/task2-mixed-workload-policy.md`: a 131,072-token
-cache, recorded pauses, seeds 2–4), AgentBank alone never evicts, so LRU,
+runs (numbers from PR #16's `task2-mixed-workload-policy.md`: a
+131,072-token cache, recorded pauses, seeds 2–4), AgentBank alone never evicts, so LRU,
 LFU and FIFO all reach 87.3%; in the mix with the other workloads LRU
 (76.2%) and LFU (77.6%) tie and FIFO trails (72.1%).
 
 ## CC-Bench
 
-All 370 Claude Code sessions (74 tasks, 5 models each), split into 511
+All 370 Claude Code sessions (74 tasks, 5 models each), split into 495
 conversations: each main thread, sub-agent and post-`/compact` context is
-its own conversation (495 threads), and a request that was re-run from an
-earlier point starts a branch that sends only its new turns (16 branches).
-Tool calls and results are text in the history. Pacing and settings are
-the same as AgentBank's.
+its own conversation. A resumed session logs its earlier history again and
+continues; the copies are not replayed, and the new turns extend the
+conversation they continue. Tool calls and results are text in the
+history. Pacing and settings are the same as AgentBank's.
 
 ```bash
 python -m client_simulator.process_raw_traces --dataset ccbench \
@@ -173,56 +173,57 @@ python -m analysis.plot_experiment --out results/ccbench-full-cap65536 \
   --figures report/milestone3/figures/task1/ccbench-full
 ```
 
-The CC-Bench data and runs use the adapter as committed in `cbd9a3ba`;
-the runs and figures record `c678790d` with uncommitted changes, because
-they started before that commit.
-
 ### Results
 
 | Policy | Block hit rate | Overall usable token reuse | Mean request usable fraction | Evictions | Evictions / 1,000 lookups |
 | ------ | -------------: | -------------------------: | ---------------------------: | --------: | ------------------------: |
-| LRU    |          2.05% |                      1.96% |                        2.94% | 9,796,472 |                    996.68 |
-| LFU    |      **2.21%** |                  **2.16%** |                    **3.51%** | **9,777,194** |              **995.02** |
-| FIFO   |          1.68% |                      1.57% |                        2.51% | 9,830,408 |                  1,000.46 |
+| LRU    |          1.57% |                      1.48% |                        2.34% | 9,675,479 |                  1,001.37 |
+| LFU    |      **2.16%** |                  **2.06%** |                    **3.08%** | **9,619,223** |              **995.47** |
+| FIFO   |          1.60% |                      1.46% |                        2.34% | 9,671,589 |                  1,001.09 |
 
 ![Policy comparison](figures/task1/ccbench-full/fig1_policy_comparison.png)
 
-**Figure 5.** Every policy reuses about 2% of input tokens. LFU and LRU
-are within 0.2 percentage points; we treat this as a tie, not a win for
-LFU.
+**Figure 5.** Every policy reuses about 2% of input tokens or less. LFU
+is ahead by 0.6 percentage points. In every CC-Bench run so far (ours and
+the reviewer's, before and after the adapter fixes) LFU was ahead by 0.2
+to 0.6 points and LRU's result moved by up to 0.3 points between runs, so
+LFU's lead is consistent but small, and no policy recovers useful
+reuse.
 
-11,684 requests completed under every policy. 178 turns did not fit in the
+11,484 requests completed under every policy. 171 turns did not fit in the
 32,768-token context, and since a skipped turn ends its conversation,
-6,262 later turns were not sent: 35.5% of CC-Bench's 18,124 turns are not
-replayed. There were no failures, and 10 (LRU), 6 (LFU) and 7 (FIFO)
+6,066 later turns were not sent: 35.2% of CC-Bench's 17,721 turns are not
+replayed. There were no failures, and 9 (LRU), 12 (LFU) and 8 (FIFO)
 preemptions, since one long request takes up to half the cache. LFU makes
-3,387,920 of 157,208,471 input tokens reusable, versus 3,088,096 for LRU
-and 2,468,288 for FIFO.
+3,176,000 of 154,524,769 input tokens reusable, versus 2,280,656 for LRU
+and 2,261,280 for FIFO.
 
 ### Reuse profile
 
 ![Reuse distributions](figures/task1/ccbench-full/fig2_reuse_profiles.png)
 
-**Figure 6.** CDFs of per-request usable fraction (11,684 completed
+**Figure 6.** CDFs of per-request usable fraction (11,484 completed
 requests), hits per distinct block (615,602 blocks), and reuse intervals
-(about 9.4 million observations) for each policy.
+(about 9.2 million observations) for each policy.
 
 At this pacing CC-Bench thrashes the cache under every policy: there is
 about one eviction per lookup. Sessions are long (median 18 replayed
-turns, 135 s; p90 390 s) and prompts are large (median 12,599 tokens, p90
-27,485), so in the LRU run about 66 sessions are active at once (at most
-186), with a median of 645,965 tokens of history (at most 2,307,333), 9.9
-times the cache. Between two uses of a block (median 5.2 to 7.6 s) come
-109 to 120 other requests, so a history is evicted before its next turn
-whatever the policy.
+turns, 91 s; p90 254 s) and prompts are large (median 12,619 tokens, p90
+27,422), so in the LRU run about 50 sessions are active at once (at most
+123), with a median of 463,116 tokens of history (at most 1,709,859), 7.1
+times the cache. Between two uses of a block (median 5.2 s under LRU and
+FIFO, 8.0 s under LFU) come 111 to 122 other requests, so a history is
+evicted before its next turn whatever the policy.
 
-The reuse that remains is mostly blocks that many requests share, such as
-the chat template's system prompt: 96.4% to 97.2% of distinct blocks are
-never hit, and the most-hit block is hit by every request. The 0.2-point
-difference between LFU and LRU comes from these blocks: 37.3% of its hits come from another
-conversation, against 23.8% for LRU and 24.0% for FIFO, though it reuses
-fewer distinct blocks (17,414 against LRU's 22,155). FIFO has 4,754 hits
-after a miss in 48 requests (0.41%), 76,064 tokens that are not usable.
+Little reuse remains: 97.3% to 97.6% of distinct blocks are never hit,
+and the most-hit block, the start of the chat template's system prompt,
+is hit by every request. 15.5% to 16.0% of hits come from another
+conversation under every policy, so LFU's lead is not shared blocks. It
+reuses more of each session's own history: 208,720 hits against 151,731
+for LRU, with a longer median reuse interval (8.0 s against 5.2 s), so it
+keeps some blocks past the point where LRU has evicted them. FIFO has
+4,636 hits after a miss in 71 requests (0.62%), 74,176 tokens that are
+not usable.
 
 This ranking holds only at this load. In the
 [Milestone 3 Task 2](https://github.com/sahiljoshi515/Prefix_Caching_Project/pull/16)
@@ -234,18 +235,21 @@ runs (a 131,072-token cache, recorded pauses, seeds 2–4), CC-Bench reaches
 
 - The rate is our choice. Neither agent dataset records session start
   times, so the 1 conversation/s pacing is shared with ShareGPT for
-  comparison, not measured. CC-Bench's result describes about 66
+  comparison, not measured. CC-Bench's result describes about 50
   concurrent coding sessions on one 65,536-token cache; with fewer
   concurrent sessions the policies would likely differ more.
 - Claude Code's system prompt and tool definitions (about 12,000 tokens per
   session) are not in the logs, so they are not replayed. They would be
   shared by every session and add cross-conversation reuse.
-- 35.5% of CC-Bench's turns, the later turns of the longest sessions, are
+- 35.2% of CC-Bench's turns, the later turns of the longest sessions, are
   not replayed, so its real working set is larger than measured.
-- Sub-agents and re-run branches start as independent conversations on the
-  Poisson schedule, not at their time inside the parent session. A branch
-  sends its shared turns as history, so its first request can reuse the
-  parent's blocks only if they are still cached.
+- Sub-agents start as independent conversations on the Poisson schedule,
+  not at their time inside the parent session. A resumed session's new
+  turns follow its earlier ones after the usual think time, not after the
+  recorded pause.
+- AgentBank's source has a few identical trajectories under different ids
+  (13 of the 4,992 replayed requests, 0.3%); they are replayed as the
+  dataset has them.
 - Responses are replayed from the recordings; AgentBank's agent outputs and
   CC-Bench's model outputs are not generated by Qwen.
 
@@ -255,7 +259,7 @@ runs (a 131,072-token cache, recorded pauses, seeds 2–4), CC-Bench reaches
 | -------- | ----------- | ---------------------------------------------------- | --- |
 | Qwen Bailian | LFU | 14.99% / 13.27% / 14.99% / 11.68% | Recorded traffic shares prefixes across conversations, and LFU keeps the most-shared blocks |
 | AgentBank | LRU | 89.47% / 89.47% / 18.49% / 55.12% | Short sessions fit in the cache; LRU keeps each history until its next step |
-| CC-Bench | None at this load (LRU and LFU tie) | 2.16% / 1.96% / 2.16% / 1.57% | The working set is about 10 times the cache, so no policy keeps histories; the 0.2-point gap is shared blocks, not a policy win |
+| CC-Bench | None at this load (LFU slightly ahead) | 2.06% / 1.48% / 2.06% / 1.46% | The working set is about 7 times the cache, so no policy keeps histories; LFU's 0.2–0.6-point lead across runs is too small to matter |
 
 The policy that wins depends on where reuse comes from. When it is a
 conversation's own next turn and the active histories fit (AgentBank),

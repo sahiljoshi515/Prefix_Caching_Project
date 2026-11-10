@@ -61,10 +61,15 @@ Entry format:
   retry fix and the CC-Bench rerun).
 - **Review fix:** Claude Code checked the reviewer's points against the
   CC-Bench logs and the event logs, fixed the adapter (session trees,
-  re-run branches, dropped events) with tests, reran CC-Bench, and rewrote
-  the CC-Bench conclusion and the LFU explanation for AgentBank. Prompts:
-  "got some feedback on the PR, is this related to CC-bench crashing bc
-  arrive rate?"; "sounds good, go with the plan".
+  resumed sessions, dropped events) with tests, reran CC-Bench, and
+  rewrote the CC-Bench conclusion and the LFU explanation for AgentBank.
+  It also ran a simulated review of the PR before the second review. The
+  first fix treated resumed sessions' copies as re-runs and replayed them;
+  the second review caught it. Prompts: "got some feedback on the PR, is
+  this related to CC-bench crashing bc arrive rate?"; "sounds good, go with
+  the plan"; "could you simulate my teammate reviewing my code changes in
+  the PR"; "yea do fix it, and check for other bugs. how did this one get
+  past last time?"
 
 ### PR #7: Add contributing guide, spec-kit specs and project CI
 

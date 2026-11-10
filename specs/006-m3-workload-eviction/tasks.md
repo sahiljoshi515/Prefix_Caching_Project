@@ -55,9 +55,10 @@ checks remain open.
 AgentBank and CC-Bench complete (2026-11-08): AgentBank's first 1,000
 seeded trajectories and all of CC-Bench, at capacity 65,536/block size 16,
 1 conversation/s and 5 s think time, under LRU/FIFO/LFU. All six runs
-passed the runner's checks with no failures; CC-Bench skips 35.5% of its
-turns (too long for 32,768 tokens) and has 6-10 preemptions per run. The
+passed the runner's checks with no failures; CC-Bench skips 35.2% of its
+turns (too long for 32,768 tokens) and has 8-12 preemptions per run. The
 Task 1 note now has all three workloads and the best policy per workload,
 which closes T010-T012. Repeat/segment stability checks were not run.
-After PR #17's review (2026-11-09), CC-Bench re-run branches send only
-their new turns and CC-Bench was rerun; LRU and LFU now tie on it.
+After PR #17's reviews (2026-11-09 and 2026-11-10), CC-Bench follows
+each session's event tree and a resumed session's copied history is not
+replayed; CC-Bench was rerun and no policy helps it at this load.
