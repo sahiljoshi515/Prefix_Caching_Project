@@ -54,7 +54,12 @@ on branch `milestone3_task2`; the policy itself is Phase 2.
 - **Added:** the `lru_leaf` and `lru_leaf_free` controls, an exploratory
   label probe (`wa_probe`, with `analysis/hazard_table.py`) and a first
   `wa` evictor with oracle and none modes, learned online (marcus,
-  `090be78d`); `analysis/sim_table.py` for the replay tables.
+  `090be78d`); `analysis/sim_table.py` for the replay tables. The
+  runner's `wa` grid: 12 engine runs at 128K on seeds 2–4, LRU, RACE-RP
+  and `wa` with oracle labels and with none, whose run.json names the
+  grid policy (`run_policy`) so a later grid finds them; `replay
+  --params` for one run's policy settings; `sim_table --engine` for
+  engine runs, with the study's usable reuse.
 - **Ran:** cache replay of the balanced mix, settings on seed 1, seeds 2–4
   at 64K, 128K and 256K, recorded in `plan.md`. The leaf-only rule evicts
   the same blocks as LRU. After the review fixes, `wa` with oracle labels

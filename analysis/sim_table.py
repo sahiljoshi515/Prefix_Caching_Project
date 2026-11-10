@@ -1,6 +1,9 @@
-"""Tables of cache-replay results by policy and capacity (spec 007).
+"""Tables of cache-replay and engine results by policy and capacity
+(spec 007).
 
-Reads the JSONL rows of ``python -m analysis.run_m3_task2 sim`` and prints,
+Reads the JSONL rows of ``python -m analysis.run_m3_task2 sim``, or, with
+``--engine``, finished engine runs (a grid's run folders, after
+``python -m analysis.tables`` has built their tables), and prints,
 for each capacity, every policy's usable reused fraction in the measured
 window (mean over the plans' seeds, with its minimum and maximum) and each
 workload's mean. With ``--against POLICY`` it adds, for every other policy,
@@ -12,6 +15,11 @@ workloads whose mean is more than 2 points below that policy's
 
     python -m analysis.sim_table results/m3-explore/wa-heldout.jsonl \\
         results/m3-explore/heldout-baselines.jsonl --against lru
+    python -m analysis.sim_table --against lru \\
+        --engine results/m3-task2/balanced-human-s{2,3,4}-*-cap131072
+
+An engine run's usable reuse is the study's (``analysis.m3t2_study``,
+window and workloads from ``analysis/m3t2_config.json``).
 
 Seed 1 tunes the settings, so it is left out unless ``--seeds`` names it.
 Rows of different mixes, timings, windows or block sizes are refused: their
@@ -40,6 +48,49 @@ def load_rows(paths: Iterable[Path]) -> List[Dict[str, Any]]:
                 row = json.loads(line)
                 if "error" not in row and "summary" in row:
                     rows.append(row)
+    return rows
+
+
+def engine_rows(run_dirs: Iterable[Path]) -> List[Dict[str, Any]]:
+    """Rows like the replay's for finished engine runs: usable reuse in
+    the study's window, overall and per workload, from each run's
+    ``tables/requests.parquet``. A ceiling run's capacity is
+    ``"ceiling"``, as in the replay."""
+    from analysis import m3t2_study as study
+    from analysis.run_m3_task2 import run_config
+    cfg = study.load_config()
+    rows = []
+    for run_dir in map(Path, run_dirs):
+        run = json.loads((run_dir / "run.json").read_text())
+        if "finished_at_utc" not in run:
+            raise ValueError(f"{run_dir} has not finished")
+        if not (run_dir / "tables" / "requests.parquet").exists():
+            raise ValueError(f"{run_dir} has no tables; run python -m "
+                             "analysis.tables on it first")
+        config = run_config(run_dir)
+        usable = study.usable_by_workload(study.load_requests(run_dir),
+                                          cfg["workloads"], cfg["w0_s"],
+                                          cfg["stop_s"], config.block_size)
+        rows.append({
+            "plan": run["plan_dir"],
+            "policy": config.policy,
+            "capacity":
+            "ceiling" if config.ceiling else config.capacity_tokens,
+            "block_size": config.block_size,
+            "timing": "engine",
+            "window": [cfg["w0_s"], cfg["stop_s"]],
+            "summary": {
+                "window": {
+                    "usable_reused_fraction": usable["all"]["fraction"],
+                    "workloads": {
+                        w: {
+                            "usable_reused_fraction": usable[w]["fraction"]
+                        }
+                        for w in cfg["workloads"]
+                    },
+                }
+            },
+        })
     return rows
 
 
@@ -196,7 +247,16 @@ def main(argv=None) -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("rows", type=Path, nargs="+")
+    parser.add_argument("rows",
+                        type=Path,
+                        nargs="*",
+                        help="JSONL rows of run_m3_task2 sim")
+    parser.add_argument("--engine",
+                        type=Path,
+                        nargs="+",
+                        default=[],
+                        metavar="RUN_DIR",
+                        help="Finished engine runs, with their tables")
     parser.add_argument("--against",
                         help="Compare every policy with this one, per seed")
     parser.add_argument("--seeds",
@@ -204,7 +264,10 @@ def main(argv=None) -> None:
                         help="Only these seeds (default: all but seed "
                         f"{TUNING_SEED}, the tuning seed)")
     args = parser.parse_args(argv)
-    print(render(load_rows(args.rows), args.against, args.seeds))
+    if not args.rows and not args.engine:
+        parser.error("give JSONL rows, --engine run folders, or both")
+    rows = load_rows(args.rows) + engine_rows(args.engine)
+    print(render(rows, args.against, args.seeds))
 
 
 if __name__ == "__main__":

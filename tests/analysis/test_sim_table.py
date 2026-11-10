@@ -1,10 +1,13 @@
 """The cache-replay result table of spec 007 (``analysis/sim_table.py``)."""
 import json
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
-from analysis.sim_table import (collect, gate_failures, load_rows, render,
-                                select, verdict)
+from analysis.m3t2_study import load_config
+from analysis.sim_table import (collect, engine_rows, gate_failures, load_rows,
+                                render, select, verdict)
 
 pytestmark = pytest.mark.m3
 
@@ -135,3 +138,90 @@ def test_every_workload_below_the_gate_is_listed():
                   against="lru")
     assert "-- workloads more than 2 points below lru (mean)" in text
     assert "wa | a -2.25" in text
+
+
+# --- Engine runs -------------------------------------------------------------
+
+WORKLOADS = load_config()["workloads"]
+
+
+def engine_run(root, policy, seed, tenths, ceiling=False, finished=True):
+    """A finished grid run folder with the request table the study reads:
+    one request per workload in the window, 160 prompt tokens (10 blocks of
+    16), the first `tenths` blocks usable."""
+    run_dir = root / f"balanced-human-s{seed}-{policy}{'-ceiling' * ceiling}"
+    (run_dir / "tables").mkdir(parents=True)
+    n = len(WORKLOADS)
+    pq.write_table(
+        pa.table({
+            "req": [f"{w}:x:0" for w in WORKLOADS],
+            "workload": WORKLOADS,
+            "session": [f"{w}:x" for w in WORKLOADS],
+            "turn": [0] * n,
+            "planned_s": [700.0] * n,
+            "status": ["completed"] * n,
+            "prompt_tokens": [160] * n,
+            "prompt_blocks": [10] * n,
+            "hits": [tenths] * n,
+            "usable_hits": [tenths] * n,
+            "hits_after_miss": [0] * n,
+            "cached_tokens": [16 * tenths] * n,
+            "preempted": [False] * n,
+        }), run_dir / "tables" / "requests.parquet")
+    run = {
+        "plan_dir": f"data/processed/m3/balanced-human-s{seed}",
+        "eviction_policy": "wa" if policy.startswith("wa_") else policy,
+        "capacity_tokens": 131072,
+        "block_size": 16,
+        "mix": "balanced",
+        "pacing": "human",
+        "seed": seed,
+        "replicate": 0,
+        "ceiling": ceiling,
+    }
+    if policy.startswith("wa_"):
+        run["run_policy"] = policy
+    if finished:
+        run["finished_at_utc"] = "2026-11-10T00:00:00+00:00"
+    (run_dir / "run.json").write_text(json.dumps(run))
+    return run_dir
+
+
+def test_engine_runs_give_rows_like_the_replays(tmp_path):
+    runs = [
+        engine_run(tmp_path, "lru", 2, 3),
+        engine_run(tmp_path, "wa_oracle", 2, 5),
+        engine_run(tmp_path, "lru", 3, 4),
+        engine_run(tmp_path, "wa_oracle", 3, 6),
+    ]
+    rows = engine_rows(runs)
+    assert [r["policy"] for r in rows] == ["lru", "wa_oracle"] * 2
+    assert {(r["timing"], tuple(r["window"]), r["capacity"])
+            for r in rows} == {("engine", (600.0, 1800.0), 131072)}
+    window = rows[0]["summary"]["window"]
+    assert window["usable_reused_fraction"] == pytest.approx(0.3)
+    assert window["workloads"]["sharegpt"]["usable_reused_fraction"] == (
+        pytest.approx(0.3))
+    text = render(rows, against="lru")
+    assert "wa_oracle | +20.00 +20.00 | mean +20.00 | higher" in text
+    assert "wa_oracle | none" in text  # no workload below the gate
+
+
+def test_a_ceiling_run_is_its_own_capacity(tmp_path):
+    row, = engine_rows([engine_run(tmp_path, "lru", 2, 9, ceiling=True)])
+    assert (row["policy"], row["capacity"]) == ("lru", "ceiling")
+
+
+def test_engine_and_replay_rows_are_not_mixed(tmp_path):
+    rows = engine_rows([engine_run(tmp_path, "lru", 2, 3)])
+    with pytest.raises(ValueError, match="different setups"):
+        render(rows + [row("wa", 2, 0.5)])
+
+
+def test_an_engine_run_needs_its_tables_and_to_have_finished(tmp_path):
+    run_dir = engine_run(tmp_path, "lru", 2, 3)
+    (run_dir / "tables" / "requests.parquet").unlink()
+    with pytest.raises(ValueError, match="analysis.tables"):
+        engine_rows([run_dir])
+    with pytest.raises(ValueError, match="has not finished"):
+        engine_rows([engine_run(tmp_path, "wa_none", 2, 3, finished=False)])
