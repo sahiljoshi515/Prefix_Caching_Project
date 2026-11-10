@@ -207,7 +207,11 @@ family-offset LRU, with key `last access + Δ_c` and `Δ_c = p_c × W_c`
 (FR-006). The design goes to engine runs only if, on seeds 2 to 4 of at
 least two mixes at the FR-007 capacity, it beats LRU by more than the seed
 spread without lowering any workload by more than 2 points. Otherwise the
-alternative is tried, and a negative result is reported (SC-003).
+alternative is tried, and a negative result is reported (SC-003). With the
+scope of 2026-11-10 (one mix, below) the gate applies to the balanced mix:
+in the replay at 131,072 tokens `wa` with oracle labels is above LRU on
+every seed and lowers no workload by more than 2 points, so it went to
+the engine.
 
 ### Refinements for review (2026-11-07, spec revision for Phase 2)
 
@@ -384,6 +388,31 @@ block id. Choices the code makes:
   and k = 4. Seed-1 tuning: H ∈ {64, 512, 4096, 32768, 262144, 2097152},
   k ∈ {4, 16, 64}, chosen as for TTDF and RACE-RP. The `policies` grid adds
   its five engine runs (15 in all).
+
+## Scope (2026-11-10)
+
+Marcus chose to finish the basic study rather than the full grid of
+User Story 4, with the report still to write before 2026-11-30.
+
+- **Kept:** the balanced mix, seeds 2–4. Engine runs at 131,072 tokens of
+  LRU, RACE-RP, S3-FIFO over the idle leaves and `wa` with oracle labels
+  and with none (`grid --grid wa`), beside Phase 1's LFU and FIFO;
+  replays at 64K, 128K and 256K, with `lru_leaf` as the control.
+  Per-workload results, the gate and the overhead.
+- **Dropped:**
+  - the inferred label mode and the label-error runs: oracle and none
+    bracket any classifier's labels, and Phase 1 reports the classifier's
+    accuracy (89.7%) and confusion matrix;
+  - the chat-heavy and agent-heavy mixes and the single-workload runs:
+    the balanced mix already mixes seven workloads, and the per-workload
+    results show which gain and which pay;
+  - `wa`'s pacing-sensitivity run, and the cache-share-over-time figure;
+  - PrefixSim: S3-FIFO, the policy of its set closest to `wa`'s hit
+    buckets, runs in vLLM instead (`s3fifo_leaf`);
+  - the exploratory probe and the second leaf-LRU control (removed;
+    their code is in `090be78d`).
+
+`spec.md` and `tasks.md` mark each dropped requirement and task.
 
 ## Phase 2 first experiments (2026-11-08, revised 2026-11-09; branch `milestone3-marcus-wa-spec`)
 
