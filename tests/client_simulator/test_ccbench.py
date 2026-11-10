@@ -3,8 +3,9 @@
 Row 2 of the fixture has a session with a tool call, meta and slash-command
 messages, an API error and a final unanswered prompt; a /compact boundary
 that starts a new context; a sub-agent sidechain; and an orphan answer.
-Row 4 has a re-run branch, a resumed session's copied events, a /exit
-stored as a list of blocks and a synthetic API error.
+Row 4 has a branch, a resumed session's copied events (some with the same
+uuids, some with new ones), a /exit stored as a list of blocks and a
+synthetic API error.
 """
 import json
 from collections import Counter
@@ -70,25 +71,33 @@ def test_sidechain_is_its_own_conversation():
     ]
 
 
-def test_a_rerun_branch_replays_only_its_new_turns():
-    conversations = by_id()
-    main, rerun = conversations["ccbench:4:0"], conversations["ccbench:4:0b1"]
-    # The resumed session's copied events are skipped, and its new events
-    # continue the original path.
+def test_a_resumed_session_continues_its_conversation():
+    main = by_id()["ccbench:4:0"]
+    # Copies with the same uuids are skipped; copies with new uuids repeat
+    # the conversation word for word, so their new turns extend it instead
+    # of replaying it.
     assert [m.content for m in main.messages] == [
         "Fix the bug.", "Reading the code.", "Run the tests.", "Tests fail.",
-        "Try again.", "Tests pass.", "Commit it.", "Committed."
+        "Try again.", "Tests pass.", "Commit it.", "Committed.", "Deploy it.",
+        "Deployed."
     ]
-    # The re-run's history is its own path: no event of the abandoned
-    # branch, and the first turn, already replayed, is history only.
-    assert rerun.first_turn == 1
-    assert [m.content for m in rerun.messages] == [
+    assert main.first_turn == 0
+    assert [r.request_id for r in client.iter_requests(main)
+            ] == [f"ccbench:4:0:{turn}" for turn in range(5)]
+
+
+def test_a_branch_replays_only_its_new_turns():
+    branch = by_id()["ccbench:4:0b1"]
+    # The branch's history is its own path: no event of the other branch,
+    # and the first turn, already replayed, is history only.
+    assert branch.first_turn == 1
+    assert [m.content for m in branch.messages] == [
         "Fix the bug.", "Reading the code.", "Run the tests.",
         "Running them now.", "Good.", "All green."
     ]
-    assert [r.request_id for r in client.iter_requests(rerun)
+    assert [r.request_id for r in client.iter_requests(branch)
             ] == ["ccbench:4:0b1:1", "ccbench:4:0b1:2"]
-    assert [m.content for m in next(client.iter_requests(rerun)).messages
+    assert [m.content for m in next(client.iter_requests(branch)).messages
             ] == ["Fix the bug.", "Reading the code.", "Run the tests."]
 
 
@@ -102,11 +111,12 @@ def test_counts_of_dropped_parts(capsys):
     # Row 2's /model, and row 4's list-form /exit and its output.
     assert counts["dropped_local_commands"] == 3
     assert counts["duplicate_events_skipped"] == 2
-    assert counts["rerun_branches"] == 1
+    assert counts["continued_paths"] == 1
+    assert counts["forked_branches"] == 1
     assert counts["unanswered_final_users_removed"] == 1
     assert counts["leading_assistant_messages_removed"] == 1
     assert counts["paths_without_new_turns"] == 1
-    assert counts["replay_requests"] == 12
+    assert counts["replay_requests"] == 13
 
 
 def test_the_order_is_seeded_and_keeps_a_rows_threads_together():
@@ -133,7 +143,7 @@ def test_reads_the_parquet_file_and_writes_replay_traces(tmp_path):
     client_path, server = tmp_path / "c.jsonl", tmp_path / "s.jsonl"
     write_traces(adapter.load_conversations(raw), client_path, server)
     answers = [json.loads(line) for line in server.read_text().splitlines()]
-    assert len(answers) == 12
+    assert len(answers) == 13
     assert {
         "request_id": "ccbench:2:2:0",
         "response": "It is 15x15."

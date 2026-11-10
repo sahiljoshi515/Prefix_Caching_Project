@@ -13,15 +13,17 @@ Rules, applied per row:
   "This session is being continued..." summaries, which replace the history
   with a summary, and ``/clear`` restarts. Each root's tree is one thread,
   ``ccbench:<row id>:<thread index>``. An event whose uuid was already seen
-  is skipped: a resumed session copies the earlier history into the log.
-- **Branches.** Parallel tool calls and their results are chained one after
-  another, so a fork in the tree is a re-run: the same request was sent
-  again (after a rewind or retry) and the log keeps the abandoned branch.
-  Each request's history is the path from its root down to it. The first
-  root-to-leaf path is the thread's conversation; each later path is a
-  conversation ``<thread id>b<k>`` whose turns shared with an earlier path
-  (the same events) are history only (``first_turn``), so no request is
-  replayed twice.
+  is skipped: some resumed sessions copy their history with the same
+  uuids.
+- **Resumed sessions and branches.** Parallel tool calls and their
+  results are chained one after another. A resumed session logs its
+  earlier history again, as copies with new uuids, and continues from
+  there, so the copies fork the tree. Each request's history is the path
+  from its root down to it. Paths are compared by their text: a path that
+  repeats an earlier conversation and goes on extends that conversation.
+  A path that leaves an earlier one part way is a branch
+  ``<thread id>b<k>``; its turns shared with the earlier one are history
+  only (``first_turn``). Either way no request is replayed twice.
 - **Roles** (spec 006, plan "Role mapping for agent trajectories"): the
   human's prompts and tool results become ``user``; the model's text and
   tool calls become ``assistant``. A tool call is written as
@@ -164,14 +166,10 @@ def message(event: Event, counts: Counter) -> Optional[Message]:
     return Message(role=kind, content=text)
 
 
-Turn = Tuple[Tuple[str, ...], Tuple[str, ...]]
-
-
 def path_messages(path: List[Event], rendered: Dict[str, Optional[Message]],
-                  counts: Counter) -> Tuple[List[Message], List[Turn]]:
-    """A path's messages and, for each turn, the uuids of its events."""
+                  counts: Counter) -> List[Message]:
+    """A path's messages, as complete user/assistant turns."""
     messages: List[Message] = []
-    sources: List[List[str]] = []
     for event in path:
         if event["uuid"] not in rendered:  # each event is counted once
             rendered[event["uuid"]] = message(event, counts)
@@ -181,33 +179,31 @@ def path_messages(path: List[Event], rendered: Dict[str, Optional[Message]],
         if messages and messages[-1].role == current.role:
             messages[-1] = Message(
                 current.role, messages[-1].content + "\n\n" + current.content)
-            sources[-1].append(event["uuid"])
         else:
             messages.append(current)
-            sources.append([event["uuid"]])
     while messages and messages[0].role != "user":
         messages.pop(0)
-        sources.pop(0)
         counts["leading_assistant_messages_removed"] += 1
     if messages and messages[-1].role == "user":
         messages.pop()
-        sources.pop()
         counts["unanswered_final_users_removed"] += 1
-    turns = [(tuple(sources[i]), tuple(sources[i + 1]))
-             for i in range(0, len(sources), 2)]
-    return messages, turns
+    return messages
 
 
-def shared_turns(turns: List[Turn], earlier: List[List[Turn]]) -> int:
-    """How many leading turns an earlier path already replayed."""
-    best = 0
-    for other in earlier:
+def shared_turns(messages: List[Message],
+                 earlier: List[Conversation]) -> Tuple[int, Optional[int]]:
+    """How many leading turns an earlier conversation has word for word, and
+    which conversation (by text: a resumed session's copies have new
+    uuids)."""
+    best, match = 0, None
+    for index, other in enumerate(earlier):
         same = 0
-        while (same < min(len(turns), len(other))
-               and turns[same] == other[same]):
+        limit = min(len(messages), len(other.messages))
+        while same < limit and messages[same] == other.messages[same]:
             same += 1
-        best = max(best, same)
-    return best
+        if same // 2 > best:
+            best, match = same // 2, index
+    return best, match
 
 
 def row_conversations(row: Dict[str, Any],
@@ -216,22 +212,29 @@ def row_conversations(row: Dict[str, Any],
     rendered: Dict[str, Optional[Message]] = {}
     for index, root in enumerate(roots):
         thread_id = f"ccbench:{row['id']}:{index}"
-        earlier: List[List[Turn]] = []
+        found: List[Conversation] = []
         for path in paths(root, children):
-            messages, turns = path_messages(path, rendered, counts)
-            first = shared_turns(turns, earlier)
-            if first == len(turns):
+            messages = path_messages(path, rendered, counts)
+            first, match = shared_turns(messages, found)
+            new = len(messages) // 2 - first
+            if not new:
                 counts["paths_without_new_turns"] += 1
                 continue
-            branch = len(earlier)
-            earlier.append(turns)
-            if branch:
-                counts["rerun_branches"] += 1
-            counts["replay_requests"] += len(turns) - first
-            yield Conversation(conversation_id=thread_id +
-                               (f"b{branch}" if branch else ""),
-                               messages=messages,
-                               first_turn=first)
+            counts["replay_requests"] += new
+            if match is not None and 2 * first == len(found[match].messages):
+                # A resumed session repeats an earlier path and goes on.
+                counts["continued_paths"] += 1
+                found[match] = Conversation(found[match].conversation_id,
+                                            messages, found[match].first_turn)
+                continue
+            if found:
+                counts["forked_branches"] += 1
+            found.append(
+                Conversation(conversation_id=thread_id +
+                             (f"b{len(found)}" if found else ""),
+                             messages=messages,
+                             first_turn=first))
+        yield from found
 
 
 def conversations(rows: Iterable[Dict[str, Any]],
