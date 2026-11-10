@@ -60,6 +60,9 @@ on branch `milestone3_task2`; the policy itself is Phase 2.
   grid policy (`run_policy`) so a later grid finds them; `replay
   --params` for one run's policy settings; `sim_table --engine` for
   engine runs, with the study's usable reuse.
+- **Added:** `s3fifo_leaf`, S3-FIFO (Yang et al., SOSP 2023) with the
+  authors' settings, evicting only idle leaves like TTDF, RACE-RP and
+  `wa`; the `wa` grid runs it too (15 runs).
 - **Removed:** the second leaf-LRU control `lru_leaf_free` (it evicted the
   same blocks as `lru_leaf`), and the label probe `wa_probe` with
   `analysis/hazard_table.py` (`wa` with and without labels measures what

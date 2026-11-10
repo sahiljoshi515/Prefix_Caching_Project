@@ -108,9 +108,12 @@ WA_RUNS = {
     "wa_oracle": "labels=oracle,buckets=1,half_life=600",
     "wa_none": "labels=none,buckets=1,half_life=1800",
 }
+# S3-FIFO over the idle leaves (vllm/core/s3fifo_evictor.py), with the
+# authors' settings.
+S3FIFO = "s3fifo_leaf"
 # The wa grid's runs on each seed: LRU and RACE-RP under the same load,
-# then wa.
-WA_GRID_POLICIES = ("lru", "race_rp", *WA_RUNS)
+# then wa, then S3-FIFO.
+WA_GRID_POLICIES = ("lru", "race_rp", *WA_RUNS, S3FIFO)
 # RACE-RP's sketches, trained on seed 1 (analysis/race_train.py).
 RACE_SKETCH = Path("results/m3-race/sketch-L16-P6.json")
 # Engine checks of the capacity sweep's replay at its two ends.
@@ -339,11 +342,11 @@ def grid_configs(name: str,
     2's at the capacity sweep's two ends, 32K and 384K tokens (6), to check
     the replay; the baselines' runs and ceilings are phase1's.
 
-    ``wa`` (12 runs) replays the balanced plans of the reported seeds at
-    `capacity_tokens` under LRU, RACE-RP and wa with oracle labels and
-    with none (`WA_RUNS`), so the comparison shares one machine's load. In
-    a folder where phase1 and policies ran, their LRU and RACE-RP runs
-    have the same names and are skipped.
+    ``wa`` (15 runs) replays the balanced plans of the reported seeds at
+    `capacity_tokens` under LRU, RACE-RP, wa with oracle labels and with
+    none (`WA_RUNS`), and S3-FIFO over the idle leaves, so the comparison
+    shares one machine's load. In a folder where phase1 and policies ran,
+    their LRU and RACE-RP runs have the same names and are skipped.
     """
 
     def plan(mix: str, pacing: str, seed: int) -> List[MixConfig]:
@@ -448,11 +451,12 @@ def policy_env(policy: str,
                run_dir: Path,
                sketch: Path = RACE_SKETCH) -> Dict[str, str]:
     """The server settings of an engine run of a new policy (TTDF, RACE-RP,
-    Sampled LRFU, wa): its counters go to the run's ``evictor-stats.json``,
+    Sampled LRFU, wa, S3-FIFO): its counters go to the run's
+    ``evictor-stats.json``,
     RACE-RP loads `sketch` and uses one math thread (`ONE_THREAD`), and wa
     gets its label mode's settings (`WA_RUNS`). Nothing for the
     baselines."""
-    if policy not in NEW_POLICIES and policy not in WA_RUNS:
+    if policy not in (*NEW_POLICIES, *WA_RUNS, S3FIFO):
         return {}
     params = [f"stats={(run_dir / 'evictor-stats.json').resolve()}"]
     extra: Dict[str, str] = {}

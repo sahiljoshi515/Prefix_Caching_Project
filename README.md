@@ -362,11 +362,12 @@ python -m analysis.m3t2_report     # the results page (HTML): the seven points
 python -m analysis.m3t2_figures    # report/milestone3/figures/task2/
 python -m analysis.m3t2_policies csv --out report/milestone3/data/task2   # CSV tables
 # wa (vllm/core/wa_evictor.py, spec 007 Phase 2): settings on seed 1 in the
-# replay, then engine runs beside LRU and RACE-RP (plan.md, Phase 2 experiments):
-python -m analysis.run_m3_task2 grid --grid wa        # 12 engine runs, 6 at a time
+# replay, then engine runs beside LRU, RACE-RP and S3-FIFO over the idle
+# leaves (vllm/core/s3fifo_evictor.py; plan.md, Phase 2 experiments):
+python -m analysis.run_m3_task2 grid --grid wa        # 15 engine runs, with S3-FIFO
 python -m analysis.tables results/m3-task2/balanced-human-s{2,3,4}-*-cap131072
 python -m analysis.sim_table --against lru \
-    --engine results/m3-task2/balanced-human-s{2,3,4}-{lru,race_rp,wa_oracle,wa_none}-cap131072
+    --engine results/m3-task2/balanced-human-s{2,3,4}-{lru,race_rp,wa_oracle,wa_none,s3fifo_leaf}-cap131072
 ```
 
 Policy settings go in `VLLM_EVICTION_PARAMS` (`key=value,...`): TTDF takes

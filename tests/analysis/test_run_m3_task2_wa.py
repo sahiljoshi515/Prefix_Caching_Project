@@ -32,17 +32,18 @@ def quiet_machine(monkeypatch):
 # --- The grid ----------------------------------------------------------------
 
 
-def test_the_wa_grid_runs_wa_beside_lru_and_race_rp():
+def test_the_wa_grid_runs_wa_beside_lru_race_rp_and_s3fifo():
     assert "wa" in m3.GRIDS
     configs = m3.grid_configs("wa")
-    assert [(c.seed, c.policy) for c in configs
-            ] == [(seed, policy) for seed in (2, 3, 4)
-                  for policy in ("lru", "race_rp", "wa_oracle", "wa_none")]
+    policies = ("lru", "race_rp", "wa_oracle", "wa_none", "s3fifo_leaf")
+    assert [(c.seed, c.policy) for c in configs] == [(seed, policy)
+                                                     for seed in (2, 3, 4)
+                                                     for policy in policies]
     assert {(c.mix, c.pacing, c.capacity_tokens, c.ceiling, c.replicate)
             for c in configs} == {("balanced", "human", 131072, False, 0)}
     assert configs[2].name == "balanced-human-s2-wa_oracle-cap131072"
     assert [c.capacity_tokens
-            for c in m3.grid_configs("wa", 65536)] == [65536] * 12
+            for c in m3.grid_configs("wa", 65536)] == [65536] * 15
 
 
 def test_its_lru_and_race_rp_runs_are_the_other_grids_runs():
@@ -155,3 +156,12 @@ def test_replay_passes_the_policys_settings(tmp_path, monkeypatch):
     m3.main(base + ["--policy", "lru"])
     assert seen["policy"] == "lru"
     assert seen["extra_env"] is None
+
+
+def test_s3fifo_writes_its_counters_to_the_run(tmp_path):
+    run_dir = tmp_path / "run"
+    env = m3.policy_env("s3fifo_leaf", run_dir, tmp_path / "no-sketch.json")
+    assert env == {
+        "VLLM_EVICTION_PARAMS": f"stats={(run_dir / STATS).resolve()}"
+    }
+    assert m3.engine_policy("s3fifo_leaf") == "s3fifo_leaf"

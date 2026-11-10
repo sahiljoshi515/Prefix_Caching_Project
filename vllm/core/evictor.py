@@ -19,6 +19,8 @@ class EvictionPolicy(enum.Enum):
     LRU_LEAF = enum.auto()
     # Workload-aware eviction, first version (vllm/core/wa_evictor.py).
     WA = enum.auto()
+    # S3-FIFO over the same idle leaves (vllm/core/s3fifo_evictor.py).
+    S3FIFO_LEAF = enum.auto()
     # COMP 536: implemented in vllm/core/sampled_lrfu.py.
     SAMPLED_LRFU = enum.auto()
 
