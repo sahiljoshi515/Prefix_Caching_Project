@@ -57,9 +57,23 @@ on branch `milestone3_task2`; the policy itself is Phase 2.
   `090be78d`); `analysis/sim_table.py` for the replay tables.
 - **Ran:** cache replay of the balanced mix, settings on seed 1, seeds 2–4
   at 64K, 128K and 256K, recorded in `plan.md`. The leaf-only rule evicts
-  the same blocks as LRU. `wa` with oracle labels is above LRU on every
-  seed (+4.3 points at 128K) and above RACE-RP at 128K and 256K; without
-  labels it ties RACE-RP. Not yet run on the engine.
+  the same blocks as LRU. After the review fixes, `wa` with oracle labels
+  is above LRU on every seed (+3.4 points at 128K) and ties RACE-RP at
+  every capacity; without labels it ties RACE-RP at 64K and 128K and is
+  below it at 256K. The per-workload gate (no workload down more than 2
+  points against LRU) fails for `wa` with oracle labels at 256K
+  (bailian-thinking −4.1) and without labels at 128K and 256K (ShareGPT
+  −3.9, −2.4); RACE-RP and TTDF fail it at one capacity each. Not yet run
+  on the engine.
+- **Fixed (review):** `wa`'s density no longer counts ends younger than
+  the block in its own age bin, which gave blocks just past their class's
+  reuse time the highest score; its candidates are scored again after
+  every hit and eviction, not once per scheduler step; a dedupe is not a
+  hit. The first version's table (60.13% at 128K with oracle labels) is
+  replaced. Also: `wa` and the probe use `cache_events.workload_label`;
+  the eviction tests share a fixture that restores the request context's
+  time; `sim_table` refuses rows of different setups, leaves out the
+  tuning seed and lists every gate failure.
 
 ### Unreleased (branch `milestone3_task2`, PR pending): Phase 1
 

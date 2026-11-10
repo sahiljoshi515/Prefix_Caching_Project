@@ -11,10 +11,10 @@ and how long it has gone without an access (its age ``a``):
 ``S`` is a survival curve of the time between a block's accesses, read
 from a table built offline on the training seed
 (``analysis/hazard_table.py``). With ``labels=oracle`` each block uses the
-curve of the workload of the last request that accessed it (the request
-id's workload prefix); with ``labels=none`` every block uses the pooled
-curve. Comparing the two on held-out seeds says whether the label carries
-signal beyond the age.
+curve of the workload of the last request that accessed it
+(``cache_events.workload_label``); with ``labels=none`` every block uses
+the pooled curve. Comparing the two on held-out seeds says whether the
+label carries signal beyond the age.
 
 Settings (``VLLM_EVICTION_PARAMS``): ``table`` (required), ``horizon``
 (seconds, default 30), ``labels`` (``oracle`` or ``none``), ``stats``.
@@ -28,19 +28,6 @@ from vllm.core.reuse_evictors import LeafScoreEvictor, _Block, parse_params
 
 DEFAULTS = {"table": "", "horizon": "30", "labels": "oracle"}
 LABEL_MODES = ("oracle", "none")
-_ID_PREFIXES = ("chatcmpl-", "cmpl-")
-
-
-def workload_of(request_id: Optional[str]) -> Optional[str]:
-    """The workload prefix of an engine request id, or None."""
-    if not request_id:
-        return None
-    for prefix in _ID_PREFIXES:
-        if request_id.startswith(prefix):
-            request_id = request_id[len(prefix):]
-            break
-    workload, sep, _ = request_id.partition(":")
-    return workload if sep else None
 
 
 class SurvivalTable:
@@ -108,7 +95,7 @@ class HazardProbeEvictor(LeafScoreEvictor):
 
     def _on_access(self, content_hash: int, block: _Block, now: float) -> None:
         if self.use_labels:
-            label = workload_of(cache_events.current_request())
+            label = cache_events.workload_label(cache_events.current_request())
             if label is not None:
                 self.labels[content_hash] = label
 

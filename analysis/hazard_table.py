@@ -23,7 +23,7 @@ import numpy as np
 
 from analysis.events import Event, load_events, log_path
 from analysis.survival import kaplan_meier, survival_at
-from vllm.core.wa_probe import workload_of
+from vllm.core.block.cache_events import workload_label
 
 ACCESS_EVENTS = ("hit", "insert", "dedupe")
 # Ages from 10 ms to 1 h, plus 0.
@@ -42,7 +42,7 @@ def access_gaps(
         end = max(end, event.t)
         if event.ev not in ACCESS_EVENTS:
             continue
-        label = workload_of(event.req)
+        label = workload_label(event.req)
         previous = last.get(event.hash)
         if previous is not None:
             durations[previous[1]].append(event.t - previous[0])

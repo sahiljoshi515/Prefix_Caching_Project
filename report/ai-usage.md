@@ -145,3 +145,9 @@ Entry format:
 - **Prompts:** "can you help me to write the spec of milestone 3 task 2?";
   "Can you do some experiment first? and then we need to plan how to do
   it."; "Can you test the wa first? and get some result"; "write a pr?".
+- **Review fix:** Claude Code checked the review's findings against the
+  code, wrote regression tests that fail on the first version, fixed the
+  evictor, the tests and `sim_table`, reran the seed-1 tuning and the
+  held-out replays, compared four bin rules on seed 1, and rewrote the
+  results in `plan.md` and the changelog. Marcus passed on the review.
+  Prompt: "This is his feedback" (with the review pasted).

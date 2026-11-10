@@ -8,19 +8,11 @@ Ties go to the deeper block, then the lower block id.
 """
 import pytest
 
-from vllm.core.block import cache_events
 from vllm.core.eviction_policies import POLICY_NAMES, make_project_evictor
 from vllm.core.evictor import EvictionPolicy
 from vllm.core.reuse_evictors import LeafLRUEvictor, LeafLRUFreeEvictor
 
-pytestmark = pytest.mark.m3
-
-
-@pytest.fixture(autouse=True)
-def _restore_request_context(monkeypatch):
-    """Evictors switch on the module-wide request context; undo that."""
-    monkeypatch.setattr(cache_events._context, "enabled",
-                        cache_events._context.enabled)
+pytestmark = [pytest.mark.m3, pytest.mark.usefixtures("request_context")]
 
 
 class Clock:

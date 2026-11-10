@@ -6,17 +6,9 @@ import pytest
 from analysis.events import load_events
 from analysis.hazard_table import access_gaps
 from vllm.core.block import cache_events
-from vllm.core.wa_probe import HazardProbeEvictor, SurvivalTable, workload_of
+from vllm.core.wa_probe import HazardProbeEvictor, SurvivalTable
 
-pytestmark = pytest.mark.m3
-
-
-@pytest.fixture(autouse=True)
-def _restore_request_context(monkeypatch):
-    monkeypatch.setattr(cache_events._context, "enabled",
-                        cache_events._context.enabled)
-    monkeypatch.setattr(cache_events._context, "request_id",
-                        cache_events._context.request_id)
+pytestmark = [pytest.mark.m3, pytest.mark.usefixtures("request_context")]
 
 
 class Clock:
@@ -39,13 +31,6 @@ TABLE = SurvivalTable([0.0, 10.0, 100.0], {
     "slow": [1.0, 1.0, 0.1],
 },
                       pooled=[1.0, 0.6, 0.15])
-
-
-def test_workload_of_reads_the_request_id_prefix():
-    assert workload_of("chatcmpl-sharegpt:abc:3") == "sharegpt"
-    assert workload_of("cmpl-bailian-chat:x-0") == "bailian-chat"
-    assert workload_of("no-colon") is None
-    assert workload_of(None) is None
 
 
 def test_reuse_within_is_conditional_on_the_age():

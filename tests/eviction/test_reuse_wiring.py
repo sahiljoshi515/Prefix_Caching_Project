@@ -41,16 +41,11 @@ ENV = ("VLLM_EVICTION_POLICY", "VLLM_EVICTION_PARAMS", "VLLM_CACHE_EVENT_LOG")
 
 
 @pytest.fixture(autouse=True)
-def clean_env_and_context(monkeypatch):
+def clean_env_and_context(monkeypatch, request_context):
     """No policy settings from the caller's shell, and the module's request
     context (which TTDF and RACE-RP switch on) as it was before the test."""
     for name in ENV:
         monkeypatch.delenv(name, raising=False)
-    ctx = cache_events._context
-    saved = ctx.enabled, ctx.request_id, ctx.op, ctx.time
-    ctx.time = None
-    yield
-    ctx.enabled, ctx.request_id, ctx.op, ctx.time = saved
 
 
 @pytest.fixture
