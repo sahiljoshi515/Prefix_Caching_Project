@@ -119,7 +119,7 @@ CC-Bench logs need more rules:
   resumed session copies its earlier history into the log (rows 161 and
   173).
 - **Re-run branches.** Parallel tool calls are chained one after another,
-  so every fork in a thread is a re-run: a request sent again after a
+  so every fork that yields a new turn is a re-run: a request sent again after a
   rewind or retry, with the abandoned branch still in the log (16 forks in
   13 threads). Each request's history is the path from its root down to
   it. The first root-to-leaf path is the thread's conversation; each later

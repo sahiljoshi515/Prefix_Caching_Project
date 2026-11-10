@@ -173,6 +173,10 @@ python -m analysis.plot_experiment --out results/ccbench-full-cap65536 \
   --figures report/milestone3/figures/task1/ccbench-full
 ```
 
+The CC-Bench data and runs use the adapter as committed in `cbd9a3ba`;
+the runs and figures record `c678790d` with uncommitted changes, because
+they started before that commit.
+
 ### Results
 
 | Policy | Block hit rate | Overall usable token reuse | Mean request usable fraction | Evictions | Evictions / 1,000 lookups |
@@ -210,13 +214,12 @@ turns, 135 s; p90 390 s) and prompts are large (median 12,599 tokens, p90
 186), with a median of 645,965 tokens of history (at most 2,307,333), 9.9
 times the cache. Between two uses of a block (median 5.2 to 7.6 s) come
 109 to 120 other requests, so a history is evicted before its next turn
-whatever the policy. In an exploratory LRU-only run at 262,144 tokens (not a saved
-result), the block hit rate rose only to 3.9%.
+whatever the policy.
 
 The reuse that remains is mostly blocks that many requests share, such as
 the chat template's system prompt: 96.4% to 97.2% of distinct blocks are
-never hit, and the most-hit block is hit by every request. LFU's small
-lead comes from these blocks: 37.3% of its hits come from another
+never hit, and the most-hit block is hit by every request. The 0.2-point
+difference between LFU and LRU comes from these blocks: 37.3% of its hits come from another
 conversation, against 23.8% for LRU and 24.0% for FIFO, though it reuses
 fewer distinct blocks (17,414 against LRU's 22,155). FIFO has 4,754 hits
 after a miss in 48 requests (0.41%), 76,064 tokens that are not usable.
@@ -231,7 +234,7 @@ runs (a 131,072-token cache, recorded pauses, seeds 2–4), CC-Bench reaches
 
 - The rate is our choice. Neither agent dataset records session start
   times, so the 1 conversation/s pacing is shared with ShareGPT for
-  comparison, not measured. CC-Bench's result describes about 44
+  comparison, not measured. CC-Bench's result describes about 66
   concurrent coding sessions on one 65,536-token cache; with fewer
   concurrent sessions the policies would likely differ more.
 - Claude Code's system prompt and tool definitions (about 12,000 tokens per

@@ -55,7 +55,9 @@ def load_conversations(path):
                             or not isinstance(message.content, str)):
                         raise ValueError(f"invalid message {i}")
                 first_turn = row.get("first_turn", 0)
+                # bool is a subclass of int, so reject it explicitly.
                 if (not isinstance(first_turn, int)
+                        or isinstance(first_turn, bool)
                         or not 0 <= first_turn < len(messages) // 2):
                     raise ValueError("invalid first_turn")
             except (ValueError, KeyError, TypeError) as exc:
@@ -224,9 +226,10 @@ class ReplayClient:
 
     async def replay_conversation(self, conversation, arrival_s):
         actual_start = self.elapsed()
-        turns = (conversation.first_turn +
-                 1 if self.mode == "single" else len(conversation.messages) //
-                 2)
+        if self.mode == "single":
+            turns = conversation.first_turn + 1
+        else:
+            turns = len(conversation.messages) // 2
         self.counts["conversations"] += 1
         for request in iter_requests(conversation, self.mode):
             result = {

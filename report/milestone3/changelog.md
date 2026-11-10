@@ -26,9 +26,9 @@ here.
 - **Added:** the AgentBank (1,000 trajectories) and CC-Bench (all 370
   sessions) comparisons, their figures, and the best policy per workload in
   [`task1-workload-eviction.md`](task1-workload-eviction.md): LRU for
-  AgentBank (89.47% usable reuse), LFU for Bailian, and LFU only marginally
-  for CC-Bench, which thrashes the cache under every policy at 1
-  conversation/s (imleznupar).
+  AgentBank (89.47% usable reuse), LFU for Bailian, and no policy for
+  CC-Bench, where LRU and LFU tie because the cache thrashes under every
+  policy at 1 conversation/s (imleznupar).
 - **Fixed (review):** the CC-Bench adapter follows each session's
   `uuid`/`parentUuid` tree, skips copied events, drops list-form local
   commands and synthetic API errors, and sends a re-run branch's shared
