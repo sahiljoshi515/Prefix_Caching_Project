@@ -39,6 +39,38 @@ Entry format:
   qwen balian, or multiple) and put an template of these files in example
   folder. After that, document my adapter implementation and the shared runner."
 
+### PR #17: Milestone 3 Task 1: AgentBank and CC-Bench
+
+- **Tools:** Claude Code (Claude Opus 5.5).
+- **Used for:** the AgentBank and CC-Bench adapters, fixtures and tests,
+  the experiment configs, the full runs and their checks, the client's
+  keep-alive retry (spec 003, T015) after diagnosing the failed requests,
+  the AgentBank and CC-Bench sections of the Task 1 note and the document
+  updates. Jasmine chose the shared 32,768-token context and 65,536-token
+  cache, ShareGPT's pacing, a seeded 1,000-trajectory AgentBank sample, no
+  stand-in for Claude Code's system prompt, and reporting CC-Bench at the
+  shared rate rather than adding a lower-rate run.
+- **Prompts:** "ok now we are moving on to milestone 3 task 1. [...] im
+  responsible for AgentBank, CC-Bench trajectories while triet is
+  responsible for Qwen Bailian usage traces. he already did his part
+  [...] my [understanding] is that you just have to do the same but for
+  AgentBank, CC-Bench trajectories. follow his conventions and ask me if
+  anything's unclear"; "if we are comparing to other workloads, we should
+  just keep the arrive rate the same right? so if cc-bench failed under
+  that arrive rate, we should just report that?"; "yes do that" (the
+  retry fix and the CC-Bench rerun).
+- **Review fix:** Claude Code checked the reviewer's points against the
+  CC-Bench logs and the event logs, fixed the adapter (session trees,
+  resumed sessions, dropped events) with tests, reran CC-Bench, and
+  rewrote the CC-Bench conclusion and the LFU explanation for AgentBank.
+  It also ran a simulated review of the PR before the second review. The
+  first fix treated resumed sessions' copies as re-runs and replayed them;
+  the second review caught it. Prompts: "got some feedback on the PR, is
+  this related to CC-bench crashing bc arrive rate?"; "sounds good, go with
+  the plan"; "could you simulate my teammate reviewing my code changes in
+  the PR"; "yea do fix it, and check for other bugs. how did this one get
+  past last time?"
+
 ### PR #7: Add contributing guide, spec-kit specs and project CI
 
 - **Tools:** Claude Code (Claude Opus 5.5).

@@ -29,12 +29,16 @@
 - [ ] T010 [P] Add `__init__.py` files and the module docstring (plan #7, #8)
 - [ ] T011 Tests for FR-010 (`tests/client_simulator/test_sharegpt.py`,
   `test_client_sim.py`, fixture under `tests/client_simulator/fixtures/`)
-- [ ] T015 [US2] Avoid the keep-alive race: vLLM closes idle connections
+- [x] T015 [US2] Avoid the keep-alive race: vLLM closes idle connections
   after 5 s, the same as Task 2's think time, so a pooled connection can be
   reused just as it closes (one failure in Task 2's run,
   `sharegpt:QWJhYvA:5`). Keep the client's keep-alive below 5 s or retry
   once on a connection error
-  (`report/milestone2/task1-client-simulator.md`, Open issues)
+  (`report/milestone2/task1-client-simulator.md`, Open issues). Done in
+  Milestone 3 Task 1: `/tokenize` is retried once on a connection error,
+  after three more such failures, each exactly 5.0 s after the previous
+  turn (`agentbank:iqa:iqa_exists_161:44`, `ccbench:273:0:14`,
+  `ccbench:81:0:3`)
 - [ ] T012 Record PR #6's AI usage for the report (the PR is merged, so add
   it to `report/ai-usage.md` instead of the description)
 

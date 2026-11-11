@@ -15,6 +15,9 @@ class Message:
 class Conversation:
     conversation_id: str
     messages: list[Message]
+    # Turns before this one are history only: they were already replayed
+    # as part of another conversation (a re-run branch of a CC-Bench log).
+    first_turn: int = 0
 
 
 @dataclass

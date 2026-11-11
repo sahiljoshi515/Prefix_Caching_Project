@@ -1,0 +1,77 @@
+{
+  "settings": {
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "capacity_tokens": 65536,
+    "block_size": 16,
+    "max_model_len": 32768,
+    "max_concurrency": 32,
+    "seed": 0,
+    "workloads": [
+      {
+        "name": "agentbank",
+        "format": "chat",
+        "trace": "/Users/lulu/Downloads/Rice/COMP 436/Prefix_Caching_Project/data/processed/agentbank.conversations.jsonl",
+        "responses": "/Users/lulu/Downloads/Rice/COMP 436/Prefix_Caching_Project/data/processed/agentbank.responses.jsonl",
+        "limit": 1000,
+        "mode": "multi",
+        "conversation_rate": 1,
+        "think_time": 5,
+        "offset_s": 0,
+        "seed": 0
+      }
+    ]
+  },
+  "inputs_sha256": {
+    "results/agentbank-1000-cap65536/experiment.json": "0bff04e31f831c80498bb9fa54e0911313d5b6c3612bf7cfcd226fc38b421e76",
+    "results/agentbank-1000-cap65536/lru-bs16-cap65536/requests.csv": "f7e6388303e85dec4f6e54aac42d5c3318b4279c8c7ee6be7ed90b12b8ebb5d2",
+    "results/agentbank-1000-cap65536/lru-bs16-cap65536/blocks.csv": "312243bc5b9dc919932e6a81dacf2f3ec6e3ded3fb63f9bc0811df65c3047cb0",
+    "results/agentbank-1000-cap65536/lru-bs16-cap65536/reuse_intervals.csv": "1a6c9b3df5f75e6db674c28fe92c0b1f1601ad85f828c366f6d098c1ee488047",
+    "results/agentbank-1000-cap65536/lru-bs16-cap65536/hit_rate_windows.csv": "767d0e4d7f49c36913858b820fb9c8648ca611e5a045937f084a22de48303559",
+    "results/agentbank-1000-cap65536/lru-bs16-cap65536/summary.json": "d652b8484efbc3d86513189e525a88b3ad80f64a64e5bb00aac9ec8f6974b984",
+    "results/agentbank-1000-cap65536/lru-bs16-cap65536/client.jsonl": "844fb01b447493053ee1fba89fb7fe0857199de8d905467e600099c4675feb6a",
+    "results/agentbank-1000-cap65536/lru-bs16-cap65536/run.json": "9926830afb05e0270bbae3bdea87c47308233831846be4b280f3acae0a46a214",
+    "results/agentbank-1000-cap65536/lfu-bs16-cap65536/requests.csv": "5d38765be26ccc420ec47cfc18d74e9895cc47a1a9f4c058f3eeb3acd0375b36",
+    "results/agentbank-1000-cap65536/lfu-bs16-cap65536/blocks.csv": "e7692cdea3443f1ec74a471b13f78789832589b1224fc3110a60c8ca69292b61",
+    "results/agentbank-1000-cap65536/lfu-bs16-cap65536/reuse_intervals.csv": "fe31b94b086f610d7207441b38be1989258f6d894fa5784e6e4d817471129926",
+    "results/agentbank-1000-cap65536/lfu-bs16-cap65536/hit_rate_windows.csv": "7daac379e8b714a0e502d6fe6b5cadfbb06bcb6996600f0ef709d8fba79f8b49",
+    "results/agentbank-1000-cap65536/lfu-bs16-cap65536/summary.json": "6638dc54ed379ca8298485ae6bab3565edbba4e756ce132933eaf63335988c7c",
+    "results/agentbank-1000-cap65536/lfu-bs16-cap65536/client.jsonl": "ecdc1efcdc046337c179172708767fee1c632b1a8e838f587cf913c85f608220",
+    "results/agentbank-1000-cap65536/lfu-bs16-cap65536/run.json": "0aae1af06054f16377dabcf379218345b75c2b53d7a4d589209bdf36a08bb788",
+    "results/agentbank-1000-cap65536/fifo-bs16-cap65536/requests.csv": "14701d692caea113e878c7dc79d7eb5643498165f8895fbbaece64fe2bc74521",
+    "results/agentbank-1000-cap65536/fifo-bs16-cap65536/blocks.csv": "10bde6b5efd8e43a4d23b921baa773ac94ec252411a5d6b74477e85cb8d0b2b2",
+    "results/agentbank-1000-cap65536/fifo-bs16-cap65536/reuse_intervals.csv": "5c5109a9c373dfaeeff270cef9f9474abaf7cb2e1e47292a1f0722e863231d1a",
+    "results/agentbank-1000-cap65536/fifo-bs16-cap65536/hit_rate_windows.csv": "55a5538fb745ba883720cfae8e21f90ede9b12748e758f738224402f3931ea65",
+    "results/agentbank-1000-cap65536/fifo-bs16-cap65536/summary.json": "b852884c37bdec57c629d535c5e30f4690f378570023790814c8aa74cf7a2043",
+    "results/agentbank-1000-cap65536/fifo-bs16-cap65536/client.jsonl": "ad2fbd3b62b07c5f6b4d1b84e89b629387bcc1343a28f742d13b000e2affcb0f",
+    "results/agentbank-1000-cap65536/fifo-bs16-cap65536/run.json": "44420133ffb25364612c1d361a77c4bdc600807df4b0c088c29f17ba1f757fb6"
+  },
+  "plot_source_sha256": "fbfb1e667f0f8261568a342262c721e975e035867f9a69d16ffa225c796b6301",
+  "plot_base_commit": "1d785f91753dffd0dd56b18dacc36fa0ea638096",
+  "completed_per_policy": 4992,
+  "excluded_per_policy": {},
+  "zero_hit_blocks": {
+    "lru": 14467,
+    "lfu": 35017,
+    "fifo": 14467
+  },
+  "figures": [
+    "report/milestone3/figures/task1/agentbank-1000/fig1_policy_comparison.pdf",
+    "report/milestone3/figures/task1/agentbank-1000/fig1_policy_comparison.png",
+    "report/milestone3/figures/task1/agentbank-1000/fig2_reuse_profiles.pdf",
+    "report/milestone3/figures/task1/agentbank-1000/fig2_reuse_profiles.png",
+    "report/milestone3/figures/task1/agentbank-1000/block_hit_rate_log.pdf",
+    "report/milestone3/figures/task1/agentbank-1000/block_hit_rate_log.png",
+    "report/milestone3/figures/task1/agentbank-1000/usable_reused_fraction.pdf",
+    "report/milestone3/figures/task1/agentbank-1000/usable_reused_fraction.png",
+    "report/milestone3/figures/task1/agentbank-1000/eviction_rate_per_1k_lookups.pdf",
+    "report/milestone3/figures/task1/agentbank-1000/eviction_rate_per_1k_lookups.png",
+    "report/milestone3/figures/task1/agentbank-1000/cached_cdf.pdf",
+    "report/milestone3/figures/task1/agentbank-1000/cached_cdf.png",
+    "report/milestone3/figures/task1/agentbank-1000/hits_cdf.pdf",
+    "report/milestone3/figures/task1/agentbank-1000/hits_cdf.png",
+    "report/milestone3/figures/task1/agentbank-1000/intervals_cdf.pdf",
+    "report/milestone3/figures/task1/agentbank-1000/intervals_cdf.png",
+    "report/milestone3/figures/task1/agentbank-1000/fig3_hit_rate_over_time.pdf",
+    "report/milestone3/figures/task1/agentbank-1000/fig3_hit_rate_over_time.png"
+  ]
+}

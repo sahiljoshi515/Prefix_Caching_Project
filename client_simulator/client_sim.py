@@ -23,7 +23,8 @@ def iter_requests(conversation: Conversation,
     """Each request contains the history before its recorded answer"""
     if mode not in {"single", "multi"}:
         raise ValueError("mode must be 'single' or 'multi'")
-    for i in range(1, len(conversation.messages), 2):
+    for i in range(2 * conversation.first_turn + 1, len(conversation.messages),
+                   2):
         turn = i // 2
         rid = request_id(conversation.conversation_id, turn)
         yield ReplayRequest(rid, conversation.conversation_id, turn,
@@ -53,10 +54,16 @@ def load_conversations(path):
                     if (message.role != role
                             or not isinstance(message.content, str)):
                         raise ValueError(f"invalid message {i}")
+                first_turn = row.get("first_turn", 0)
+                # bool is a subclass of int, so reject it explicitly.
+                if (not isinstance(first_turn, int)
+                        or isinstance(first_turn, bool)
+                        or not 0 <= first_turn < len(messages) // 2):
+                    raise ValueError("invalid first_turn")
             except (ValueError, KeyError, TypeError) as exc:
                 raise ValueError(f"{path}:{line_number}: {exc}") from exc
             seen.add(cid)
-            yield Conversation(cid, messages)
+            yield Conversation(cid, messages, first_turn)
 
 
 def schedule_conversations(conversations, rate, seed, limit=None):
@@ -144,11 +151,20 @@ class ReplayClient:
                 f"{self.model!r} is not served; available: {available}")
 
     async def tokenize(self, **payload):
-        response = await self.http.post(self.root + "/tokenize",
-                                        json={
-                                            "model": self.model,
-                                            **payload
-                                        })
+        # vLLM closes idle connections after 5 s, the usual think time, so
+        # the first call of a turn can reuse a connection as it closes.
+        # Tokenizing has no side effects, so one retry is safe (spec 003).
+        for attempt in range(2):
+            try:
+                response = await self.http.post(self.root + "/tokenize",
+                                                json={
+                                                    "model": self.model,
+                                                    **payload
+                                                })
+                break
+            except httpx.TransportError:
+                if attempt:
+                    raise
         response.raise_for_status()
         return response.json()
 
@@ -210,7 +226,10 @@ class ReplayClient:
 
     async def replay_conversation(self, conversation, arrival_s):
         actual_start = self.elapsed()
-        turns = 1 if self.mode == "single" else len(conversation.messages) // 2
+        if self.mode == "single":
+            turns = conversation.first_turn + 1
+        else:
+            turns = len(conversation.messages) // 2
         self.counts["conversations"] += 1
         for request in iter_requests(conversation, self.mode):
             result = {

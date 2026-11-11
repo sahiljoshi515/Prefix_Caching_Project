@@ -59,7 +59,7 @@ here.
 | 2 | [`task1-client-simulator.md`](milestone2/task1-client-simulator.md) | Task 1: the client simulator and the ShareGPT data | [`003`](../specs/003-m2-client-simulator/spec.md) | Written |
 | 2 | [`task2-prefix-sharing-analysis.md`](milestone2/task2-prefix-sharing-analysis.md) | Task 2: ShareGPT single- vs multi-turn sharing | [`004`](../specs/004-m2-prefix-sharing-analysis/spec.md) | Written, with the 1,000-conversation results |
 | 2 | [`task3-cache-tuning.md`](milestone2/task3-cache-tuning.md) | Task 3: cache size, block size, eviction policy | [`005`](../specs/005-m2-cache-tuning/spec.md) | Written, with the 54-run grid |
-| 3 | [`task1-workload-eviction.md`](milestone3/task1-workload-eviction.md) | Task 1: the best policy per workload | [`006`](../specs/006-m3-workload-eviction/spec.md) | Bailian results/figures; other workloads pending |
+| 3 | [`task1-workload-eviction.md`](milestone3/task1-workload-eviction.md) | Task 1: the best policy per workload | [`006`](../specs/006-m3-workload-eviction/spec.md) | Bailian, AgentBank and CC-Bench results/figures and the best policy per workload |
 | 3 | [`task2-mixed-workload-policy.md`](milestone3/task2-mixed-workload-policy.md) | Task 2: a policy for the mixed workload | [`007`](../specs/007-m3-mixed-workload-policy/spec.md) | Placeholder |
 
 The changelogs: [Milestone 1](milestone1/changelog.md),

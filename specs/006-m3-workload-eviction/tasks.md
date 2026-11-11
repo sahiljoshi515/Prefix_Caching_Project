@@ -4,18 +4,18 @@
 
 ## Phase 0: Research
 
-- [ ] T001 [P] AgentBank: format, size, licence, role mapping; update
+- [x] T001 [P] AgentBank: format, size, licence, role mapping; update
   `client_simulator/README.md`
-- [ ] T002 [P] CC-Bench-trajectories: same
+- [x] T002 [P] CC-Bench-trajectories: same
 - [x] T003 [P] qwen-bailian-usagetraces-anon: same, plus its block size and
   timestamp unit
-- [ ] T004 Choose the fixed capacity and block size from `005` results;
-  record why
+- [x] T004 Choose the fixed capacity and block size from `005` results;
+  record why (`plan.md`: 65,536 tokens, block size 16)
 
 ## Phase 1: User Story 1 — adapters (P1)
 
-- [ ] T005 [P] [US1] AgentBank adapter + fixture + tests
-- [ ] T006 [P] [US1] CC-Bench adapter + fixture + tests
+- [x] T005 [P] [US1] AgentBank adapter + fixture + tests
+- [x] T006 [P] [US1] CC-Bench adapter + fixture + tests
 - [x] T007 [P] [US1] Bailian adapter with token synthesis + fixture + tests
 - [x] T008 [US1] Client: recorded timestamps and token-id prompts + tests
   (`client_simulator/client_sim.py`, `schema.py`)
@@ -23,12 +23,12 @@
 ## Phase 2: User Story 2 — comparison runs (P1)
 
 - [x] T009 [US2] `analysis/run_experiment.py` (shared prepared chat/token/mixed runner)
-- [ ] T010 [US2] Run all pairs on the agreed samples
+- [x] T010 [US2] Run all pairs on the agreed samples
 
 ## Phase 3: User Story 3 — analysis (P2)
 
-- [ ] T011 [US3] Per-workload reuse-profile figures and the comparison plot
-- [ ] T012 [US3] Write-up (`report/milestone3/task1-workload-eviction.md`)
+- [x] T011 [US3] Per-workload reuse-profile figures and the comparison plot
+- [x] T012 [US3] Write-up (`report/milestone3/task1-workload-eviction.md`)
 
 ## Dependencies
 
@@ -51,3 +51,14 @@ remain a pilot. The three saved runs passed audit with no exclusions,
 failures or preemptions, and their figures/plain-text findings replace the
 pilot as the main analysis. Other workloads and repeat/segment stability
 checks remain open.
+
+AgentBank and CC-Bench complete (2026-11-08): AgentBank's first 1,000
+seeded trajectories and all of CC-Bench, at capacity 65,536/block size 16,
+1 conversation/s and 5 s think time, under LRU/FIFO/LFU. All six runs
+passed the runner's checks with no failures; CC-Bench skips 35.2% of its
+turns (too long for 32,768 tokens) and has 8-12 preemptions per run. The
+Task 1 note now has all three workloads and the best policy per workload,
+which closes T010-T012. Repeat/segment stability checks were not run.
+After PR #17's reviews (2026-11-09 and 2026-11-10), CC-Bench follows
+each session's event tree and a resumed session's copied history is not
+replayed; CC-Bench was rerun and no policy helps it at this load.

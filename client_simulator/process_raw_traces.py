@@ -1,17 +1,20 @@
 """Prepare compact client conversations and server responses before serving."""
 
 import argparse
+import inspect
 import json
 from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
 
-from client_simulator.adapters import qwenbailian, sharegpt
+from client_simulator.adapters import agentbank, ccbench, qwenbailian, sharegpt
 from client_simulator.schema import Conversation, request_id
 
 ADAPTERS = {
     "sharegpt": sharegpt,
     "bailian": qwenbailian,
+    "agentbank": agentbank,
+    "ccbench": ccbench,
 }
 
 
@@ -39,10 +42,13 @@ def write_traces(conversations: Iterable[Conversation], client_path: Path,
                     "conversation_id": conversation.conversation_id,
                     "messages": [asdict(m) for m in conversation.messages],
                 }
+                if conversation.first_turn:
+                    record["first_turn"] = conversation.first_turn
                 client_file.write(
                     json.dumps(record, ensure_ascii=False) + "\n")
                 # History slices are only needed at replay time.
-                for index in range(1, len(conversation.messages), 2):
+                for index in range(2 * conversation.first_turn + 1,
+                                   len(conversation.messages), 2):
                     rid = request_id(conversation.conversation_id, index // 2)
                     answer = {
                         "request_id": rid,
@@ -133,8 +139,15 @@ def main() -> None:
         print(f"Prepared {count} token requests")
     else:
         from itertools import islice
-        write_traces(islice(adapter.load_conversations(args.raw), args.limit),
-                     client_path, args.output)
+
+        # Adapters that sample (AgentBank, CC-Bench) take the seed.
+        options = ({
+            "seed": args.seed
+        } if "seed" in inspect.signature(adapter.load_conversations).parameters
+                   else {})
+        write_traces(
+            islice(adapter.load_conversations(args.raw, **options),
+                   args.limit), client_path, args.output)
 
 
 if __name__ == "__main__":

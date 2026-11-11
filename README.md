@@ -67,6 +67,7 @@ VLLM_USE_PRECOMPILED=1 uv pip install --editable . -c constraints-simulator.txt
 
 uv pip install pytest==8.3.3 pytest-asyncio==0.24.0   # only needed for the tests
 uv pip install matplotlib==3.9.2 -c constraints-simulator.txt   # analysis figures
+uv pip install pyarrow==18.0.0 -c constraints-simulator.txt     # AgentBank, CC-Bench (parquet)
 ```
 
 Shortcut: `make setup` runs these steps on macOS or Linux (on Linux it takes
