@@ -100,8 +100,12 @@ def test_log_starts_with_header_and_ends_with_end_line(make_engine):
     assert header["block_size"] == BLOCK
     assert {"time", "t", "pid"} <= header.keys()
     assert last == {"ev": "end"}
+    base = {"t", "ev", "hash", "block", "req", "op"}
+    # A free also records the block's last-access time (spec 007).
     assert events and all(
-        e.keys() == {"t", "ev", "hash", "block", "req", "op"} for e in events)
+        e.keys() == (base | {"la"} if e["ev"] == "free" else base)
+        for e in events)
+    assert all(isinstance(e["la"], float) for e in events if e["ev"] == "free")
     times = [e["t"] for e in events]
     assert times == sorted(times) and times[0] >= header["t"]
 

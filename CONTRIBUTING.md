@@ -60,7 +60,8 @@ and Linux, and `make help` lists the other shortcuts. In particular:
 
 All changes shall be developed on a dedicated feature branch created from
 the current milestone branch, which is the repository's default branch
-(`milestone-2` during Milestone 2). Direct commits to a milestone branch or
+(`milestone-3` during Milestone 3; `milestone-2` was renamed to it on
+2026-11-04). Direct commits to a milestone branch or
 to `main` are not permitted; a milestone branch reaches `main` through a PR
 as well.
 
@@ -106,7 +107,7 @@ opening the PR (after `git fetch origin`):
 
 ```bash
 make check-pr BODY=my_pr_description.md
-# same as: python tools/pr_check/check_pr.py --base origin/milestone-2 \
+# same as: python tools/pr_check/check_pr.py --base origin/milestone-3 \
 #     --head HEAD --body-file my_pr_description.md
 ```
 

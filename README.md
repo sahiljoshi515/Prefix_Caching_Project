@@ -18,7 +18,8 @@ design and test notes are in
 | 2, Task 1 | Client simulator and ShareGPT preprocessing | Done | `client_simulator/` |
 | 2, Task 2 | Cache event log, prefix-sharing metrics, single- vs multi-turn replay | In progress | `vllm/core/block/cache_events.py`, `analysis/`, `specs/004-*` |
 | 2, Task 3 | Cache size, block size and eviction policies | Done: 54-run grid, [findings](report/milestone2/task3-cache-tuning.md) | `vllm/core/eviction_policies.py`, `analysis/sweep.py`, `analysis/run_m2_task3.py`, `specs/005-*` |
-| 3 | Eviction policies across workloads; a workload-aware policy | Planned | `specs/006-*`, `specs/007-*` |
+| 3, Task 2 | Mixed workload: generator, LRU/LFU/FIFO baselines, reuse study, TTDF, RACE-RP and Sampled LRFU | Phase 1 done: 21-run mixed grid and 36 isolated runs; the three new policies on the mix (15 engine runs), [findings](report/milestone3/task2-mixed-workload-policy.md) | `analysis/mix.py`, `analysis/run_m3_task2.py`, `analysis/m3t2_study.py`, `vllm/core/reuse_evictors.py`, `vllm/core/sampled_lrfu.py`, `analysis/race_train.py`, `specs/007-*` |
+| 3, Task 1 | Eviction policies across workloads | Planned | `specs/006-*` |
 
 How the team works (branches, pull requests, tests, CI, documentation) is
 in [`CONTRIBUTING.md`](CONTRIBUTING.md). Each feature has a spec, a plan and
@@ -311,6 +312,81 @@ run, because vLLM would refuse to start. The command ends with
 `results/m2-task3/figures/` (`--figures` to choose, `--no-figures` to skip);
 the results are in
 [`report/milestone2/task3-cache-tuning.md`](report/milestone2/task3-cache-tuning.md).
+
+### Mixed workloads and the reuse study (Milestone 3, Task 2)
+
+The raw datasets go in the ignored `data/raw/` (`agentbank/`, `ccbench/`,
+`bailian/`); process the text ones once with
+`python -m client_simulator.process_raw_traces --dataset ccbench-mix --raw
+data/raw/ccbench/train.parquet --output data/processed/ccbench-mix.responses.jsonl
+--client-output data/processed/ccbench-mix.conversations.jsonl` (likewise
+`agentbank-mix`, with `--raw data/raw/agentbank`). The `-mix` datasets are
+Task 2's processing: each CC-Bench session's main thread, with its recorded
+tool latencies, which the mix's pacing reads; Task 1 processes the same
+datasets as `agentbank` and `ccbench`
+([client_simulator/README.md](client_simulator/README.md#task-2s-agentbank-mix-and-ccbench-mix)).
+Then:
+
+```bash
+python -m analysis.run_m3_task2 plans --grid phase1   # analysis/mix.py, 1,800 s plans
+python -m analysis.run_m3_task2 grid --grid phase1    # 21 engine runs, 6 at a time
+python -m analysis.run_m3_task2 plans --grid isolated # each workload alone (analysis/isolate.py)
+python -m analysis.run_m3_task2 grid --grid isolated --jobs 12   # 36 engine runs
+python -m analysis.tables results/m3-task2/*          # per-run lookup/residency/request tables
+python -m analysis.identify --train data/processed/m3/balanced-human-s1 \
+    --test data/processed/m3/balanced-human-s{2,3,4} --out results/m3-study/identify.json
+python -m analysis.signals --train results/m3-task2/balanced-human-s1-ceiling \
+    --test results/m3-task2/balanced-human-s{2,3,4}-ceiling --out results/m3-study/signals.json
+python -m analysis.paper_checks --ceiling results/m3-task2/balanced-human-s2-ceiling ... \
+    --plan data/processed/m3/balanced-human-s1 ... --out results/m3-study/paper.json
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 ... \
+    --policies lru lfu fifo belady --capacities 32768 ... 393216 --out results/m3-sim/sweep.jsonl
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
+    --policies lru lfu fifo belady --capacities 32768 ... 393216 ceiling \
+    --window 600 1800 --out results/m3-sim/capacity-window.jsonl   # point 4's curve
+# TTDF, RACE-RP (vllm/core/reuse_evictors.py) and Sampled LRFU
+# (vllm/core/sampled_lrfu.py), mixed workload only:
+python -m analysis.race_train --sketch 16x6 --out results/m3-race   # seed-1 RACE sketch
+python -m analysis.race_train --sketch 16x1 16x2 16x3 16x4 16x6 16x8 64x1 ... \
+    --out results/m3-race/tune                        # sketches for seed-1 tuning
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 \
+    --policies lru ttdf 'ttdf:tau_short=1,tau_long=60,w_short=0.3,w_long=0.7' ... \
+    'race_rp:sketch=results/m3-race/tune/sketch-L16-P1.json' ... \
+    sampled_lrfu 'sampled_lrfu:half_life=4096,sample_size=16' ... \
+    --capacities 32768 65536 131072 262144 393216 --window 600 1800 \
+    --out results/m3-sim/tune-seed1.jsonl             # tuning, seed 1 only
+python -m analysis.m3t2_policies select               # specified and tuned settings
+python -m analysis.run_m3_task2 grid --grid policies  # 15 engine runs, 6 at a time
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
+    --policies ttdf race_rp:sketch=results/m3-race/sketch-L16-P6.json <tuned ...> \
+    --capacities 32768 ... 393216 --window 600 1800 \
+    --out results/m3-sim/capacity-window.jsonl        # held-out seeds, run once
+python -m analysis.run_m3_task2 sim ... --capacities 131072 --jobs 1 \
+    --out results/m3-sim/overhead.jsonl               # every policy's eviction time
+python -m analysis.m3t2_study      # results/m3-study/summary.json
+python -m analysis.m3t2_report     # the results page (HTML): the seven points
+python -m analysis.m3t2_figures    # report/milestone3/figures/task2/
+python -m analysis.m3t2_policies csv --out report/milestone3/data/task2   # CSV tables
+# wa (vllm/core/wa_evictor.py, spec 007 Phase 2): settings on seed 1 in the
+# replay, then engine runs beside LRU and RACE-RP (plan.md, Phase 2 experiments):
+python -m analysis.run_m3_task2 grid --grid wa        # 12 engine runs, 6 at a time
+python -m analysis.tables results/m3-task2/balanced-human-s{2,3,4}-*-cap131072
+python -m analysis.sim_table --against lru \
+    --engine results/m3-task2/balanced-human-s{2,3,4}-{lru,race_rp,wa_oracle,wa_none}-cap131072
+```
+
+Policy settings go in `VLLM_EVICTION_PARAMS` (`key=value,...`): TTDF takes
+`tau_short`, `tau_long`, `w_short`, `w_long`; RACE-RP needs `sketch=<file>`
+and takes `alpha`; Sampled LRFU takes `half_life` (block uses, default 512),
+`sample_size` (4) and `seed` (0); all three take `stats=<file>` for their
+overhead counters. In the cache replay, the same settings follow the policy
+after a colon.
+
+`analysis/mix.py --pacing human` (the default) borrows real pauses from
+recorded loops; `--pacing fast` keeps Phase 0's constants. A run takes about
+31 minutes; the grid refuses a dirty tree and resumes after an interruption.
+The results are in
+[`report/milestone3/task2-mixed-workload-policy.md`](report/milestone3/task2-mixed-workload-policy.md).
 
 ### Useful vLLM flags for experiments
 

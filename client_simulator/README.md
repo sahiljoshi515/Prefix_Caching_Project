@@ -162,6 +162,37 @@ conversation, so CC-Bench replays each thread until its history passes
 32K, and the run reports the skipped share: in the full run, 178 turns
 were too long and 6,066 later turns were not sent, 35.2% of 17,721.
 
+### Task 2's `agentbank-mix` and `ccbench-mix`
+
+Milestone 3 Task 2 mixes these datasets with others on one cache
+([spec 007](../specs/007-m3-mixed-workload-policy/spec.md)) and processes
+them its own way, as the `agentbank-mix` and `ccbench-mix` datasets
+(`adapters/agentbank_mix.py`, `adapters/ccbench_mix.py`):
+
+- **CC-Bench:** only each session's main thread (sub-agents, compaction
+  summaries and API errors dropped), one conversation per session,
+  `ccbench:<task>-<model>`. Each conversation keeps its **recorded tool
+  latencies** (`turn_gaps_s`: the pause before each turn), which
+  `analysis/mix.py` uses to pace CC-Bench's and AgentBank's agent turns.
+- **AgentBank:** the same role mapping, with ids `agentbank:<task>-<id>`,
+  written task by task in file order.
+- No `--seed`: the mix draws its own seeded sample from the whole file.
+
+Task 2's plans record the SHA-256 of the files these write, so the mix can
+be rebuilt exactly; the two pairs are separate files and do not replace
+each other.
+
+```bash
+python -m client_simulator.process_raw_traces --dataset agentbank-mix \
+  --raw data/raw/agentbank \
+  --output data/processed/agentbank-mix.responses.jsonl \
+  --client-output data/processed/agentbank-mix.conversations.jsonl
+python -m client_simulator.process_raw_traces --dataset ccbench-mix \
+  --raw data/raw/ccbench/train.parquet \
+  --output data/processed/ccbench-mix.responses.jsonl \
+  --client-output data/processed/ccbench-mix.conversations.jsonl
+```
+
 ## Bailian token traces and shared experiments
 
 Bailian Trace A is a two-hour anonymous production trace. The local file

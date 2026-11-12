@@ -2,8 +2,13 @@
 
 vLLM v0 ships only ``LRUEvictor`` (``vllm/core/evictor.py``). This module adds
 two more policies for the eviction study and lets ``VLLM_EVICTION_POLICY``
-(``lru``, ``lfu`` or ``fifo``; unset means ``lru``) choose the evictor of the
-GPU prefix-caching allocator. See ``specs/005-m2-cache-tuning``.
+(``lru``, ``lfu``, ``fifo``, ``ttdf``, ``race_rp``, ``sampled_lrfu``,
+``lru_leaf`` or ``wa``; unset means ``lru``) choose the evictor of the GPU
+prefix-caching allocator. See ``specs/005-m2-cache-tuning``. TTDF, RACE-RP
+and their leaf-LRU control (Milestone 3) live in
+``vllm/core/reuse_evictors.py``, Sampled LRFU in
+``vllm/core/sampled_lrfu.py`` and wa in ``vllm/core/wa_evictor.py``; they
+read ``VLLM_EVICTION_PARAMS``.
 
 Both evictors order the blocks in the free pool (refcount 0) by a key, lowest
 first:
@@ -31,7 +36,7 @@ popped and dropped when they outnumber live ones, so ``evict`` is O(log n)
 amortized.
 """
 import heapq
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import vllm.envs as envs
 from vllm.core.evictor import EvictionPolicy, Evictor
@@ -43,6 +48,11 @@ POLICY_NAMES = {
     "lru": EvictionPolicy.LRU,
     "fifo": EvictionPolicy.FIFO,
     "lfu": EvictionPolicy.LFU,
+    "ttdf": EvictionPolicy.TTDF,
+    "race_rp": EvictionPolicy.RACE_RP,
+    "sampled_lrfu": EvictionPolicy.SAMPLED_LRFU,
+    "lru_leaf": EvictionPolicy.LRU_LEAF,
+    "wa": EvictionPolicy.WA,
 }
 
 _Key = Tuple[float, ...]
@@ -203,4 +213,19 @@ def make_project_evictor(policy: EvictionPolicy) -> Optional[Evictor]:
         return FIFOEvictor()
     if policy == EvictionPolicy.LFU:
         return LFUEvictor()
+    if policy in (EvictionPolicy.TTDF, EvictionPolicy.RACE_RP,
+                  EvictionPolicy.LRU_LEAF):
+        from vllm.core import reuse_evictors
+        factories: Dict[EvictionPolicy, Callable[[Optional[str]], Evictor]] = {
+            EvictionPolicy.TTDF: reuse_evictors.TTDFEvictor.from_params,
+            EvictionPolicy.RACE_RP: reuse_evictors.RaceRPEvictor.from_params,
+            EvictionPolicy.LRU_LEAF: reuse_evictors.LeafLRUEvictor.from_params,
+        }
+        return factories[policy](envs.VLLM_EVICTION_PARAMS)
+    if policy == EvictionPolicy.SAMPLED_LRFU:
+        from vllm.core.sampled_lrfu import SampledLRFUEvictor
+        return SampledLRFUEvictor.from_params(envs.VLLM_EVICTION_PARAMS)
+    if policy == EvictionPolicy.WA:
+        from vllm.core.wa_evictor import WorkloadAwareEvictor
+        return WorkloadAwareEvictor.from_params(envs.VLLM_EVICTION_PARAMS)
     return None

@@ -72,6 +72,15 @@ def write_log(path, lines, end=True, compress=False):
     return path
 
 
+@pytest.mark.m3
+def test_load_events_keeps_the_last_access_of_frees(tmp_path):
+    lines = [E(3, "free", 1, A0, op="free")._replace(la=1002.5), LOG[0]]
+    log = ev.load_events(write_log(tmp_path / "e.jsonl", lines))
+    assert [e.la for e in log.events] == [1002.5, None]
+    # Six positional fields still make an event; `la` defaults to None.
+    assert ev.Event(1, "hit", 2, 0, A0, "allocate").la is None
+
+
 @pytest.mark.parametrize("compress", [False, True])
 def test_load_events_reads_header_events_and_end(tmp_path, compress):
     name = "events.jsonl.gz" if compress else "events.jsonl"
@@ -183,6 +192,48 @@ def test_prefix_hits_split_hits_before_and_after_the_first_miss():
     }
 
 
+@pytest.mark.m3
+def test_a_reprefill_that_logs_no_free_is_not_the_first_prefill():
+    # A1 reads B0's blocks 1 and 2 while B0 holds them, so its preemption
+    # frees nothing and logs nothing; its re-prefill starts again at
+    # block 1 and also misses block 5.
+    log = [
+        E(1, "miss", 1, B0),
+        E(1, "insert", 1, B0),
+        E(1, "miss", 2, B0),
+        E(1, "insert", 2, B0),
+        E(2, "hit", 1, A1),
+        E(2, "hit", 2, A1),
+        E(3, "hit", 1, A1),
+        E(3, "hit", 2, A1),
+        E(3, "miss", 5, A1),
+    ]
+    prefills = m.Prefills()
+    steps = [prefills.step(e.ev, e.hash, e.req, e.op) for e in log[4:]]
+    assert steps == [(0, 0, True), (0, 1, True), (1, 0, True), (1, 1, True),
+                     (1, 2, False)]
+    assert prefills.count(A1) == 2
+    assert m.prefix_hits(log)["sharegpt:A:1"] == {
+        "prefix_hits": 2,
+        "hits_after_miss": 0
+    }
+
+
+@pytest.mark.m3
+def test_a_first_prefill_without_events_still_counts():
+    # A0's prompt has no full block: its first event is a decode insert,
+    # so its lookups after a preemption belong to its second prefill.
+    log = [
+        E(1, "insert", 7, A0, op="append_slots"),
+        E(2, "free", 7, A0, op="free"),
+        E(3, "hit", 7, A0),
+    ]
+    prefills = m.Prefills()
+    assert [prefills.step(e.ev, e.hash, e.req, e.op)
+            for e in log] == [None, None, (1, 0, True)]
+    assert m.prefix_hits(log) == {}
+
+
 def test_usable_fraction_counts_only_the_cached_prefix():
     rows, _ = m.cached_fractions(RESULTS)
     prefixes = {
@@ -245,6 +296,22 @@ def test_reuse_intervals_count_requests_started_in_between():
     assert rows[(1, 6)]["requests_between"] == 0
     # Hash 4, 5 -> 8: nobody new started in (5, 8).
     assert rows[(4, 3)]["requests_between"] == 0
+
+
+@pytest.mark.m3
+def test_reuse_intervals_name_both_accesses():
+    rows = m.reuse_intervals(LOG)
+    # The 004 keys come first, unchanged; then both accesses (engine ids).
+    assert list(
+        rows[0])[:4] == ["hash", "interval_s", "requests_between", "kind"]
+    assert [(r["t"], r["prev_t"], r["req"], r["prev_req"], r["prev_kind"])
+            for r in rows] == [
+                (4, 1, A1, A0, "insert"),  # hash 1
+                (4, 2, A1, A0, "insert"),  # hash 3, written by A0's decode
+                (8, 5, B0, B0, "insert"),  # hash 4, across its eviction
+                (9, 8, A1, B0, "insert"),
+                (10, 4, B0, A1, "hit"),  # hash 1 again
+            ]
 
 
 def test_requests_between_counts_other_requests():

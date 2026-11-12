@@ -31,6 +31,6 @@ xgrammar<0.2
 # matplotlib 3.9 still uses and floods the test output with warnings.
 matplotlib==3.9.2
 pyparsing<3.3
-# Parquet datasets (client_simulator/adapters: AgentBank, CC-Bench); the
-# version vLLM's requirements-test.txt pins.
+# Parquet datasets (client_simulator/adapters: AgentBank, CC-Bench) and the
+# Milestone 3 analysis tables; the version vLLM's requirements-test.txt pins.
 pyarrow==18.0.0

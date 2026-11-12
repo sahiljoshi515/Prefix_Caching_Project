@@ -411,7 +411,7 @@ def make_figures(out: Path, figures: Path, rows: Sequence[Dict[str, Any]],
     residencies, intervals = {}, {}
     for r in done:
         if r["block_size"] == block_size and r["capacity_tokens"] == capacity:
-            events = ev.load_events(out / r["name"] / "events.jsonl").events
+            events = ev.load_events(ev.log_path(out / r["name"])).events
             residencies[r["policy"]] = m.hits_per_residency(events)
             intervals[r["policy"]] = [
                 i["interval_s"] for i in m.reuse_intervals(events)

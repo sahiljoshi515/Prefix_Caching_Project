@@ -7,14 +7,27 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Iterable
 
-from client_simulator.adapters import agentbank, ccbench, qwenbailian, sharegpt
+from client_simulator.adapters import (agentbank, agentbank_mix, bailian,
+                                       ccbench, ccbench_mix, qwenbailian,
+                                       sharegpt)
 from client_simulator.schema import Conversation, request_id
+from client_simulator.token_plan import write_plan
 
+# Text datasets provide `load_conversations`; the Bailian traces, which have
+# no text, provide `load_token_requests` and become token-level plans.
 ADAPTERS = {
     "sharegpt": sharegpt,
-    "bailian": qwenbailian,
+    # Milestone 3 Task 1's agent trajectories; Task 2's mix reads the
+    # ``-mix`` versions (main threads, with recorded tool latencies).
     "agentbank": agentbank,
     "ccbench": ccbench,
+    "agentbank-mix": agentbank_mix,
+    "ccbench-mix": ccbench_mix,
+    # Task 1's Bailian trace (Milestone 3): tokenized with the model.
+    "bailian": qwenbailian,
+    # Task 2's four Bailian traces (bailian-chat, -api, -thinking, -coder):
+    # token-level plans.
+    **bailian.ADAPTERS,
 }
 
 
@@ -44,6 +57,8 @@ def write_traces(conversations: Iterable[Conversation], client_path: Path,
                 }
                 if conversation.first_turn:
                     record["first_turn"] = conversation.first_turn
+                if conversation.turn_gaps_s is not None:
+                    record["turn_gaps_s"] = conversation.turn_gaps_s
                 client_file.write(
                     json.dumps(record, ensure_ascii=False) + "\n")
                 # History slices are only needed at replay time.
@@ -117,19 +132,30 @@ def main() -> None:
     parser.add_argument(
         "--client-output",
         type=Path,
-        help="Client JSONL; defaults to OUTPUT_STEM.conversations.jsonl.")
+        help="Client JSONL; defaults to OUTPUT_STEM.conversations.jsonl "
+        "(OUTPUT_STEM.plan.jsonl for token-level datasets).")
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be positive")
+    adapter = ADAPTERS[args.dataset]
+    token_level = hasattr(adapter, "load_token_requests")
+    # Task 2's Bailian adapters write a token-level plan; Task 1's tokenizes
+    # with the model and takes the seed, limit and block size.
+    plan = token_level and "tokenizer" not in inspect.signature(
+        adapter.load_token_requests).parameters
+    suffix = ".plan.jsonl" if plan else ".conversations.jsonl"
     client_path = args.client_output or args.output.with_name(
-        args.output.stem + ".conversations.jsonl")
+        args.output.stem + suffix)
     paths = [args.raw.resolve(), args.output.resolve(), client_path.resolve()]
     if len(set(paths)) != len(paths):
         parser.error("Raw, client, and server paths must all be different")
 
-    adapter = ADAPTERS[args.dataset]
     adapter.check_download(args.raw)
-    if hasattr(adapter, "load_token_requests"):
+    if plan:
+        count = write_plan(adapter.load_token_requests(args.raw), client_path,
+                           args.output)
+        print(f"Wrote {count} token-level requests to {client_path}")
+    elif token_level:
         from transformers import AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(args.model)
         count = write_token_traces(

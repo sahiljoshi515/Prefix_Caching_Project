@@ -1,0 +1,10 @@
+source,policy,capacity_tokens,evict_us_mean,metadata_kib,candidates_per_scan
+engine,ttdf,131072,5.985974,447.945312,37.706692
+engine,race_rp,131072,58.422067,1869.726562,64.477978
+engine,sampled_lrfu,131072,5.580837,20850.072917,4.0
+replay,lru,131072,1.143692,,
+replay,lfu,131072,0.9842,,
+replay,fifo,131072,1.233263,,
+replay,ttdf,131072,4.245095,447.945312,37.795631
+replay,race_rp,131072,44.091937,1870.580729,64.149304
+replay,sampled_lrfu,131072,3.237643,20840.958333,4.0

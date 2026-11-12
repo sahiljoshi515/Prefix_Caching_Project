@@ -1,0 +1,49 @@
+policy,setting,replay_policy,usable_32768,usable_65536,usable_131072,usable_262144,usable_393216,mean
+ttdf,"time constants 5 s / 120 s, weights 0.3 / 0.7","ttdf:tau_short=5,tau_long=120,w_short=0.3,w_long=0.7",0.421748,0.478794,0.536784,0.585826,0.627726,0.530176
+ttdf,"time constants 30 s / 600 s, weights 0.7 / 0.3","ttdf:tau_short=30,tau_long=600,w_short=0.7,w_long=0.3",0.419281,0.48205,0.540271,0.588243,0.619475,0.529864
+ttdf,"time constants 30 s / 60 s, weights 0.7 / 0.3","ttdf:tau_short=30,tau_long=60,w_short=0.7,w_long=0.3",0.420041,0.480502,0.540644,0.586124,0.617548,0.528972
+ttdf,"time constants 5 s / 120 s, weights 0.7 / 0.3",ttdf,0.424197,0.48008,0.531298,0.583969,0.625258,0.528961
+ttdf,"time constants 30 s / 120 s, weights 0.7 / 0.3","ttdf:tau_short=30,tau_long=120,w_short=0.7,w_long=0.3",0.420052,0.480011,0.540157,0.586012,0.617574,0.528761
+ttdf,"time constants 5 s / 60 s, weights 0.3 / 0.7","ttdf:tau_short=5,tau_long=60,w_short=0.3,w_long=0.7",0.421496,0.480888,0.535463,0.585245,0.619832,0.528585
+ttdf,"time constants 5 s / 60 s, weights 0.7 / 0.3","ttdf:tau_short=5,tau_long=60,w_short=0.7,w_long=0.3",0.423794,0.480851,0.532118,0.584707,0.619117,0.528117
+ttdf,"time constants 1 s / 120 s, weights 0.3 / 0.7","ttdf:tau_short=1,tau_long=120,w_short=0.3,w_long=0.7",0.417157,0.477108,0.528576,0.590028,0.627448,0.528063
+ttdf,"time constants 1 s / 60 s, weights 0.3 / 0.7","ttdf:tau_short=1,tau_long=60,w_short=0.3,w_long=0.7",0.418293,0.478465,0.5397,0.583874,0.619374,0.527941
+ttdf,"time constants 1 s / 120 s, weights 0.7 / 0.3","ttdf:tau_short=1,tau_long=120,w_short=0.7,w_long=0.3",0.414793,0.477963,0.530084,0.588554,0.627705,0.52782
+ttdf,"time constants 30 s / 60 s, weights 0.3 / 0.7","ttdf:tau_short=30,tau_long=60,w_short=0.3,w_long=0.7",0.419628,0.475142,0.536511,0.585644,0.618195,0.527024
+ttdf,"time constants 1 s / 60 s, weights 0.7 / 0.3","ttdf:tau_short=1,tau_long=60,w_short=0.7,w_long=0.3",0.415429,0.478297,0.537365,0.58446,0.619374,0.526985
+ttdf,"time constants 30 s / 120 s, weights 0.3 / 0.7","ttdf:tau_short=30,tau_long=120,w_short=0.3,w_long=0.7",0.419275,0.46967,0.526304,0.58691,0.623126,0.525057
+ttdf,"time constants 5 s / 600 s, weights 0.7 / 0.3","ttdf:tau_short=5,tau_long=600,w_short=0.7,w_long=0.3",0.423313,0.479069,0.52826,0.579031,0.60517,0.522969
+ttdf,"time constants 30 s / 600 s, weights 0.3 / 0.7","ttdf:tau_short=30,tau_long=600,w_short=0.3,w_long=0.7",0.420107,0.471667,0.529564,0.578158,0.610025,0.521904
+ttdf,"time constants 5 s / 600 s, weights 0.3 / 0.7","ttdf:tau_short=5,tau_long=600,w_short=0.3,w_long=0.7",0.423846,0.48,0.530957,0.57365,0.600553,0.521801
+ttdf,"time constants 1 s / 600 s, weights 0.7 / 0.3","ttdf:tau_short=1,tau_long=600,w_short=0.7,w_long=0.3",0.413284,0.47411,0.523694,0.565154,0.585789,0.512406
+ttdf,"time constants 1 s / 600 s, weights 0.3 / 0.7","ttdf:tau_short=1,tau_long=600,w_short=0.3,w_long=0.7",0.414774,0.477517,0.52124,0.559282,0.583906,0.511344
+race_rp,64 tables of 8 bits,race_rp:sketch=results/m3-race/tune/sketch-L64-P8.json,0.441015,0.505113,0.550404,0.592864,0.623665,0.542612
+race_rp,16 tables of 8 bits,race_rp:sketch=results/m3-race/tune/sketch-L16-P8.json,0.440435,0.504569,0.54848,0.590499,0.623677,0.541532
+race_rp,64 tables of 6 bits,race_rp:sketch=results/m3-race/tune/sketch-L64-P6.json,0.43996,0.503914,0.548576,0.590579,0.622428,0.541091
+race_rp,64 tables of 2 bits,race_rp:sketch=results/m3-race/tune/sketch-L64-P2.json,0.442537,0.504265,0.545276,0.588398,0.623865,0.540868
+race_rp,16 tables of 6 bits,race_rp:sketch=results/m3-race/tune/sketch-L16-P6.json,0.439565,0.503294,0.546979,0.590704,0.616004,0.539309
+race_rp,64 tables of 3 bits,race_rp:sketch=results/m3-race/tune/sketch-L64-P3.json,0.439784,0.501551,0.545489,0.587886,0.617745,0.538491
+race_rp,16 tables of 4 bits,race_rp:sketch=results/m3-race/tune/sketch-L16-P4.json,0.43837,0.499762,0.544614,0.587119,0.622483,0.53847
+race_rp,64 tables of 4 bits,race_rp:sketch=results/m3-race/tune/sketch-L64-P4.json,0.4385,0.498439,0.544295,0.58945,0.619357,0.538008
+race_rp,64 tables of 1 bits,race_rp:sketch=results/m3-race/tune/sketch-L64-P1.json,0.439279,0.498393,0.547959,0.586604,0.61769,0.537985
+race_rp,16 tables of 2 bits,race_rp:sketch=results/m3-race/tune/sketch-L16-P2.json,0.437865,0.50057,0.545193,0.589399,0.616788,0.537963
+race_rp,16 tables of 3 bits,race_rp:sketch=results/m3-race/tune/sketch-L16-P3.json,0.438576,0.499339,0.547009,0.585541,0.613812,0.536855
+race_rp,16 tables of 1 bits,race_rp:sketch=results/m3-race/tune/sketch-L16-P1.json,0.435736,0.49776,0.544009,0.584878,0.606758,0.533828
+sampled_lrfu,"half-life 4,096 uses, 64 drawn","sampled_lrfu:half_life=4096,sample_size=64",0.379272,0.469605,0.522731,0.571635,0.605718,0.509792
+sampled_lrfu,"half-life 512 uses, 64 drawn","sampled_lrfu:half_life=512,sample_size=64",0.378969,0.4534,0.516788,0.569539,0.602915,0.504322
+sampled_lrfu,"half-life 64 uses, 64 drawn","sampled_lrfu:half_life=64,sample_size=64",0.376577,0.452722,0.517308,0.569217,0.603564,0.503877
+sampled_lrfu,"half-life 32,768 uses, 64 drawn","sampled_lrfu:half_life=32768,sample_size=64",0.362649,0.425632,0.517356,0.579941,0.616012,0.500318
+sampled_lrfu,"half-life 4,096 uses, 16 drawn","sampled_lrfu:half_life=4096,sample_size=16",0.3573,0.453292,0.503156,0.554665,0.582926,0.490268
+sampled_lrfu,"half-life 512 uses, 16 drawn","sampled_lrfu:half_life=512,sample_size=16",0.352362,0.435288,0.497495,0.553773,0.582122,0.484208
+sampled_lrfu,"half-life 64 uses, 16 drawn","sampled_lrfu:half_life=64,sample_size=16",0.352068,0.430225,0.496989,0.554234,0.578325,0.482368
+sampled_lrfu,"half-life 32,768 uses, 16 drawn","sampled_lrfu:half_life=32768,sample_size=16",0.34244,0.390456,0.492261,0.562696,0.59451,0.476473
+sampled_lrfu,"half-life 262,144 uses, 64 drawn","sampled_lrfu:half_life=262144,sample_size=64",0.35653,0.387174,0.411067,0.468935,0.538173,0.432376
+sampled_lrfu,"half-life 4,096 uses, 4 drawn","sampled_lrfu:half_life=4096,sample_size=4",0.317707,0.351806,0.420358,0.493213,0.516177,0.419852
+sampled_lrfu,"half-life 262,144 uses, 16 drawn","sampled_lrfu:half_life=262144,sample_size=16",0.337349,0.356463,0.368462,0.461371,0.527534,0.410236
+sampled_lrfu,"half-life 2,097,152 uses, 64 drawn","sampled_lrfu:half_life=2097152,sample_size=64",0.357147,0.38968,0.40656,0.424154,0.465182,0.408544
+sampled_lrfu,"half-life 64 uses, 4 drawn","sampled_lrfu:half_life=64,sample_size=4",0.306106,0.352755,0.404709,0.470732,0.505748,0.40801
+sampled_lrfu,"half-life 512 uses, 4 drawn",sampled_lrfu,0.308108,0.342678,0.410325,0.466284,0.506477,0.406774
+sampled_lrfu,"half-life 32,768 uses, 4 drawn","sampled_lrfu:half_life=32768,sample_size=4",0.309672,0.319417,0.389574,0.479139,0.521003,0.403761
+sampled_lrfu,"half-life 2,097,152 uses, 16 drawn","sampled_lrfu:half_life=2097152,sample_size=16",0.337657,0.348836,0.355333,0.396601,0.449385,0.377563
+sampled_lrfu,"half-life 262,144 uses, 4 drawn","sampled_lrfu:half_life=262144,sample_size=4",0.306263,0.307992,0.338458,0.397216,0.442903,0.358566
+sampled_lrfu,"half-life 2,097,152 uses, 4 drawn","sampled_lrfu:half_life=2097152,sample_size=4",0.303888,0.305661,0.330651,0.372059,0.409838,0.344419
