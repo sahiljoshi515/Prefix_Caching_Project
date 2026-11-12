@@ -221,27 +221,3 @@ Entry format:
 - **Prompts:** "should we merge the milestone3-task2 into milestone3?";
   "Should we follow Jasmine? I mean task 2 is after task 1"; "Okay, then
   just use option A"; "just implement all".
-
-### PR pending (branch `docs-sahil-milestone-run-guide`): README on running each milestone
-
-- **Tools:** Claude Code (Claude Opus 5.5), with independent agents: one
-  checked every command, flag, path and number against the code, and a
-  "cold reader" followed the README from a fresh clone.
-- **Used for:**
-  - reading the course handout to learn what the README is graded on;
-  - rewriting the README around running each milestone and task;
-  - two smoke configurations, `examples/agentbank_smoke.json` and
-    `examples/ccbench_smoke.json`;
-  - running the README's commands from a fresh clone with real downloads,
-    with each full grid only started;
-  - this entry and the changelog line.
-
-  Sahil chose to base the branch on PR #18's branch, and to verify with the
-  quick runs plus every analysis step rather than every full grid.
-- **Prompts:** "we need to modify the main README file by telling the user
-  how to run the results for Milestone1, Milestone2, Milestone3 clearly.
-  Can you create a PR by branching off the latest working branch? Make
-  sure you run the code yourself to see every command you write works, and
-  spawn multiple agents to track behavioral changes. [...] read this to get
-  what we are going to be graded on, and write the README".
-
