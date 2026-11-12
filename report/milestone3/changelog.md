@@ -12,6 +12,23 @@ here.
 
 ## Repository
 
+### Unreleased (branch `docs-sahil-milestone-run-guide`): README on running each milestone (sahiljoshi515)
+
+- **README:** rewritten for the submission. It now gives:
+  - results at a glance;
+  - setup and a quick check;
+  - one data section for every dataset, including the Bailian samples
+    and Task 2's traces, which had no documented commands;
+  - for each milestone and task: a quick run with what to expect, the
+    full reproduction with its runtime, the outputs, and the report note.
+
+  Milestone 3 Task 2's commands now carry their full arguments instead of
+  `...`, and work in bash and zsh. Every command was run from a fresh
+  clone.
+- **Smoke configurations:** `examples/agentbank_smoke.json` and
+  `examples/ccbench_smoke.json`, so every Task 1 workload has a run of a
+  few minutes.
+
 ### Unreleased (branch `milestone3-marcus-merge-task2`, PR #18): Task 2 merged into `milestone-3` (marcus)
 
 - **Merged:** `milestone3_task2` (Task 2's Phase 1 and PR #16's Phase 2)
