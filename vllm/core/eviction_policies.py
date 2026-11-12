@@ -36,7 +36,7 @@ popped and dropped when they outnumber live ones, so ``evict`` is O(log n)
 amortized.
 """
 import heapq
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import vllm.envs as envs
 from vllm.core.evictor import EvictionPolicy, Evictor
@@ -216,12 +216,12 @@ def make_project_evictor(policy: EvictionPolicy) -> Optional[Evictor]:
     if policy in (EvictionPolicy.TTDF, EvictionPolicy.RACE_RP,
                   EvictionPolicy.LRU_LEAF):
         from vllm.core import reuse_evictors
-        cls = {
-            EvictionPolicy.TTDF: reuse_evictors.TTDFEvictor,
-            EvictionPolicy.RACE_RP: reuse_evictors.RaceRPEvictor,
-            EvictionPolicy.LRU_LEAF: reuse_evictors.LeafLRUEvictor,
-        }[policy]
-        return cls.from_params(envs.VLLM_EVICTION_PARAMS)
+        factories: Dict[EvictionPolicy, Callable[[Optional[str]], Evictor]] = {
+            EvictionPolicy.TTDF: reuse_evictors.TTDFEvictor.from_params,
+            EvictionPolicy.RACE_RP: reuse_evictors.RaceRPEvictor.from_params,
+            EvictionPolicy.LRU_LEAF: reuse_evictors.LeafLRUEvictor.from_params,
+        }
+        return factories[policy](envs.VLLM_EVICTION_PARAMS)
     if policy == EvictionPolicy.SAMPLED_LRFU:
         from vllm.core.sampled_lrfu import SampledLRFUEvictor
         return SampledLRFUEvictor.from_params(envs.VLLM_EVICTION_PARAMS)

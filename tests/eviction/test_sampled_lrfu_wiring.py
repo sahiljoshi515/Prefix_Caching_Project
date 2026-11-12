@@ -17,6 +17,7 @@ Block size 4, so every block, score and victim is worked out by hand.
 """
 import json
 import random
+from typing import Any, List
 
 import pytest
 
@@ -588,7 +589,7 @@ def test_the_pool_is_always_the_idle_cached_blocks(monkeypatch, params):
     survive."""
     alloc, gpu = make_allocator(monkeypatch, num_blocks=12, params=params)
     lrfu = gpu.evictor
-    live = []
+    live: List[Any] = []
     victims = []
     evict = lrfu.evict
 
@@ -636,6 +637,7 @@ def test_the_pool_is_always_the_idle_cached_blocks(monkeypatch, params):
         check_pool(gpu, live)
         long_survives()
     assert len(long.blocks) == 4
+    assert previous is not None
     previous.free()
     live.remove(previous)
     check_pool(gpu, live)

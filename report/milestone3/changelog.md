@@ -35,6 +35,11 @@ here.
   `ccbench-mix` have the SHA-256 Task 2's plans recorded, and seed 2's
   balanced plan rebuilds byte for byte, so Task 2's results stand
   without reruns; Task 1's adapters and tests are unchanged.
+- **Fixed (mypy):** CI's mypy check, which runs on PRs into `milestone-3`
+  but did not run on Task 2's PRs into `milestone3_task2`, found 69 type
+  errors in Task 2's code and tests. They are fixed with annotations and a
+  few asserts; behaviour is unchanged, and mypy passes on Python 3.9 to
+  3.12.
 
 ### 2026-11-04: `milestone-2` renamed to `milestone-3`, the default branch (sahiljoshi515)
 

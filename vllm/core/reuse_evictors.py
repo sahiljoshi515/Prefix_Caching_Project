@@ -378,7 +378,11 @@ class TTDFEvictor(LeafScoreEvictor):
     def from_params(cls, text: Optional[str]) -> "TTDFEvictor":
         params = parse_params(text, TTDF_DEFAULTS)
         values = {k: float(params.get(k, v)) for k, v in TTDF_DEFAULTS.items()}
-        return cls(**values, stats_path=params.get("stats"))
+        return cls(tau_short=values["tau_short"],
+                   tau_long=values["tau_long"],
+                   w_short=values["w_short"],
+                   w_long=values["w_long"],
+                   stats_path=params.get("stats"))
 
     def _on_access(self, content_hash: int, block: _Block, now: float) -> None:
         dt = now - block.last

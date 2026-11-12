@@ -22,6 +22,7 @@ argmin from scratch with its own counters.
 import json
 import math
 import random
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -278,7 +279,7 @@ def test_counters_equal_the_full_sums_over_all_accesses(seed):
         "w_long": rng.uniform(0.0, 1.0),
     }
     evictor, clock = ttdf(rng.uniform(0.0, 100.0), **params)
-    times = {1: [], 2: [], 3: []}
+    times: Dict[int, List[Any]] = {1: [], 2: [], 3: []}
     for _ in range(300):
         gaps = [0.0, rng.uniform(0.0, 2.0), rng.expovariate(1 / 20.0)]
         clock.t += rng.choice(gaps)
@@ -1142,7 +1143,9 @@ class Workload:
         self.clock = Clock()
         self.evictor = TTDFEvictor(clock=self.clock, **params)
         self.ref = Reference(**{**TTDF_DEFAULTS, **params})
-        self.tree = {None: []}  # Prompt contents: hash -> next blocks.
+        self.tree: Dict[Optional[int], List[Any]] = {
+            None: []
+        }  # Prompt contents: hash -> next blocks.
         self.depth = {}
         self.next_hash = 1
         self.free_ids = list(range(self.BLOCKS))
@@ -1177,7 +1180,7 @@ class Workload:
         return path
 
     def allocate(self):
-        held = []
+        held: List[Any] = []
         for content_hash in self.prompt():
             parent = held[-1] if held else None
             if content_hash in self.ref.cached:

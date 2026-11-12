@@ -836,7 +836,10 @@ def test_idle_parent_of_a_block_in_use_is_not_a_candidate():
 
 
 def test_one_scan_per_time_and_blocks_freed_meanwhile_are_scored():
-    tree = {n: (None, i) for i, n in enumerate("pqsr", start=1)}
+    tree: Dict[str, Tuple[Optional[str], int]] = {
+        n: (None, i)
+        for i, n in enumerate("pqsr", start=1)
+    }
     hand = Hand(threshold_sketch(F120, 1.5), tree)
     hand.request("q", t=0.0)
     hand.request("q", t=1.0)  # f120 = 2: HIGH
@@ -882,7 +885,11 @@ def test_first_block_access_keeps_the_heap():
 
 def stale_entry_scenario() -> Hand:
     """x evicted and recomputed into the same block id at one time."""
-    tree = {"x": (None, 7), "y": (None, 9), "z": (None, 4)}
+    tree: Dict[str, Tuple[Optional[str], int]] = {
+        "x": (None, 7),
+        "y": (None, 9),
+        "z": (None, 4)
+    }
     hand = Hand(f120_levels_sketch(), tree)
     hand.request("x", t=0.0)  # f120 = 1: S = 1/2
     hand.request("y", t=1.0)  # 1/2
@@ -913,7 +920,11 @@ def test_block_recomputed_into_the_same_id_is_scored_afresh():
 def test_idle_leaf_accessed_at_the_heap_time_is_rescored():
     """Not the allocator's order (it removes a block before using it), but
     the victim must still be the argmin."""
-    tree = {"p": (None, 1), "q": (None, 2), "s": (None, 3)}
+    tree: Dict[str, Tuple[Optional[str], int]] = {
+        "p": (None, 1),
+        "q": (None, 2),
+        "s": (None, 3)
+    }
     hand = Hand(f120_levels_sketch(), tree)
     for t, name in enumerate("pqs"):
         hand.request(name, t=float(t))  # each f120 = 1: S = 1/2

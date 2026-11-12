@@ -6,6 +6,7 @@ tokens, then EOS.
 import asyncio
 import io
 import json
+from typing import Callable, Optional
 
 import httpx
 import pytest
@@ -36,7 +37,7 @@ class FakeServer:
         self.max_model_len, self.cached, self.wrong = (max_model_len, cached,
                                                        set(wrong))
         self.calls = []
-        self.clock = None
+        self.clock: Optional[Callable[[], float]] = None
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -54,6 +55,7 @@ class FakeServer:
                                   })
         body = json.loads(request.content)
         rid = request.headers["X-Request-Id"]
+        assert self.clock is not None
         self.calls.append((rid, body, self.clock()))
         generated = body["max_tokens"] - (1 if rid in self.wrong else 0)
         return httpx.Response(200,

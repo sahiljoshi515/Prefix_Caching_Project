@@ -30,7 +30,7 @@ import math
 import random
 from collections import Counter, OrderedDict
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -293,7 +293,7 @@ def test_scores_equal_the_full_sums_over_counted_accesses(half_life, seed):
     at later times, across many interleaved blocks."""
     rng = random.Random(seed)
     evictor, _ = lrfu(half_life=half_life)
-    times = {}
+    times: Dict[Any, Any] = {}
     for t in range(1, 1501):
         block_id = rng.randrange(12)
         access(evictor, block_id)
@@ -387,7 +387,8 @@ def test_very_small_half_life_evicts_the_least_recent_regardless_of_count():
 def run_idle_workload(evictor, rng, steps, on_evict):
     """Random hits, frees and evictions on 30 blocks with every candidate
     scored (sample_size >= pool); `on_evict(victim, idle, history)`."""
-    idle, in_use, history = set(), set(), {}
+    idle, in_use = set(), set()
+    history: Dict[Any, Any] = {}
     for _ in range(steps):
         op = rng.random()
         if op < 0.55:
@@ -568,7 +569,7 @@ def test_victim_is_the_lowest_score_among_the_drawn_candidates(sample_size):
                 pool[i] for i in rng.sample(range(n), min(sample_size, n))
             ]
             expected = min(drawn, key=lambda b: (COUNTS[b], b))
-            missed_global_min += expected != min(pool, key=COUNTS.get)
+            missed_global_min += expected != min(pool, key=COUNTS.__getitem__)
             assert evictor.evict() == (expected, h(expected))
             take(pool, expected)
             check_pool(evictor, pool)
@@ -629,7 +630,7 @@ def test_fewer_blocks_than_sample_size_scores_the_whole_pool(pool_size):
 def test_sampling_is_uniform_over_the_pool():
     """With k = 1 the victim is the one drawn block; over 2000 seeds each
     of 5 blocks goes first about 400 times."""
-    first = Counter()
+    first: Counter = Counter()
     for seed in range(2000):
         evictor, _ = lrfu(sample_size=1, seed=seed)
         access(evictor, *range(5))
@@ -659,7 +660,9 @@ def test_victims_are_always_idle_blocks(seed):
     of theirs back when they finish; no victim is ever held by one."""
     rng = random.Random(seed)
     evictor, _ = lrfu(half_life=3, sample_size=3, seed=seed)
-    refs, running, evicted = Counter(), [], 0
+    refs: Counter = Counter()
+    running: List[Any] = []
+    evicted = 0
     for _ in range(3000):
         op = rng.random()
         if op < 0.35 and len(running) < 4:
@@ -1179,7 +1182,7 @@ class Reference:
         self.rng = random.Random(seed)
         self.now = 0
         self.s, self.tau, self.times, self.life = {}, {}, {}, {}
-        self.lives = Counter()  # Cachings of each block id so far.
+        self.lives: Counter = Counter()  # Cachings of each block id so far.
         self.born = {}  # (block id, life) -> the clock when it was cached.
         self.counted = OrderedDict()  # Request -> its pairs, oldest first.
         self.ever = set()  # Every (request, block id, life) counted.
@@ -1287,7 +1290,7 @@ class Workload:
         self.finished = []  # Requests that may come back.
         self.ever_evicted = set()
         self.next_request = self.next_hash = self.peak = 0
-        self.counts = Counter()
+        self.counts: Counter = Counter()
 
     def start(self):
         if len(self.running) >= self.MAX_RUNNING:

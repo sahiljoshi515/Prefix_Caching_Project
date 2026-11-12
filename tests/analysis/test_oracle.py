@@ -10,6 +10,7 @@ import json
 import math
 import random
 from collections import Counter, defaultdict
+from typing import Any, Dict
 
 import pytest
 
@@ -249,7 +250,7 @@ def small_capacities(requests):
 
 def closure_breaks(requests, run_dir):
     """Evictions in the run's log of a block with a descendant cached."""
-    parent = {}
+    parent: Dict[Any, Any] = {}
     for r in requests:
         hashes = chain(r.prompt_token_ids + r.output_token_ids)
         parent.update(zip(hashes[1:], hashes))

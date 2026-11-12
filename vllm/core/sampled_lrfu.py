@@ -45,7 +45,7 @@ from vllm.core.block import cache_events
 from vllm.core.evictor import Evictor
 from vllm.core.reuse_evictors import parse_params
 
-DEFAULTS = {"half_life": 512.0, "sample_size": 4, "seed": 0}
+DEFAULTS: Dict[str, Any] = {"half_life": 512.0, "sample_size": 4, "seed": 0}
 # How many recent requests remember the blocks they counted (a preempted
 # request comes back within a few hundred requests).
 REQUEST_MEMORY = 4096

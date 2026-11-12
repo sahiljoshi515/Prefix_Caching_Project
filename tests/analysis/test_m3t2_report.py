@@ -1,4 +1,6 @@
 """The results page's chart data and number formats (spec 007 FR-011)."""
+from typing import Any, Dict
+
 import pytest
 
 from analysis import m3t2_report as rp
@@ -39,7 +41,7 @@ def test_y_range_rounds_out_to_five_points():
 
 
 def test_identification_view_orders_the_confusion_by_workload():
-    models = {
+    models: Dict[str, Dict[str, Any]] = {
         k: {
             "accuracy": 0.5,
             "balanced_accuracy": 0.4,

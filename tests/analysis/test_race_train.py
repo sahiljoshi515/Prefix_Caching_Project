@@ -14,6 +14,7 @@ import random
 import re
 from collections import Counter
 from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pytest
@@ -137,7 +138,7 @@ def toy_rows(horizon=H, tau=TAU, ages=AGES):
 
 def toy_trace():
     """`TOY` as the replay records it: every call in time order."""
-    calls = []
+    calls: List[Tuple[Any, ...]] = []
     for h, (depth, parent, accesses, idles) in TOY.items():
         calls += [(t, 0, h, depth, parent) for t in accesses]
         calls += [(t, 1, h, None, None) for t in idles]
@@ -269,7 +270,7 @@ def random_trace(seed, requests=40):
     idle start shares its time with an access, while observation times (an
     idle start plus 5 s) and window edges land on access times."""
     rng = random.Random(seed)
-    ids = {}
+    ids: Dict[Any, Any] = {}
 
     def block(path):
         return ids.setdefault(path, len(ids) + 1)
@@ -498,7 +499,7 @@ def test_a_deduplicated_decode_block_is_an_access(tmp_path):
 def write_engine_run(run_dir, starts_frees):
     """An engine run folder: each request's allocate and free events and
     its client row."""
-    events = [{"ev": "header", "t": 0.0}]
+    events: List[Dict[str, Any]] = [{"ev": "header", "t": 0.0}]
     client = []
     for rid, (start, free) in starts_frees.items():
         engine_id = f"cmpl-{rid}-0"

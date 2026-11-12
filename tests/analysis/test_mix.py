@@ -5,6 +5,7 @@ so the expected counts and times can be worked out by hand.
 """
 import json
 from dataclasses import asdict
+from typing import Any, Dict
 
 import pytest
 
@@ -131,7 +132,7 @@ def test_fifty_fifty_mix_hits_its_targets_and_keeps_sessions_whole():
     }
     assert counts == {"sharegpt": 10, "bailian-chat": 10}
     assert manifest["requests"] == 20
-    by_session = {}
+    by_session: Dict[Any, Any] = {}
     for r in requests:
         by_session.setdefault(r.session_id, []).append(r)
     for session in by_session.values():
@@ -360,7 +361,7 @@ def test_text_turns_planned_at_or_after_the_stop_are_dropped():
                                conversations={"sharegpt": convs},
                                tail=0.0)
     info = manifest["workloads"]["sharegpt"]
-    sessions = {}
+    sessions: Dict[Any, Any] = {}
     for r in requests:
         sessions.setdefault(r.session_id, []).append(r)
     cut = 0

@@ -6,6 +6,7 @@ point 7.
 `summary` builds a small but complete synthetic ``summary.json`` that the
 narrative and figure tests reuse."""
 import copy
+from typing import Any, Dict
 
 import pytest
 
@@ -243,7 +244,7 @@ def mixed_groups(engine):
     out = {}
     for k in ("all", *rp.GROUPS):
         off = 0.0 if k == "all" else MIXED_OFFSET[k]
-        cell = {"prompt_tokens": PROMPT_TOKENS[k]}
+        cell: Dict[str, Any] = {"prompt_tokens": PROMPT_TOKENS[k]}
         for p in (*rp.POLICIES, *engine, "ceiling"):
             cell[p] = {"usable": spread(MIXED[p] + off)}
             if p in VERDICTS:
@@ -424,7 +425,7 @@ def identify():
         "all": 0.9,
         "all_but_timing": 0.85,
     }
-    models = {
+    models: Dict[str, Dict[str, Any]] = {
         k: {
             "accuracy": a,
             "balanced_accuracy": a - 0.1,

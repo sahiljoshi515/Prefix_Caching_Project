@@ -502,6 +502,7 @@ class PrefixCachingBlockAllocator(BlockAllocator):
     def _record_access(self, block: Block) -> None:
         # COMP 536: a request used this cached block (TTDF and RACE-RP).
         prev = block.prev_block
+        assert block.block_id is not None and block.content_hash is not None
         self.evictor.record_access(block.block_id, block.content_hash,
                                    block.num_tokens_total // self._block_size,
                                    None if prev is None else prev.content_hash)

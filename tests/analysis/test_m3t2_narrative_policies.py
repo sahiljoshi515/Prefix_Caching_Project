@@ -3,6 +3,7 @@ Sampled LRFU (``analysis/m3t2_narrative.py``): they join points 1, 2 and
 4, get a point 7, and leave the page as it was when the summary does not
 hold them."""
 import re
+from typing import Any, Dict
 
 import pytest
 
@@ -219,11 +220,13 @@ def test_new_method_engine_item_names_the_policies_and_check_runs():
 
 def claim(html):
     """A finding's claim (its heading), as text."""
-    return text(re.search(r'<div class="claim"><h3>(.*?)</h3>', html)[1])
+    match = re.search(r'<div class="claim"><h3>(.*?)</h3>', html)
+    assert match is not None
+    return text(match[1])
 
 
 def test_q1_adds_table_rows_and_a_clause_for_the_new_policies():
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q1(summary(), facts)
     rows = table_rows(html)
     assert [r[0] for r in rows] == ["LRU", "LFU", "FIFO", "TTDF", "RACE-RP"]
@@ -254,7 +257,7 @@ def test_q1_new_clause_without_an_lru_cutoff():
     s = summary()
     bins = curve([1.0, 0.99, 0.95, 0.30, 0.05, 0.02])
     s["mixed_intervals"]["lru"] = {"curve": bins, "by_bin": coarse(bins)}
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q1(s, facts)
     assert facts["lru_cut"] is None
     assert "together" not in html
@@ -266,7 +269,7 @@ def test_q1_new_clause_without_an_lru_cutoff():
 
 
 def test_q1_without_new_policies_keeps_the_three_rows():
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q1(baseline(), facts)
     assert [r[0] for r in table_rows(html)] == ["LRU", "LFU", "FIFO"]
     t = text(html)
@@ -276,7 +279,7 @@ def test_q1_without_new_policies_keeps_the_three_rows():
 
 
 def test_q1_one_new_policy():
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q1(summary(engine=("race_rp", )), facts)
     assert [r[0] for r in table_rows(html)][-1] == "RACE-RP"
     assert "TTDF serves" not in facts["q1_answer"]
@@ -291,7 +294,7 @@ def test_q1_one_new_policy():
 
 
 def test_q2_lists_the_new_policies_against_lru():
-    facts = {}
+    facts: Dict[str, Any] = {}
     t = text(nv.q2(summary(), facts))
     assert ("LRU serves 56.0% of the mix's prompt tokens from the cache, LFU "
             "54.0%, FIFO 50.0%, TTDF 57.0% and RACE-RP 55.5%, out of 78.0% "
@@ -310,7 +313,7 @@ def test_q2_lists_the_new_policies_against_lru():
 
 
 def test_q2_without_new_policies():
-    facts = {}
+    facts: Dict[str, Any] = {}
     t = text(nv.q2(baseline(), facts))
     assert "from the cache, LFU 54.0% and FIFO 50.0%, out of 78.0%" in t
     assert "between FIFO, LRU and LFU?" in t
@@ -318,7 +321,7 @@ def test_q2_without_new_policies():
 
 
 def test_q2_one_new_policy():
-    facts = {}
+    facts: Dict[str, Any] = {}
     t = text(nv.q2(summary(engine=("ttdf", )), facts))
     assert "between FIFO, LRU and LFU (and TTDF)?" in t
     assert "RACE-RP" not in t
@@ -346,7 +349,7 @@ def test_vs_lru_runs(verdicts, words):
 
 def test_q4_adds_the_new_policies_against_lru():
     s = summary()
-    facts = {}
+    facts: Dict[str, Any] = {}
     t = text(nv.q4(s, rp.build_data(s), facts))
     assert ("The new policies at 128K (cache replay): TTDF 58.0% and RACE-RP "
             "58.0%. Across sizes, TTDF is from 2.0 points below to 2.0 points "
@@ -462,7 +465,7 @@ def test_q4_engine_note_with_a_single_engine_run():
 def test_q4_new_line_follows_the_drawn_curves():
     # Engine runs for both, a replay curve for RACE-RP only.
     s = summary(replay=("race_rp", ))
-    facts = {}
+    facts: Dict[str, Any] = {}
     t = text(nv.q4(s, rp.build_data(s), facts))
     assert "The new policies at 128K (cache replay): RACE-RP 58.0%." in t
     assert facts["q4_new"] == ("RACE-RP trails LRU at every size (2.0 points "
@@ -664,7 +667,7 @@ def test_tuning_block_is_empty_without_tuning():
 
 def test_q7_is_empty_without_its_data():
     s = baseline()
-    facts = {}
+    facts: Dict[str, Any] = {}
     assert nv.q7(s, rp.build_data(s), facts) == ""
     assert nv.q7(s, {}, facts) == "" and "q7_answer" not in facts
 
@@ -689,7 +692,7 @@ def test_q7_with_engine_runs():
     # all None, as m3t2_study writes it).
     s = summary()
     assert None in s["capacity_window"]["curve"]["sampled_lrfu"]["hit_rate"]
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q7(s, rp.build_data(s), facts)
     t = text(html)
     assert '<span class="eyebrow">Point 7 · Mixed workload</span>' in html
@@ -762,7 +765,7 @@ def test_q7_with_engine_runs():
 def test_q7_with_engine_runs_for_a_policy_not_yet_replayed():
     # Engine runs for all three, replay curves for TTDF and RACE-RP only.
     s = summary(engine=ALL_NEW, replay=NEW)
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q7(s, rp.build_data(s), facts)
     assert "Do TTDF and RACE-RP keep more" in text(html)
     # Sampled LRFU has no curve to rank: the replay ranking leaves it out.
@@ -777,7 +780,7 @@ def test_q7_with_engine_runs_for_a_policy_not_yet_replayed():
 
 def test_q7_with_one_new_policy():
     s = summary(engine=("race_rp", ), replay=("race_rp", ))
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q7(s, rp.build_data(s), facts)
     t = text(html)
     assert ("Does RACE-RP keep more of the mix than LRU, LFU and FIFO?") in t
@@ -835,7 +838,7 @@ def test_q7_evictions_link_fewer_evictions_to_fewer_needed_again():
 
 def test_q7_without_engine_runs_has_no_evictions_chart():
     s = summary(engine=())
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q7(s, rp.build_data(s), facts)
     assert 'id="fig-q7-workloads"' in html
     assert "fig-q7-evictions" not in html
@@ -961,7 +964,7 @@ def test_engine_only_page_has_six_points_but_names_the_new_policies():
 
 ONLY_LRFU = {"engine": ("sampled_lrfu", ), "replay": ("sampled_lrfu", )}
 ONLY_RACE = {"engine": ("race_rp", ), "replay": ("race_rp", )}
-PAIR = {}
+PAIR: Dict[str, Any] = {}
 THREE = {"engine": ALL_NEW, "replay": ALL_NEW}
 STATES = [ONLY_LRFU, ONLY_RACE, PAIR, THREE]
 STATE_IDS = ["lrfu", "race_rp", "ttdf+race_rp", "three"]
@@ -1036,7 +1039,7 @@ def test_terms_have_one_entry_per_new_policy(kw):
 @pytest.mark.parametrize("kw", STATES, ids=STATE_IDS)
 def test_q1_explains_each_new_policy_present(kw):
     s, names = present(kw)
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q1(s, facts)
     for p in rp.NEW_POLICIES:
         assert (nv.WHY[p] in html) is (p in names)
@@ -1049,7 +1052,7 @@ def test_q1_explains_each_new_policy_present(kw):
 
 
 def test_q1_three_new_policies():
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q1(summary(**THREE), facts)
     assert table_rows(html)[-1] == \
         ["Sampled LRFU", "96.3%", "35.0%", "0.0%", "0.0%", "0.0%"]
@@ -1306,7 +1309,7 @@ RANDOM = (" Choosing among only 4 random blocks also means the victim is "
 
 def test_q7_three_new_policies():
     s = summary(**THREE)
-    facts = {}
+    facts: Dict[str, Any] = {}
     html = nv.q7(s, rp.build_data(s), facts)
     t = text(html)
     items = verdict_items(html)

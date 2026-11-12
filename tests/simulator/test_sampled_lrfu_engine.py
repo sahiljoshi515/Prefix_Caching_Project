@@ -8,6 +8,8 @@ startup, prompts sharing a prefix get prefix-cache hits, every block access
 is made inside a block-manager call that names its request, and a full
 cache evicts only idle blocks, without errors.
 """
+from typing import Any, Dict
+
 import pytest
 
 from vllm import SamplingParams, TokensPrompt
@@ -152,7 +154,8 @@ def test_a_recomputed_request_counts_its_blocks_once(lrfu_engine):
                          num_gpu_blocks_override=8,
                          max_model_len=128)
     lrfu = allocator(engine).evictor
-    steps, life = {}, {}
+    steps: Dict[Any, Any] = {}
+    life: Dict[Any, Any] = {}
     record, evict = lrfu.record_access, lrfu.evict
     skipped = []
 

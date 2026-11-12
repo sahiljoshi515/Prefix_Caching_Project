@@ -4,6 +4,7 @@ windowed capacity curve by workload group, and the whole study on a tiny
 hand-made run grid."""
 import json
 import math
+from typing import Any, Dict, List, Tuple
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -393,7 +394,7 @@ def test_capacity_groups_evictions_none_when_a_seed_did_not_count():
 
 NAN = math.nan
 # Free-pool stays: (owner, end, idle s, evictor, next lookup t).
-STAYS = {
+STAYS: Dict[str, List[Tuple[Any, ...]]] = {
     "ceiling": [("sharegpt", "revive", 5.0, None, 50.0),
                 ("agentbank", "revive", 2.0, None, 30.0),
                 ("ccbench", "censored", 80.0, None, NAN),
@@ -773,7 +774,7 @@ def test_study_without_new_policies_is_the_baselines_alone(grid):
 def test_main_passes_the_tuning_and_overhead_sweeps_to_study(
         tmp_path, monkeypatch, capsys):
     import analysis.run_m2_task2 as m2
-    seen = {}
+    seen: Dict[Any, Any] = {}
 
     def fake_study(runs, cfg, sweep, reports, plans, capacity_sweep,
                    tuning_sweep, overhead_sweep):

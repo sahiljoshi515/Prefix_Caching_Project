@@ -63,7 +63,7 @@ def test_agentbank_maps_roles_and_merges_repeats():
             },
         ]
     }
-    counts = Counter()
+    counts: Counter = Counter()
     conversation = agentbank.to_conversation(record, counts, "alfworld")
     assert conversation.conversation_id == "agentbank:alfworld-alfworld_7"
     assert conversation.messages == [
@@ -93,7 +93,7 @@ def test_agentbank_maps_roles_and_merges_repeats():
     }], "skipped_unsupported_role"),
 ])
 def test_agentbank_skips_unusable_trajectories(messages, reason):
-    counts = Counter()
+    counts: Counter = Counter()
     record = {"id": "x_0", "conversations": messages}
     assert agentbank.to_conversation(record, counts, "x") is None
     assert counts[reason] == 1
@@ -164,7 +164,7 @@ def test_ccbench_serializes_tools_and_drops_side_events():
         }]),
         event("user", "thanks"),
     ]
-    counts = Counter()
+    counts: Counter = Counter()
     conversation = ccbench.to_conversation(ccbench_row(events), counts)
     assert conversation.conversation_id == "ccbench:12-glm-4-5"
     assert conversation.messages == [
@@ -211,7 +211,7 @@ def test_ccbench_drops_compaction_errors_and_thinking_only_events():
         meta,
         event("assistant", "Done."),
     ]
-    counts = Counter()
+    counts: Counter = Counter()
     conversation = ccbench.to_conversation(ccbench_row(events), counts)
     assert conversation.messages == [
         Message("user", "Fix the bug"),
@@ -271,7 +271,7 @@ def test_ccbench_records_the_pause_before_each_turn():
             "text": "Done"
         }], timestamp=t(30)),
     ]
-    counts = Counter()
+    counts: Counter = Counter()
     conversation = ccbench.to_conversation(ccbench_row(events), counts)
     assert [m.role for m in conversation.messages] == ["user", "assistant"] * 4
     assert conversation.turn_gaps_s == [None, 1.5, 0.0, None]
@@ -295,7 +295,7 @@ def test_ccbench_turn_gaps_reach_the_processed_file(tmp_path):
 
 
 def test_ccbench_skips_a_trajectory_that_starts_with_the_assistant():
-    counts = Counter()
+    counts: Counter = Counter()
     row = ccbench_row([event("assistant", "hi"), event("user", "x")])
     assert ccbench.to_conversation(row, counts) is None
     assert counts["skipped_assistant_first"] == 1

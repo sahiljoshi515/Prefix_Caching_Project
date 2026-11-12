@@ -6,6 +6,7 @@ which records the arguments each run's replay got and writes its run.json.
 """
 import contextlib
 import json
+from typing import Any, Dict
 
 import pytest
 
@@ -135,7 +136,7 @@ def test_a_wa_run_records_its_grid_policy_and_is_found_again(tmp_path):
 
 
 def test_replay_passes_the_policys_settings(tmp_path, monkeypatch):
-    seen = {}
+    seen: Dict[str, Any] = {}
 
     def fake_replay(plan_dir, run_dir, **kwargs):
         seen.clear()

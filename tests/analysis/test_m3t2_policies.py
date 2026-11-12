@@ -3,6 +3,7 @@ policy strings, seed-1 tuning, per-workload evictions, overhead and the CSV
 export, each on a hand-made input whose answer is worked out beside it."""
 import csv
 import json
+from typing import Any, Dict
 
 import pytest
 
@@ -855,7 +856,7 @@ def test_write_csvs_writes_every_section_with_blank_none_cells(tmp_path):
 def test_write_csvs_leaves_out_a_group_cell_without_usable_reuse(tmp_path):
     # A group with no prompt tokens in the window in any seed has a null
     # spread: its row is absent, the other policies' rows are kept.
-    summary = {
+    summary: Dict[str, Any] = {
         "config": {
             "reported_seeds": [2]
         },
@@ -899,7 +900,7 @@ def test_write_csvs_skips_missing_sections(tmp_path):
     assert mp.write_csvs({}, tmp_path / "empty") == []
     assert list((tmp_path / "empty").iterdir()) == []
     # Empty or null sections write nothing either.
-    summary = {
+    summary: Dict[str, Any] = {
         "capacity_window": None,
         "mixed_groups": {},
         "mixed_intervals": None,

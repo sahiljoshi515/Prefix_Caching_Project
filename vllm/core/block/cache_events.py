@@ -29,7 +29,8 @@ import json
 import os
 import time
 from contextlib import contextmanager
-from typing import Callable, Dict, Iterator, List, Optional, Tuple, TypeVar
+from typing import (Callable, Dict, Iterator, List, Optional, TextIO, Tuple,
+                    TypeVar)
 
 import vllm.envs as envs
 
@@ -50,8 +51,12 @@ class CacheEventRecorder:
         self.path = path
         # Stays open for the engine's lifetime; close() releases it. A path
         # ending in .gz is written gzipped (long runs log hundreds of MB).
-        opener = gzip.open if path.endswith(".gz") else open
-        self._file = opener(path, "wt", encoding="utf-8")  # noqa: SIM115
+        self._file: TextIO
+        if path.endswith(".gz"):
+            self._file = gzip.open(path, "wt",
+                                   encoding="utf-8")  # noqa: SIM115
+        else:
+            self._file = open(path, "w", encoding="utf-8")  # noqa: SIM115
         self._buffer: List[_Event] = []
         self._last_flush = time.monotonic()
         # The block manager names the running request in the module's
