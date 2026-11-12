@@ -209,7 +209,7 @@ Entry format:
   ones"; "I think don't do too much, just the basics"; "remove the
   S3-FIFO".
 
-### PR pending (branch `milestone3-marcus-merge-task2`): Merge Milestone 3 Task 2 into `milestone-3`
+### PR #18: Milestone 3: merge Task 2 into milestone-3
 
 - **Tools:** Claude Code (Claude Opus 5.5).
 - **Used for:** the trial merge, resolving the ten conflicts, keeping

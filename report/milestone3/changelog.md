@@ -12,7 +12,7 @@ here.
 
 ## Repository
 
-### Unreleased (branch `milestone3-marcus-merge-task2`, PR pending): Task 2 merged into `milestone-3` (marcus)
+### Unreleased (branch `milestone3-marcus-merge-task2`, PR #18): Task 2 merged into `milestone-3` (marcus)
 
 - **Merged:** `milestone3_task2` (Task 2's Phase 1 and PR #16's Phase 2)
   into `milestone-3`, which had Task 1's PRs #15 and #17. Ten files
