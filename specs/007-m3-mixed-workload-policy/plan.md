@@ -207,7 +207,40 @@ family-offset LRU, with key `last access + Δ_c` and `Δ_c = p_c × W_c`
 (FR-006). The design goes to engine runs only if, on seeds 2 to 4 of at
 least two mixes at the FR-007 capacity, it beats LRU by more than the seed
 spread without lowering any workload by more than 2 points. Otherwise the
-alternative is tried, and a negative result is reported (SC-003).
+alternative is tried, and a negative result is reported (SC-003). With the
+scope of 2026-11-10 (one mix, below) the gate applies to the balanced mix:
+in the replay at 131,072 tokens `wa` with oracle labels is above LRU on
+every seed and lowers no workload by more than 2 points, so it went to
+the engine.
+
+### Refinements for review (2026-11-07, spec revision for Phase 2)
+
+Proposed after Phase 1 and a literature study; part of T005's review,
+none of them built yet.
+
+1. **Candidate set.** Use Phase 1's `LeafScoreEvictor`
+   (`vllm/core/reuse_evictors.py`) for the leaf-only pool instead of a new
+   `record_insert` hook. TTDF and RACE-RP already rely on it.
+2. **Control.** Add `lru_leaf` (spec FR-012) on the same base. Step 5's
+   claim "`none` without buckets is exactly LRU" becomes "is exactly
+   `lru_leaf`", and that equality is the regression test (spec User Story
+   3, scenario 6).
+3. **Seeing past its own evictions.** Hit-density statistics only see
+   blocks the policy kept. A sampled, bounded record of evicted hashes (for
+   example 1 in 8, held up to 20 min) lets a later lookup record the age at
+   which the block would have been reused. LHD's explorers and UCP's
+   sampled monitors solve the same problem.
+4. **Shrinkage.** A class's estimate is pulled toward the pooled estimate
+   in proportion to how few observations it has (spec Edge Cases, cold
+   start).
+5. **Label safeguard** (spec FR-014). In inferred mode, a request below a
+   confidence threshold tuned on seed 1 gets the pooled class. Optionally,
+   a shadow `lru_leaf` over hashes compares misses over a sliding window,
+   and `wa` follows its choice while it is doing worse (Chłędowski et al.,
+   ICML 2021).
+6. **Label-error runs.** Oracle labels corrupted by the classifier's
+   confusion matrix at 1×, 2× and 4× its error, and uniformly at 10%, 20%
+   and 40% (spec User Story 4, scenario 6).
 
 ## Phase 1 study (2026-11-04, branch `milestone3_task2`)
 
@@ -355,6 +388,229 @@ block id. Choices the code makes:
   and k = 4. Seed-1 tuning: H ∈ {64, 512, 4096, 32768, 262144, 2097152},
   k ∈ {4, 16, 64}, chosen as for TTDF and RACE-RP. The `policies` grid adds
   its five engine runs (15 in all).
+
+## Scope (2026-11-10)
+
+Marcus chose to finish the basic study rather than the full grid of
+User Story 4, with the report still to write before 2026-11-30.
+
+- **Kept:** the balanced mix, seeds 2–4. Engine runs at 131,072 tokens of
+  LRU, RACE-RP and `wa` with oracle labels and with none
+  (`grid --grid wa`), beside Phase 1's LFU and FIFO;
+  replays at 64K, 128K and 256K, with `lru_leaf` as the control.
+  Per-workload results, the gate and the overhead.
+- **Dropped:**
+  - the inferred label mode and the label-error runs: oracle and none
+    bracket any classifier's labels, and Phase 1 reports the classifier's
+    accuracy (89.7%) and confusion matrix;
+  - the chat-heavy and agent-heavy mixes and the single-workload runs:
+    the balanced mix already mixes seven workloads, and the per-workload
+    results show which gain and which pay;
+  - `wa`'s pacing-sensitivity run, and the cache-share-over-time figure;
+  - PrefixSim and its outside policies;
+  - the exploratory probe and the second leaf-LRU control (removed;
+    their code is in `090be78d`);
+  - S3-FIFO over the idle leaves (`s3fifo_leaf`), tried and removed the
+    same day to keep the comparison to the course's baselines, RACE-RP
+    and `wa`. It was not above LRU (replay: a tie at 64K and 128K, −3.05
+    points at 256K; engine at 128K: 54.14% against 55.80%); its code and
+    runs are in `4848ead7` to `3b429e99`.
+
+`spec.md` and `tasks.md` mark each dropped requirement and task.
+
+## Phase 2 first experiments (2026-11-08, revised 2026-11-09 and 2026-11-10; branch `milestone3-marcus-wa-spec`)
+
+Run before T005's review, to give it evidence: the cache replay (model
+timing) at three capacities, then engine runs at 131,072 tokens, on the
+balanced mix with human pacing, measured over 600–1800 s.
+Settings were chosen on seed 1 only; seeds 2–4 were run once with the
+chosen settings. The first version of this section reported `wa` from code
+with two scoring faults that PR #16's review found (see **Review fixes**
+below); the `wa` numbers here are from the fixed code, with its settings
+chosen again on seed 1. Those runs used the working tree that the
+revision commits, on top of `631340a2` (the rows record it as dirty), and
+replayed LRU, TTDF and RACE-RP in the same batch, which reproduced their
+earlier numbers exactly.
+
+```bash
+python -m analysis.run_m3_task2 plans --grid phase1
+# seed 1 without eviction, on the engine: RACE-RP's training
+python -m analysis.run_m3_task2 replay --plan data/processed/m3/balanced-human-s1 \
+    --out results/m3-task2/balanced-human-s1-ceiling --capacity 11851680
+python -m analysis.race_train --sketch 16x6 --out results/m3-race
+# wa settings on seed 1 at 131,072 tokens: labels oracle|none x buckets 1|0
+# x half_life 120|600|1800
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 \
+    --policies 'wa:labels=oracle,buckets=1,half_life=600' ... \
+    --capacities 131072 --window 600 1800 --out results/m3-explore/wa-fixed-tune-s1.jsonl
+python -m analysis.sim_table results/m3-explore/wa-fixed-tune-s1.jsonl --seeds 1
+# held-out seeds
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
+    --policies lru ttdf race_rp:sketch=results/m3-race/sketch-L16-P6.json \
+    'wa:labels=oracle,buckets=1,half_life=600' 'wa:labels=none,buckets=1,half_life=1800' \
+    --capacities 65536 131072 262144 --window 600 1800 \
+    --out results/m3-explore/wa-fixed-heldout.jsonl
+python -m analysis.sim_table results/m3-explore/wa-fixed-heldout.jsonl --against lru
+```
+
+`lru_leaf` ran the same way in the first batch
+(`results/m3-explore/heldout-baselines.jsonl`).
+
+**Reproduction.** With the data, plans and RACE-RP sketch rebuilt on
+another laptop, the replay at 131,072 tokens gives LRU 55.79%, TTDF 56.75%,
+RACE-RP 58.73% and no eviction 78.06%, as in the Phase 1 note.
+
+Usable reuse, seeds 2–4 (mean; per-seed verdicts by the note's rule):
+
+| Policy | 64K | 128K | 256K |
+|---|---|---|---|
+| `wa`, oracle labels (buckets on, half-life 600 s) | 53.92% | 59.19% | 63.51% |
+| `wa`, no labels (buckets on, half-life 1,800 s) | 53.18% | 58.14% | 62.55% |
+| RACE-RP | 54.28% | 58.73% | 63.15% |
+| TTDF | 51.65% | 56.75% | 61.98% |
+| LRU, `lru_leaf` | 50.74% | 55.79% | 61.13% |
+
+- **The leaf-only rule changes nothing.** `lru_leaf` evicts the same
+  blocks as LRU at every capacity (same evictions per workload, same usable
+  reuse), so TTDF's and RACE-RP's gains come from their scores (spec
+  SC-005, in the replay). A second control, ordered by the scheduler's
+  stamp instead of the access clock, did the same; it was removed as
+  redundant (2026-11-10).
+- **`wa` with oracle labels** is above LRU on every seed at every capacity
+  (+3.19, +3.40, +2.38 points) and ties RACE-RP at every capacity (−0.36,
+  +0.46, +0.36; the seeds disagree on the sign at 64K and 256K, and at 128K
+  the mean is below half a point). It is above `wa` without labels at every
+  capacity (+0.75, +1.05, +0.96), so the label pays off.
+- **`wa` without labels** is above LRU on every seed (+2.44, +2.36,
+  +1.42), ties RACE-RP at 64K and 128K and is below it at 256K (−0.60).
+- **Per workload, against LRU** (`sim_table` lists every workload down by
+  more than 2 points, the decision gate above):
+
+  | Policy | 64K | 128K | 256K |
+  |---|---|---|---|
+  | `wa`, oracle labels | none | none | bailian-thinking −4.11 |
+  | `wa`, no labels | none | ShareGPT −3.88 | ShareGPT −2.37 |
+  | RACE-RP | none | ShareGPT −2.14 | none |
+  | TTDF | none | none | ShareGPT −5.97 |
+
+  `wa` with oracle labels passes the gate at 64K and 128K and fails it at
+  256K; `wa` without labels, the version a server could run without being
+  told each request's workload, fails it at 128K and 256K. The other
+  policies fail it too: no policy so far passes at every capacity.
+- **Cost per eviction in the replay**, same batch (8 runs at a time):
+
+  | Policy | 64K | 128K | 256K |
+  |---|---|---|---|
+  | LRU | 0.9 µs | 1.3 µs | 1.5 µs |
+  | TTDF | 2.7 µs | 4.2 µs | 7.0 µs |
+  | `wa`, no labels | 25.8 µs | 43.1 µs | 84.6 µs |
+  | `wa`, oracle labels | 24.6 µs | 47.6 µs | 99.0 µs |
+  | RACE-RP | 35.1 µs | 49.3 µs | 116.9 µs |
+
+  Rescoring the candidates after every end (fix 2) does one scan per
+  eviction, of about 33 candidates at 128K; `wa` now costs about as much
+  as RACE-RP.
+- **An exploratory label probe** (survival curves per workload from the
+  seed-1 engine run) was above LRU on every seed with oracle labels (+1.9,
+  +2.1, +1.7 points) and tied it without labels. `wa`'s oracle-against-none
+  comparison measures the same thing, so the probe and its survival-table
+  script were removed (2026-11-10; they are in `090be78d`).
+
+**Engine runs (2026-11-10).** 12 runs at 131,072 tokens on seeds 2–4:
+LRU, RACE-RP and `wa` with oracle labels and with none, each on its own
+`vllm serve` (simulator executor), 6 at a time.
+They ran from clean commits (`4d484319` for the first six, `c32b413e` for
+the rest; `wa`, LRU and RACE-RP are the same code in both).
+
+```bash
+python -m analysis.run_m3_task2 grid --grid wa --out results/m3-task2
+python -m analysis.tables results/m3-task2/balanced-human-s{2,3,4}-*-cap131072
+python -m analysis.sim_table --against lru \
+    --engine results/m3-task2/balanced-human-s{2,3,4}-{lru,race_rp,wa_oracle,wa_none}-cap131072
+```
+
+| Policy | Usable reuse | Against LRU, per seed | Against RACE-RP | Per eviction |
+|---|---|---|---|---|
+| `wa`, oracle labels | 59.07% | +2.91 +3.45 +3.46, higher | +0.33, tie | 50 µs |
+| RACE-RP | 58.74% | +2.67 +2.47 +3.69, higher | | 60 µs |
+| `wa`, no labels | 58.21% | +2.64 +2.20 +2.40, higher | −0.53, lower | 45 µs |
+| LRU | 55.80% | | | |
+| *Phase 1 note:* LFU / FIFO / no eviction | 53.94% / 50.29% / 78.06% | | | |
+
+- **The replay's verdicts hold on the engine.** `wa` with oracle labels is
+  above LRU on every seed and ties RACE-RP, oracle labels are above none on
+  every seed (+0.27, +1.25, +1.05; mean +0.86). Each policy is within 0.3
+  points of its replay mean. The one change:
+  `wa` without labels falls just below RACE-RP (every seed below, mean
+  −0.53) where the replay had a tie.
+- **The gate at 131,072 tokens:** `wa` with oracle labels lowers no
+  workload by more than 2 points; `wa` without labels lowers ShareGPT by
+  4.05, and RACE-RP ShareGPT by 2.11.
+- **Every run is sound.** Each completed all its requests (5,386, 5,403
+  and 5,396 per seed), none had a hit after a miss, so the cache stayed
+  prefix-closed (FR-005), and vLLM's `cached_tokens` equals the usable
+  prefix for every request. With
+  oracle labels `wa` learned 21 classes (7 workloads × 3 reuse counts), so
+  the labels reach it on the engine; with none, 3.
+- **Reproducible.** This laptop's LRU is within 0.01 points of the Phase 1
+  note's engine runs on every seed, and RACE-RP within 0.15. A first set
+  of the same 12 runs, on the same code through a scratch
+  script, gives the same means within 0.13 points. Run by run, LRU and
+  RACE-RP repeat within 0.15 points but `wa` within 0.6 (seed 3 with
+  oracle labels: 61.36% and 61.93%), so a repeated `wa` run moves by
+  about as much as its margin over RACE-RP.
+- **Discarded runs.** Six runs fell behind while other programs overloaded
+  the laptop (load above 600), and two of their reruns spanned an
+  11-minute sleep, which shifts the wall-clock ages `wa` scores by. Each
+  was stopped, deleted and run again; the server logs of the 12 kept runs
+  have no gap over 8 s.
+
+**Review fixes (2026-11-09).** PR #16's review found two faults in the
+first `wa`, both now covered by regression tests that fail on the old code:
+
+1. *Ends younger than the block.* The density at age `a` summed the ends
+   from `a`'s bin on, including that bin's ends younger than `a`. When most
+   of them were, the remaining lifetime went negative and was capped, so a
+   block just past its class's reuse time got the highest score instead of
+   the lowest (3.6% of score calls in the seeds 2–4 replays, by the
+   review's count). The bin's ends now count only if their mean age is at
+   least `a`.
+2. *Stale scores.* The candidates were scored once per scheduler step,
+   while every hit and eviction in the step changes the statistics. They
+   are now scored again after every recorded end.
+
+Also from the review: a dedupe (a request computed the block itself) no
+longer counts as a hit, for the idle period or the hit buckets. None
+happens in the replay, so this matters on the engine only. With the fixes,
+seed 1 picks the same settings (54.13% with oracle labels, 53.81% without;
+first version 54.74% and 54.08%), and the held-out table moves down by
+0.2–0.9 points.
+
+**How much the bin rule matters.** The bins are 27% wide, so the rule for
+a block's own bin is a design choice. On seed 1 at 128K, four rules are
+within 0.6 points and none leads in both label modes (oracle / none):
+the committed rule 54.13 / 53.81; ages rounded down to the bin's lower
+edge (the review's alternative) 54.37 / 53.75; the bin's ends spread
+evenly over it 54.75 / 53.59; the committed rule with bins 4 times finer
+54.16 / 53.65. The review measured the rounded-down rule with fresh scores
+on seeds 2–4: 59.86% at 128K with oracle labels, 0.67 points above the
+committed rule and on every seed above RACE-RP. Whether `wa` beats RACE-RP
+or ties it therefore depends on this choice; the committed rule is the one
+that scores a block past its bin's ends below a younger block, as the
+review asked.
+
+**For T005's review.**
+- **Scoring rule.** The prototype scores each leaf at its own age, as LHD
+  does, not the head of each class's LRU queue as step 4 of the design
+  says. It therefore does not reduce to `lru_leaf` with one label (spec
+  User Story 3, scenario 6). Either build the head-of-class rule, or change
+  the scenario. The bin rule above is part of this choice.
+- **The gate.** Bailian-thinking at 256K with oracle labels, and ShareGPT
+  without labels (128K and 256K, replay and engine), lose more than 2
+  points.
+- **Tuning.** TTDF and RACE-RP keep their specified settings,
+  while `wa` had 12 settings tried on seed 1 (twice: before and after the
+  fixes) and four bin rules.
 
 ## Phases
 

@@ -15,6 +15,10 @@ class EvictionPolicy(enum.Enum):
     # COMP 536: implemented in vllm/core/reuse_evictors.py.
     TTDF = enum.auto()
     RACE_RP = enum.auto()
+    # Control for them (spec 007 FR-012): LRU over the same idle leaves.
+    LRU_LEAF = enum.auto()
+    # Workload-aware eviction, first version (vllm/core/wa_evictor.py).
+    WA = enum.auto()
     # COMP 536: implemented in vllm/core/sampled_lrfu.py.
     SAMPLED_LRFU = enum.auto()
 

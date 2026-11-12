@@ -401,6 +401,25 @@ class TTDFEvictor(LeafScoreEvictor):
         return {**super().metadata_words(), "counters": 3 * len(self.blocks)}
 
 
+# --- Leaf-LRU control --------------------------------------------------------
+
+
+class LeafLRUEvictor(LeafScoreEvictor):
+    """``lru_leaf``: LRU over the same idle leaves as TTDF and RACE-RP, by
+    the same access clock (``record_access``). Only the score differs from
+    them, so a policy's gain over this control is its score's (spec 007
+    FR-012)."""
+
+    @classmethod
+    def from_params(cls, text: Optional[str]) -> "LeafLRUEvictor":
+        params = parse_params(text, ())
+        return cls(stats_path=params.get("stats"))
+
+    def _scores(self, hashes: Sequence[int], blocks: Sequence[_Block],
+                now: float) -> List[float]:
+        return [b.last for b in blocks]
+
+
 # --- RACE-RP -----------------------------------------------------------------
 
 

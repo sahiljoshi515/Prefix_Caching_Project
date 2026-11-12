@@ -4,7 +4,8 @@
 Task 2
 **Owners**: Sahil Joshi, Xin Liang Chia | **Reviewers**: Triet Chau, Jasmine
 Lu
-**Status**: Specified (revised 2026-10-31); not started
+**Status**: Phase 1 (study and baselines) done 2026-11-05; Phase 2 (`wa`)
+revised 2026-11-07, not started
 **Created**: 2026-10-18 | **Depends on**: `004`, `005`, `006`
 
 **Input**: Charter (Sahil Joshi and Xin Liang Chia): "Create mixed-workload
@@ -61,7 +62,7 @@ Each step of the charter has a reason, and they build one argument: observe
 | 3. Design a workload-aware policy | Turns the measured differences into a rule, for example protecting a workload's freed blocks for about its typical reuse interval and evicting first the blocks of workloads that rarely return | User Story 3, FR-004, FR-005, FR-010 |
 | 4. Identify workload types, and whether that helps | A real server is not told a request's workload (the course's third question). The no-label mode shows whether the label itself helps; if it does not, that is a finding too | User Story 3 (scenarios 1 to 3), FR-002 |
 | 5. Implement the policy in the simulator | Results must be measured, not argued; the simulator runs vLLM's own scheduler and allocator on a laptop | FR-003, `plan.md` |
-| 6. Compare against LRU, LFU and FIFO with identical cache and trace | Only the policy may change; otherwise a win could come from the setup or from noise (identical runs differ by about 0.01, Background 5) | User Story 3 (scenario 4), FR-006, FR-007 |
+| 6. Compare against LRU, LFU and FIFO with identical cache and trace | Only the policy may change; otherwise a win could come from the setup or from noise (identical runs differ by about 0.01, Background 5). Phase 1's label-free policies and a leaf-only LRU control join the comparison, so a gain can be traced to its cause (Background 11) | User Story 3 (scenario 4), FR-006, FR-007, FR-012, FR-013 |
 | 7. Evaluate across heterogeneous workloads | A policy can raise the total by starving one workload; the question is who gains and who pays | User Story 4, SC-003 |
 | 8. Plots, benefits, limitations and trade-offs | The report must show and explain the result, including its costs: more complexity, labels a real server may not have, and parameters that may fit only our simulated timing | FR-011, User Story 4, SC-004 |
 
@@ -111,6 +112,46 @@ Each finding below shapes a requirement of this spec.
    attribution, which is off when `VLLM_CACHE_EVENT_LOG` is unset
    (`vllm/core/block/cache_events.py`, `attributed`). A policy cannot depend
    on a measurement tool being on (FR-002).
+
+## Background, continued: what Phase 1 found
+
+Phase 1 (2026-11-05, `report/milestone3/task2-mixed-workload-policy.md`) ran
+the balanced mix at 131,072 tokens: engine runs on seeds 2–4, seed 1 kept
+for training, and the cache replay (`analysis/cachesim.py`) for other
+capacities. Each finding below shapes a Phase 2 requirement.
+
+8. **The mix is under pressure, and LRU is the bar.** LRU serves 55.8% of
+   prompt tokens from the cache, LFU 53.9% and FIFO 50.3%, against 78.1%
+   without eviction (engine). Belady reaches 68.3% in the replay at the same
+   capacity. FR-007 holds, and the room a policy has is real but bounded.
+9. **Who loses, and why.** Of LRU's 22.3-point shortfall against no
+   eviction, Bailian accounts for 13.1 points, CC-Bench 6.4, ShareGPT 2.4
+   and AgentBank 0.3. LRU serves 99.5% of reuses that wait under 10 s and
+   almost none after 30 s. Half of ShareGPT's reuses wait more than 1.1 min,
+   so in the mix it keeps 10.0% of its prompt tokens against 83.3% alone.
+   Its pauses are borrowed (Background 4), so this reflects our pacing as
+   much as ShareGPT.
+10. **Workloads can be told apart without labels.** A decision tree on
+    prompt length, prefix hashes, reuse history and inter-arrival times,
+    trained on seed 1, labels 89.7% of the held-out requests (84.2% when
+    each workload counts equally). The largest confusion is AgentBank
+    labelled ShareGPT (16%): both start with Qwen's default system prompt.
+    CC-Bench's tasks repeat across seeds, which flatters the prefix hashes.
+11. **Label-free policies already beat LRU, for a reason not yet known.**
+    RACE-RP serves 58.9% and TTDF 56.7%, both above LRU on every seed.
+    Sampled LRFU serves 43.9% because it leaves holes. TTDF and RACE-RP
+    evict only idle blocks with no cached block after them in a prompt; LRU
+    has no such rule, so part of their lead may come from the rule rather
+    than from their scores (FR-012). RACE-RP costs 44.1 µs per eviction in
+    the replay and 58.4 µs on the engine, against about 1 µs for LRU.
+12. **Frequency helps one workload, alone.** Bailian on its own keeps 24.7%
+    under LFU against 19.8% under LRU. In the mix, LFU ties LRU on Bailian.
+13. **Published policies rarely beat LRU on prefix caches.** Liu et al.
+    found that most of the 14 policies they tested, including the
+    workload-aware policy of the ATC'25 Bailian study, do about as well as
+    LRU or slightly worse on production prefix-cache traces (Related work).
+    A consistent gain of a few points is a real result, and a tie is a
+    plausible outcome (SC-003).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -196,16 +237,22 @@ are right-censored at the end of the run.
 ### User Story 3 - The workload-aware policy (Priority: P1)
 
 A new evictor, `VLLM_EVICTION_POLICY=wa`, decides what to evict from each
-block's workload label and from per-workload statistics it learns while
-serving. Its design comes from User Story 2's evidence (FR-004), and it is
-implemented like `005`'s policies.
+block's workload label and from per-label statistics it learns while
+serving. Its design comes from User Story 2's evidence and Phase 1's
+findings (FR-004). The starting point is `plan.md`'s class hit-density
+design: it ranks idle leaf blocks by the hits they are expected to earn per
+unit of cache time, estimated online for each class (LHD, Related work).
+The ATC'25 Bailian study evicts by the same kind of per-category reuse
+estimate. `wa` is implemented like `005`'s and Phase 1's policies.
 
 **Acceptance Scenarios**:
 
-1. **Oracle labels** (`VLLM_WA_LABELS=oracle`): a block's label is the
+1. **Oracle labels** (`labels=oracle`): a block's label is the
    workload of the last request that held it, the request whose `free` put
    it in the free pool. The label is the request id's workload prefix.
-2. **Inferred labels** (`inferred`): labels come from a classifier over
+2. **Inferred labels** (`inferred`; dropped, scope of 2026-11-10, `plan.md`: the classifier's
+   accuracy is reported, and its labels would lie between oracle and none):
+   labels come from a classifier over
    features a server sees without the request id. Examples are the prompt
    length, the hash of the prompt's first blocks, whether the prompt extends
    a cached prefix, and the time since that prefix was last used. The
@@ -216,17 +263,24 @@ implemented like `005`'s policies.
    otherwise runs unchanged. Comparing `oracle` with `none` answers whether
    workload information itself improves eviction (charter).
 4. **Given** the same capacity, block size, trace and seed, **Then** `wa` in
-   each label mode and LRU, FIFO and LFU are compared on every metric of
-   `004` and `005`.
+   each label mode is compared with every policy of FR-013 on every metric
+   of `004` and `005`. The comparison with TTDF and RACE-RP says whether a
+   label adds anything a label-free score already captures.
 5. **Given** the same replay with the event log on and off, **Then** `wa`
    produces the same per-request `cached_tokens` both times.
+6. **Reduces to the control:** with one label and every refinement off,
+   `wa` chooses the same victims as `lru_leaf` (FR-012) on the same trace.
+   This checks the implementation and makes the label's own effect
+   measurable.
 
 ---
 
 ### User Story 4 - Evaluate honestly (Priority: P2)
 
-Results cover at least three mixes, with at least three seeds each, at the
-agreed capacity. They report means with their spread, and the write-up
+Results cover the balanced mix with three seeds at the agreed capacity
+(the chat-heavy and agent-heavy mixes were dropped, scope of 2026-11-10, `plan.md`). Engine runs
+cover it; the capacity sweep may use the cache replay, which is labelled
+wherever it is used and checked against the engine (SC-002). Results report means with their spread, and the write-up
 discusses benefits, limitations, trade-offs and overhead.
 
 **Acceptance Scenarios**:
@@ -234,14 +288,31 @@ discusses benefits, limitations, trade-offs and overhead.
 1. **Per workload:** each mix's results are also reported per workload, so
    a policy that gains overall by starving one workload shows up. The
    write-up states the largest per-workload loss against LRU.
-2. **Homogeneous traces:** `wa` also runs on each single-workload trace, to
+2. **Homogeneous traces** (dropped, scope of 2026-11-10, `plan.md`): `wa` also runs on each
+   single-workload trace, to
    show whether it hurts a workload on its own. The baseline runs come from
    `006` wherever the configuration matches.
-3. **Pacing sensitivity:** one mix is replayed with a think time and
+3. **Pacing sensitivity** (dropped, scope of 2026-11-10, `plan.md`): one mix is replayed with
+   a think time and
    session rates different from those the parameters were tuned on, with
    the parameters unchanged.
 4. **Overhead:** replay time and `evict()` cost under `wa` against LRU, on
    the same trace.
+5. **Attribution:** `lru_leaf` minus LRU measures the leaf-only rule, and
+   TTDF, RACE-RP and `wa`, each minus `lru_leaf`, measure their scores
+   (FR-012, SC-005).
+6. **Label errors** (dropped, scope of 2026-11-10, `plan.md`): `wa` also runs with oracle
+   labels corrupted at known
+   rates: the classifier's confusion matrix at 1×, 2× and 4× its error,
+   and uniform errors of 10%, 20% and 40%. The report plots usable reuse
+   against the error rate, next to `lru_leaf` and `wa` in `none` mode
+   (FR-014).
+7. **Outside check** (optional; dropped, scope of 2026-11-10, `plan.md`):
+   the mixes are also replayed in PrefixSim,
+   an open simulator with 46 policies, among them a reimplementation of
+   the ATC'25 workload-aware policy, ARC, S3-FIFO, SIEVE and LHD (FR-015).
+   PrefixSim counts hits after a miss, which vLLM v0 cannot use, so usable
+   reuse is recomputed from its gap dump before any number is compared.
 
 ### Edge Cases
 
@@ -249,8 +320,14 @@ discusses benefits, limitations, trade-offs and overhead.
   such a block takes the label of the last request that held it. The label
   rule is tested, and the share of such blocks and of cross-workload hits is
   reported (User Story 2).
-- **Unknown workload** in inferred mode: falls back to a default class
-  that behaves like LRU.
+- **Unknown or uncertain workload** in inferred mode: a request the
+  classifier cannot place with enough confidence (a threshold tuned on
+  seed 1) gets the pooled statistics, as in `none` mode.
+- **Cold start:** a class with few observations uses statistics shrunk
+  toward the pooled ones, so a new or rare workload is not ranked on noise.
+- **Memory:** per-class statistics, and any record `wa` keeps of blocks it
+  evicted, are bounded; their size is reported with the overhead (User
+  Story 4).
 - **Context length:** one server serves the whole mix, so every workload
   runs at `006`'s `--max-model-len` (32,768 tokens if agent and coding
   traces need it). ShareGPT's numbers in a mix are therefore compared with
@@ -272,13 +349,17 @@ discusses benefits, limitations, trade-offs and overhead.
   reach the evictor whether or not `VLLM_CACHE_EVENT_LOG` is set, without
   new allocator arguments (Background 7).
 - **FR-003**: The `wa` evictor MUST implement the `Evictor` interface plus
-  `record_hit` (`005` FR-002), live in `vllm/core/eviction_policies.py`, and
-  be selected with `VLLM_EVICTION_POLICY=wa`. `VLLM_WA_LABELS=oracle |
-  inferred | none` selects the label mode (default `oracle`), and the
-  server refuses unknown values (`005` FR-001).
+  `record_hit` (`005` FR-002), be registered in
+  `vllm/core/eviction_policies.py`, and be selected with
+  `VLLM_EVICTION_POLICY=wa`. It may build on Phase 1's `LeafScoreEvictor`
+  (`vllm/core/reuse_evictors.py`). `labels=oracle | none` in
+  `VLLM_EVICTION_PARAMS` selects the label mode (default `oracle`), and
+  the server refuses unknown values (`005` FR-001).
 - **FR-004**: The design MUST be written in `plan.md` and reviewed before
   implementation: the scoring rule, its parameters, how they were chosen,
-  and the evidence from User Story 2.
+  and the evidence from User Story 2. The starting point is `plan.md`'s
+  class hit-density design, with the refinements `plan.md` lists for
+  review (T005).
 - **FR-005**: `wa` MUST keep the cached blocks prefix-closed. It never
   evicts a block while a later block of the same prompt stays cached, so
   vLLM's `cached_tokens` stays exact and the policy would also be correct on
@@ -287,7 +368,8 @@ discusses benefits, limitations, trade-offs and overhead.
   rule, `plan.md` justifies why, and the report states that the policy is
   not safe on a GPU with vLLM v0.
 - **FR-006**: Parameters (and the inferred-label classifier) MUST be tuned
-  on seeds that the reported comparison does not use.
+  on seeds that the reported comparison does not use. Numbers on a tuning
+  seed are labelled as training in every table.
 - **FR-007**: Within a comparison, every policy MUST use the same capacity,
   block size, trace and seed. The capacity MUST put the mix under pressure:
   LRU's usable reuse must fall short of the no-eviction ceiling by more than
@@ -298,10 +380,13 @@ discusses benefits, limitations, trade-offs and overhead.
   metric table (added by PR #12). Reported next to it: block hit rate,
   vLLM's `cached_tokens` share, requests with a hit after a miss, eviction
   rate, and misses on blocks evicted earlier. Per-workload values group
-  requests by their oracle label.
+  requests by their oracle label. Also reported: the mean over workloads
+  with each workload weighted equally, and the 99th percentile of uncached
+  prompt tokens per request.
 - **FR-009**: One committed command MUST run the whole grid. It extends
-  `005`'s sweep runner (`analysis/sweep.py`) with axes for the trace and the
-  label mode, resumes after an interruption, and records everything
+  `005`'s sweep runner (`analysis/sweep.py`) with axes for the trace, the
+  label mode and the label-error rate, resumes after an interruption, and
+  records everything
   constitution V lists plus the mix manifest.
 - **FR-010**: `wa` MUST NOT read the client's pacing settings (think time,
   rates) or the trace files. What it knows about reuse timing it learns
@@ -311,11 +396,34 @@ discusses benefits, limitations, trade-offs and overhead.
   1. Per-workload reuse-interval CDFs under LRU, in seconds and in
      requests.
   2. Per-workload usable reuse and hits per block under LRU.
-  3. Each workload's share of the cache over time, LRU against `wa`.
-  4. Usable reuse per policy and mix, with the seed spread and the
-     no-eviction ceiling.
-  5. Each workload's change against LRU within each mix.
+  3. Each workload's share of the cache over time, LRU against `wa`
+     (dropped, scope of 2026-11-10, `plan.md`).
+  4. Usable reuse per policy, with the seed spread and the no-eviction
+     ceiling.
+  5. Each workload's change against LRU.
   6. The inferred labels' confusion matrix.
+  7. Usable reuse against the injected label-error rate (dropped with
+     User Story 4, scenario 6).
+- **FR-012**: A control evictor, `VLLM_EVICTION_POLICY=lru_leaf`, MUST
+  order idle leaf blocks (blocks with no cached block after them in a
+  prompt) by last access, with ties going to the deeper block. It uses the
+  same candidate set as TTDF and RACE-RP and runs wherever LRU runs
+  (Background 11).
+- **FR-013**: Every comparison MUST include LRU, LFU and FIFO (the course's
+  baselines), `lru_leaf` (the control), TTDF and RACE-RP (Phase 1's
+  label-free policies), `wa` in each label mode, and the no-eviction
+  ceiling. Belady is reported in the cache replay as a reference; for
+  usable reuse it is a strong reference, not a proven bound.
+- **FR-014**: `plan.md` MUST state how `wa` limits the damage of a wrong
+  label. (The label-error runs of User Story 4, scenario 6, were dropped,
+  scope of 2026-11-10, `plan.md`.)
+- **FR-015** (dropped, scope of 2026-11-10, `plan.md`): The
+  mixes SHOULD be exported to PrefixSim's JSONL input
+  (`hash_ids`, `timestamp`, `session_id`, and the workload as `type`). Its
+  LRU, ARC, S3-FIFO, SIEVE, LHD, `workload_aware` and Belady then run at the
+  same capacity in blocks, and usable reuse is recomputed from
+  `--dump-holes`. PrefixSim's LRU must agree with the cache replay's
+  before its other numbers are reported.
 
 ## Success Criteria *(mandatory)*
 
@@ -323,20 +431,26 @@ discusses benefits, limitations, trade-offs and overhead.
   hand-derived victims on a 3-workload toy trace, the label rule, prefix
   closure, and refusing unknown modes. With `VLLM_EVICTION_POLICY` unset,
   `tests/core` and `005`'s tests pass unchanged.
-- **SC-002**: One committed command produces, for at least 3 mixes × 3
-  seeds at the agreed capacity, runs of LRU, FIFO, LFU and `wa` in each
-  label mode, plus the no-eviction ceiling. It also produces `wa` on each
-  single-workload trace.
+- **SC-002**: One committed command produces, at the agreed capacity:
+  engine runs of the balanced mix on 3 seeds for every policy of FR-013,
+  with `wa` in each label mode, and the replay's agreement with the engine
+  for every policy the engine ran. (The other mixes and the
+  single-workload traces were dropped, scope of 2026-11-10, `plan.md`.)
 - **SC-003**: The report states, per mix and with the seed spread, whether
-  `wa` beats the best baseline on usable reuse, by how much, for which
-  workloads, and where it does not. Margins within the seed spread are
-  reported as ties. A negative result with a sound explanation meets this
-  criterion.
+  `wa` beats the best of LRU, LFU and FIFO on usable reuse, how it compares
+  with `lru_leaf` and RACE-RP, by how much, for which workloads, and where
+  it does not. Margins within the seed spread are reported as ties. `wa`
+  goes to engine runs only if it passes `plan.md`'s decision gate in the
+  replay; otherwise the replay result is the reported negative result. A
+  negative result with a sound explanation meets this criterion.
 - **SC-004**: The report answers the course's three questions with numbers:
   how the workloads' reuse intervals differ, how their reused portions
   differ, and how accurately a request's workload can be identified. It
   also says whether identifying the workload pays off (`oracle` against
-  `inferred` against `none`).
+  `none`, which bracket a classifier's labels), and whether a label adds
+  anything beyond the label-free TTDF and RACE-RP.
+- **SC-005**: The report separates the leaf-only rule from the scores,
+  with the differences of User Story 4 (scenario 5) and their seed spread.
 
 ## Assumptions
 
@@ -344,13 +458,15 @@ discusses benefits, limitations, trade-offs and overhead.
   are those fixed in `006`, subject to FR-007.
 - Oracle labels come from the request-id prefixes of `006` FR-002, which
   follow vLLM's `chatcmpl-` or `cmpl-` prefix.
-- Until `006`'s adapters land, ShareGPT single-turn and multi-turn, under
-  distinct workload prefixes, stand in for two workloads. Task 2 showed
-  their reuse differs: 13% against 95% of lookups hit. The mix builder, the
-  characterization and a first `wa` can be built and tested on them.
+- Phase 0 started on ShareGPT single- and multi-turn stand-ins; `006`'s
+  adapters have since replaced them (T012).
 - Sample sizes are chosen so the whole grid replays in about a day across
   the owners' laptops (Background 6). `plan.md` records the estimate after
   Phase 0.
+- Each owner's laptop has `006`'s processed data (AgentBank, CC-Bench and
+  the four Bailian traces) before Phase 2's runs.
+- Phase 2 follows `plan.md`'s dates: `wa` in oracle and none modes, with its
+  tests, by 2026-11-19; the evaluation by 2026-11-27.
 - The project is due 2026-11-30 (course spec).
 
 ## Out of Scope
@@ -358,3 +474,30 @@ discusses benefits, limitations, trade-offs and overhead.
 - Changing vLLM's scheduler or admission policy; only eviction changes.
 - Making FIFO or any other baseline safe on a GPU. Baselines run as `005`
   defines them and are measured with the usable reused fraction.
+- Tiered storage (CPU or SSD), compressing KV instead of evicting it, and
+  compute-weighted metrics such as PrefixSim's compute saving ratio. In the
+  usable reused fraction every token weighs the same.
+
+## Related work
+
+The papers this revision draws on.
+
+- Wang et al., "KVCache Cache in the Wild: Characterizing and Optimizing
+  KVCache Cache at a Large Cloud Provider", USENIX ATC 2025
+  (<https://www.usenix.org/conference/atc25/presentation/wang-jiahao>). The
+  source of the Bailian traces; evicts by per-category reuse probability.
+- Beckmann et al., "LHD: Improving Cache Hit Rate by Maximizing Hit
+  Density", NSDI 2018
+  (<https://www.usenix.org/conference/nsdi18/presentation/beckmann>). Hit
+  density learned online per class; the basis of `plan.md`'s design.
+- Liu, Yu and Yang, "When Fancy Eviction Fails: Rethinking Cache Replacement
+  For LLM Prefix Reuse", arXiv 2609.28870, 2026
+  (<https://arxiv.org/abs/2609.28870>), and its simulator PrefixSim
+  (<https://github.com/cacheMon/PrefixSim>). Background 13 and FR-015.
+- Zheng et al., "SGLang: Efficient Execution of Structured Language Model
+  Programs", NeurIPS 2024 (<https://arxiv.org/abs/2312.07104>).
+  RadixAttention evicts the least recently used leaf, the rule `lru_leaf`
+  isolates (FR-012).
+- Chłędowski et al., "Robust Learning-Augmented Caching: An Experimental
+  Study", ICML 2021 (<https://icml.cc/virtual/2021/poster/8581>). Falling
+  back to a classic policy when a learned one does worse (FR-014).

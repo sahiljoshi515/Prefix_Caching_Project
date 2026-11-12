@@ -7,7 +7,7 @@ notes, and each task's owner and status are in the
 [spec index](../../specs/README.md).
 
 Commit dates are the author's local date; merge dates are GitHub's (UTC).
-Last updated 2026-11-05. Each PR that adds to the milestone adds its entry
+Last updated 2026-11-08. Each PR that adds to the milestone adds its entry
 here.
 
 ## Repository
@@ -42,6 +42,51 @@ here.
 [Spec 007](../../specs/007-m3-mixed-workload-policy/spec.md). Owners: Sahil
 Joshi and Xin Liang Chia. Phase 1 (the reuse study and the baselines) done
 on branch `milestone3_task2`; the policy itself is Phase 2.
+
+### Unreleased (branch `milestone3-marcus-wa-spec`, PR #16): Phase 2 spec and first experiments
+
+- **Changed:** spec 007 revised for Phase 2 from Phase 1's results: the
+  findings as Background 8–13, the class hit-density design as `wa`'s
+  starting point, and FR-012 to FR-015 (a leaf-only LRU control, the full
+  comparison set, label errors and a safeguard, an optional PrefixSim
+  check); `plan.md` lists refinements for T005's review and `tasks.md` adds
+  T016–T018 (marcus, `0cc2e85a`).
+- **Added:** the `lru_leaf` and `lru_leaf_free` controls, an exploratory
+  label probe (`wa_probe`, with `analysis/hazard_table.py`) and a first
+  `wa` evictor with oracle and none modes, learned online (marcus,
+  `090be78d`); `analysis/sim_table.py` for the replay tables. The
+  runner's `wa` grid: 12 engine runs at 128K on seeds 2–4, LRU, RACE-RP
+  and `wa` with oracle labels and with none, whose run.json names the
+  grid policy (`run_policy`) so a later grid finds them; `replay
+  --params` for one run's policy settings; `sim_table --engine` for
+  engine runs, with the study's usable reuse.
+- **Removed:** the second leaf-LRU control `lru_leaf_free` (it evicted the
+  same blocks as `lru_leaf`), and the label probe `wa_probe` with
+  `analysis/hazard_table.py` (`wa` with and without labels measures what
+  the probe did). Also S3-FIFO over the idle leaves (`s3fifo_leaf`),
+  added and removed in this PR: it was not above LRU. Their results stay
+  in `plan.md`.
+- **Ran:** cache replay of the balanced mix, settings on seed 1, seeds 2–4
+  at 64K, 128K and 256K, recorded in `plan.md`. The leaf-only rule evicts
+  the same blocks as LRU. After the review fixes, `wa` with oracle labels
+  is above LRU on every seed (+3.4 points at 128K) and ties RACE-RP at
+  every capacity; without labels it ties RACE-RP at 64K and 128K and is
+  below it at 256K. The per-workload gate (no workload down more than 2
+  points against LRU) fails for `wa` with oracle labels at 256K
+  (bailian-thinking −4.1) and without labels at 128K and 256K (ShareGPT
+  −3.9, −2.4); RACE-RP and TTDF fail it at one capacity each. Engine
+  runs at 128K (seeds 2–4, `grid --grid wa`) agree within 0.3 points:
+  `wa` with oracle labels 59.07%, RACE-RP 58.74%, `wa` without labels
+  58.21%, LRU 55.80%.
+- **Fixed (review):** `wa`'s density no longer counts ends younger than
+  the block in its own age bin, which gave blocks just past their class's
+  reuse time the highest score; its candidates are scored again after
+  every hit and eviction, not once per scheduler step; a dedupe is not a
+  hit. The first version's table (60.13% at 128K with oracle labels) is
+  replaced. Also: `wa` and the probe use `cache_events.workload_label`;
+  the eviction tests share a fixture that restores the request context's
+  time; `sim_table` refuses rows of different setups, leaves out the
+  tuning seed and lists every gate failure.
 
 ### Unreleased (branch `milestone3_task2`, PR pending): Phase 1
 
