@@ -76,6 +76,7 @@ if TYPE_CHECKING:
     VLLM_SIMULATOR_TRACE: Optional[str] = None
     VLLM_CACHE_EVENT_LOG: Optional[str] = None
     VLLM_EVICTION_POLICY: Optional[str] = None
+    VLLM_EVICTION_PARAMS: Optional[str] = None
 
 
 def get_default_cache_root():
@@ -487,10 +488,17 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_CACHE_EVENT_LOG":
     lambda: os.getenv("VLLM_CACHE_EVENT_LOG", None),
 
-    # COMP 536: eviction policy of the GPU prefix cache: lru, lfu or fifo
-    # (vllm/core/eviction_policies.py). Unset: lru, vLLM's only policy.
+    # COMP 536: eviction policy of the GPU prefix cache: lru, lfu, fifo,
+    # ttdf, race_rp or sampled_lrfu (vllm/core/eviction_policies.py).
+    # Unset: lru, vLLM's only policy.
     "VLLM_EVICTION_POLICY":
     lambda: os.getenv("VLLM_EVICTION_POLICY", None),
+
+    # COMP 536: key=value,... settings of ttdf, race_rp and sampled_lrfu
+    # (vllm/core/reuse_evictors.py, vllm/core/sampled_lrfu.py). Unset:
+    # their defaults.
+    "VLLM_EVICTION_PARAMS":
+    lambda: os.getenv("VLLM_EVICTION_PARAMS", None),
 }
 
 # end-env-vars-definition

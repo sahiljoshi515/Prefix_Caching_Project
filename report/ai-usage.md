@@ -156,3 +156,68 @@ Entry format:
   description and this entry. Sahil asked for the fix and reviewed it.
 - **Prompts:** "Can you fix the CI for codespell/codecheck and make a
   commit, and then tell me if we can merge it?"
+
+### PR pending (branch `milestone3_task2`): Milestone 3 Task 2, Phase 1
+
+- **Tools:** Claude Code (Claude Opus 5.5), with parallel subagents for the
+  runner, the tables, the Belady oracle, identification and signals, the
+  paper checks, and an independent code review.
+- **Used for:** designing the study (the design was stress-tested by a
+  review agent before any run), porting the earlier local work, the
+  pacing and window changes, the grid runner, every analysis module and
+  its tests, the 21 engine runs and the simulator sweep, the results page
+  and figures, and these documents. Sahil chose the workloads, the model,
+  the branch and the plan's direction.
+- **Prompts:** "I need your help with Milestone 3 Task 2 [...] We need a
+  systematic study using the Qwen2.5-0.5B-Instruct Model that
+  specifically plots these 3 things for LRU, LFU, and FIFO [...] create
+  this mixed workload generator, and then run the baselines, see how these
+  baselines and metrics that are asked look like in plots, and then based
+  on that we can get some signals to focus and design the smart eviction
+  policy [...] read the following paper [...] write neat code on a new
+  branch called milestone3_task2 [...] commit and push code to this new
+  branch. Create a good, interpretable, coherent artifact".
+
+
+### PR #16: Milestone 3 Task 2, Phase 2: spec revision and first wa experiments
+
+- **Tools:** Claude Code (Claude Opus 5.5), with one multi-agent literature
+  search that informed the spec revision.
+- **Used for:** the spec 007 revision, the leaf-LRU controls, the label
+  probe, the `wa` prototype and their tests, the table script, rebuilding
+  the data and Phase 1's runs on a second laptop, the cache-replay
+  experiments and their record in `plan.md`, and this PR's documents.
+  Marcus chose to revise the spec on a branch off `milestone3_task2`, to
+  run experiments before planning, and to test `wa` before its review.
+- **Prompts:** "can you help me to write the spec of milestone 3 task 2?";
+  "Can you do some experiment first? and then we need to plan how to do
+  it."; "Can you test the wa first? and get some result"; "write a pr?".
+- **Review fix:** Claude Code checked the review's findings against the
+  code, wrote regression tests that fail on the first version, fixed the
+  evictor, the tests and `sim_table`, reran the seed-1 tuning and the
+  held-out replays, compared four bin rules on seed 1, and rewrote the
+  results in `plan.md` and the changelog. Marcus passed on the review.
+  Prompt: "This is his feedback" (with the review pasted).
+- **Engine runs and scope:** Claude Code found that `wa` had run only in
+  the replay, ran it on the engine, added the runner's `wa` grid, removed
+  the probe and the second control, added S3-FIFO (and removed it again
+  at Marcus's request) and narrowed spec 007 to the basic study Marcus
+  chose. Prompts (Marcus's, translated from
+  Chinese): "Can you check whether our repo has really run it?"; "OK, can
+  you just run it? Has Sahil run it?"; "Can you implement it? I think it
+  should be fine."; "We can do S3-FIFO, but delete the other unnecessary
+  ones"; "I think don't do too much, just the basics"; "remove the
+  S3-FIFO".
+
+### PR pending (branch `milestone3-marcus-merge-task2`): Merge Milestone 3 Task 2 into `milestone-3`
+
+- **Tools:** Claude Code (Claude Opus 5.5).
+- **Used for:** the trial merge, resolving the ten conflicts, keeping
+  Task 2's AgentBank and CC-Bench processing as the `-mix` datasets,
+  finding and fixing the positional `Conversation` field clash, the
+  reproducibility checks (input hashes and a rebuilt plan), the documents
+  and this entry. Marcus chose to keep each task's processing (option A)
+  over moving Task 2 to Task 1's adapters.
+- **Prompts:** "should we merge the milestone3-task2 into milestone3?";
+  "Should we follow Jasmine? I mean task 2 is after task 1"; "Okay, then
+  just use option A"; "just implement all".
