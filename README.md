@@ -36,7 +36,7 @@ Runtimes are from a 12-core Apple-silicon laptop.
 | 2.2 | How much prefix sharing do single- and multi-turn chats get? | Multi-turn: 95% of block lookups hit, almost all within the same conversation. Single-turn: 13%, mostly the shared system prompt. | [report/milestone2/task2-prefix-sharing-analysis.md](report/milestone2/task2-prefix-sharing-analysis.md) |
 | 2.3 | Which cache size, block size and eviction policy? | Capacity decides almost everything: 2% reuse at 16K tokens, 95% at 128K. LRU is best; FIFO strands hits behind misses; LFU collapses under pressure. | [report/milestone2/task3-cache-tuning.md](report/milestone2/task3-cache-tuning.md) |
 | 3.1 | Best policy for each workload? | Bailian: LFU (15.0% vs LRU 13.3%). AgentBank: LRU (89.5% vs FIFO 55.1%, LFU 18.5%). CC-Bench: no policy helps at this load; the cache thrashes (1.5–2.1%), LFU slightly ahead. | [report/milestone3/task1-workload-eviction.md](report/milestone3/task1-workload-eviction.md) |
-| 3.2 | Best policy for a mix of 4 workloads (7 traces)? | TTDF, RACE-RP and our workload-aware `wa` beat LRU on every seed; RACE-RP and `wa` by about 3 points, and they tie with each other. Engine runs at 128K tokens (Phase 2): LRU 55.8%, RACE-RP 58.7%, `wa` 59.1% with oracle workload labels and 58.2% without. Belady, the offline optimum, reaches 68.3% in the replay. | [report/milestone3/task2-mixed-workload-policy.md](report/milestone3/task2-mixed-workload-policy.md), [spec 007 plan](specs/007-m3-mixed-workload-policy/plan.md) (Phase 2) |
+| 3.2 | Best policy for a mix of 4 workloads (7 traces)? | Our RACE-RP and TTDF beat LRU on every seed, RACE-RP by about 3 points. Engine runs at 128K tokens (Phase 2): LRU 55.8%, RACE-RP 58.7%. Belady, the offline optimum, reaches 68.3% in the replay. | [report/milestone3/task2-mixed-workload-policy.md](report/milestone3/task2-mixed-workload-policy.md), [spec 007 plan](specs/007-m3-mixed-workload-policy/plan.md) (Phase 2) |
 
 ## 1. Setup
 
@@ -414,9 +414,10 @@ and tuning; seeds 2–4 are reported.
 
 **The policies.**
 - Baselines: LRU, LFU and FIFO.
-- Three published-style scorers: TTDF, RACE-RP and Sampled LRFU
-  (`vllm/core/reuse_evictors.py`, `vllm/core/sampled_lrfu.py`).
-- Our workload-aware policy, `wa` (`vllm/core/wa_evictor.py`).
+- Our two policies (`vllm/core/reuse_evictors.py`): **RACE-RP**, Task 2's
+  designed policy, and TTDF. Neither reads workload labels.
+- Sampled LRFU, a sampled version of the classic LRFU
+  (`vllm/core/sampled_lrfu.py`).
 - Two reference points: Belady's offline optimum and a cache that never
   evicts.
 
@@ -424,7 +425,8 @@ How they work: [spec 007](specs/007-m3-mixed-workload-policy/spec.md).
 Results:
 - Phase 1 (baselines, TTDF, RACE-RP, Sampled LRFU):
   [report/milestone3/task2-mixed-workload-policy.md](report/milestone3/task2-mixed-workload-policy.md).
-- Phase 2 (`wa`): the *Phase 2 first experiments* section of
+- Phase 2 (`wa`, removed from the code on 2026-11-13): its design and
+  results stay in the *Phase 2 first experiments* section of
   [specs/007-m3-mixed-workload-policy/plan.md](specs/007-m3-mixed-workload-policy/plan.md).
 
 Needs data blocks A and C. Two kinds of run:
@@ -446,7 +448,7 @@ python -m analysis.run_m3_task2 plans --grid smoke           # a 3-minute balanc
 python -m analysis.run_m3_task2 grid --grid smoke --allow-dirty --out results/m3-task2-smoke   # 1 LRU engine run
 python -m analysis.run_m3_task2 plans --grid phase1          # the reported plans: balanced, seeds 1-4 (about 3.5 min)
 python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s2 \
-  --policies lru 'wa:labels=oracle,buckets=1,half_life=600' \
+  --policies lru ttdf \
   --capacities 131072 --window 600 1800 --out results/m3-quick.jsonl   # 2 cache replays
 python -m analysis.sim_table results/m3-quick.jsonl --against lru
 ```
@@ -461,13 +463,14 @@ python -m analysis.sim_table results/m3-quick.jsonl --against lru
   `sim_table` can't summarize it.
 - `sim` prints each replay's usable reuse over the whole run. `sim_table`
   reports it over the measurement window [600 s, 1800 s), which is the
-  study's metric. For seed 2, `wa` scores 57.44 against LRU's 54.22, a
-  gain of 3.22 points.
+  study's metric. For seed 2, TTDF scores 55.27 against LRU's 54.22, a
+  gain of 1.05 points.
 
-**Reproduce the headline comparison (about 2.5 hours).** This is LRU,
-TTDF, RACE-RP and `wa` at 64K/128K/256K in the cache replay, and LRU,
-RACE-RP and `wa` in 12 engine runs at 128K. The Phase 1 grid's seed-1
-ceiling run provides the timing that RACE-RP trains on.
+**Reproduce the headline comparison (under 1.5 hours).** This is LRU,
+`lru_leaf`, TTDF, RACE-RP and Belady at 64K/128K/256K in the cache replay.
+The seed-1 ceiling run provides the timing that RACE-RP trains on. The
+engine runs of every policy are in the full Phase 1 study below (steps 2
+and 4).
 
 ```bash
 python -m analysis.run_m3_task2 plans --grid phase1
@@ -475,26 +478,9 @@ python -m analysis.run_m3_task2 replay --plan data/processed/m3/balanced-human-s
   --out results/m3-task2/balanced-human-s1-ceiling --capacity 11851680      # no-eviction run, 30 min
 python -m analysis.race_train --sketch 16x6 --out results/m3-race           # RACE-RP's sketch, trained on seed 1
 python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
-  --policies lru lru_leaf ttdf race_rp:sketch=results/m3-race/sketch-L16-P6.json \
-    'wa:labels=oracle,buckets=1,half_life=600' 'wa:labels=none,buckets=1,half_life=1800' belady \
+  --policies lru lru_leaf ttdf race_rp:sketch=results/m3-race/sketch-L16-P6.json belady \
   --capacities 65536 131072 262144 --window 600 1800 --out results/m3-explore/heldout.jsonl
 python -m analysis.sim_table results/m3-explore/heldout.jsonl --against lru   # the replay table, per workload, gate
-python -m analysis.run_m3_task2 grid --grid wa --out results/m3-task2        # 12 engine runs, about 1 h
-python -m analysis.tables results/m3-task2/balanced-human-s{2,3,4}-*-cap131072
-python -m analysis.sim_table --against lru \
-  --engine results/m3-task2/balanced-human-s{2,3,4}-{lru,race_rp,wa_oracle,wa_none}-cap131072
-```
-
-`wa`'s settings were chosen on seed 1 from 12 candidates: labels oracle or
-none, hit buckets on or off, half-life 120, 600 or 1,800 s. To rerun that
-tuning:
-
-```bash
-python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 \
-  --policies $(for l in oracle none; do for b in 1 0; do for h in 120 600 1800; do \
-    echo "wa:labels=$l,buckets=$b,half_life=$h"; done; done; done) \
-  --capacities 131072 --window 600 1800 --out results/m3-explore/wa-tune-s1.jsonl
-python -m analysis.sim_table results/m3-explore/wa-tune-s1.jsonl --seeds 1
 ```
 
 <details><summary><b>Full Phase 1 study</b>: every number and figure of the Task 2 note (78 engine runs, about 8 h at 6 at a time, plus about 2 h of replays)</summary>
@@ -592,8 +578,8 @@ note's tables and figures.
 | `VLLM_SIMULATOR_TRACE=<file>` | The response trace to replay. Without it, every request gets filler tokens. |
 | `VLLM_CPU_KVCACHE_SPACE=<GiB>` | Simulated KV-cache size (default 4). `--num-gpu-blocks-override N` sets an exact block count instead. |
 | `VLLM_CACHE_EVENT_LOG=<file>` | Log every prefix-cache event (hit, miss, insert, free, revive, evict) as JSON lines, for the analyses. |
-| `VLLM_EVICTION_POLICY` | The prefix cache's eviction policy: `lru` (default, vLLM's own), `fifo`, `lfu`, `ttdf`, `race_rp`, `sampled_lrfu`, `lru_leaf`, `wa`. Read only with `--enable-prefix-caching`; unknown values are refused. |
-| `VLLM_EVICTION_PARAMS` | The policy's settings, `key=value,...`. TTDF: `tau_short`, `tau_long`, `w_short`, `w_long`. RACE-RP: `sketch=<file>` (required), `alpha`. Sampled LRFU: `half_life`, `sample_size`, `seed`. `wa`: `labels` (`oracle` or `none`), `half_life`, `kappa`, `buckets`. All of them take `stats=<file>` for overhead counters. In a cache replay, the same settings follow the policy name after a colon. |
+| `VLLM_EVICTION_POLICY` | The prefix cache's eviction policy: `lru` (default, vLLM's own), `fifo`, `lfu`, `ttdf`, `race_rp`, `sampled_lrfu`, `lru_leaf`. Read only with `--enable-prefix-caching`; unknown values are refused. |
+| `VLLM_EVICTION_PARAMS` | The policy's settings, `key=value,...`. TTDF: `tau_short`, `tau_long`, `w_short`, `w_long`. RACE-RP: `sketch=<file>` (required), `alpha`. Sampled LRFU: `half_life`, `sample_size`, `seed`. All of them take `stats=<file>` for overhead counters. In a cache replay, the same settings follow the policy name after a colon. |
 
 ### The simulator in more detail
 
@@ -671,7 +657,7 @@ linters and a check against [CONTRIBUTING.md](CONTRIBUTING.md)
 | `vllm/envs.py` | The variables above. |
 | `vllm/core/block/cache_events.py` (new), `prefix_caching_block.py`, `cpu_gpu_block_allocator.py`, `block_manager.py` | The cache event log, the request context, and the evictor hooks (`record_hit`, `record_access`). |
 | `vllm/core/evictor.py`, `eviction_policies.py` (new) | Policy selection, FIFO, LFU. vLLM's `LRUEvictor` is unchanged. |
-| `vllm/core/reuse_evictors.py`, `sampled_lrfu.py`, `wa_evictor.py` (new) | TTDF, RACE-RP, `lru_leaf`, Sampled LRFU, `wa`. |
+| `vllm/core/reuse_evictors.py`, `sampled_lrfu.py` (new) | TTDF, RACE-RP, `lru_leaf`, Sampled LRFU. |
 | `client_simulator/` (new) | Dataset adapters and the replay client. |
 | `analysis/` (new) | Metrics, the experiment runners, the cache replay and Belady, the Milestone 3 study, the figures. |
 | `tests/simulator`, `tests/analysis`, `tests/eviction`, `tests/client_simulator` (new) | The project's tests. |

@@ -1,7 +1,7 @@
 """Leaf-LRU control of spec 007 FR-012 (``lru_leaf``).
 
 It evicts an idle block with no cached block after it in a prompt (a
-leaf), as TTDF, RACE-RP and wa do: the leaf whose last access
+leaf), as TTDF and RACE-RP do: the leaf whose last access
 (``record_access``) is oldest. Ties go to the deeper block, then the lower
 block id.
 """

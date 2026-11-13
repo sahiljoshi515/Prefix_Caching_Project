@@ -10,8 +10,6 @@ simulator (spec 007).
     #    Interrupted? Run the same command again: finished runs are kept.
     #    Two laptops: add --shard 1/2 on one and --shard 2/2 on the other
     #    (to both commands); each plan's runs stay on one machine.
-    #    wa's engine runs (spec 007 Phase 2), beside LRU and RACE-RP:
-    python -m analysis.run_m3_task2 grid --grid wa --out results/m3-task2
     # Sweep the fast cache simulator (a design tool; reported numbers come
     # from the grid), timed by each plan's own no-eviction engine run:
     python -m analysis.run_m3_task2 sim \\
@@ -96,21 +94,11 @@ from client_simulator.token_plan import read_plan
 DEFAULT_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 # The plans drop turns longer than this (analysis/mix.py --max-model-len).
 MAX_MODEL_LEN = 32768
-GRIDS = ("phase1", "smoke", "isolated", "policies", "wa")
+GRIDS = ("phase1", "smoke", "isolated", "policies")
 BASELINES = ("lru", "lfu", "fifo")
 # Milestone 3's new policies (vllm/core/reuse_evictors.py,
 # vllm/core/sampled_lrfu.py).
 NEW_POLICIES = ("ttdf", "race_rp", "sampled_lrfu")
-# wa's runs (vllm/core/wa_evictor.py, spec 007 Phase 2): one grid policy
-# per label mode, with the settings seed 1 picked in the cache replay
-# (plan.md). The server runs VLLM_EVICTION_POLICY=wa for both.
-WA_RUNS = {
-    "wa_oracle": "labels=oracle,buckets=1,half_life=600",
-    "wa_none": "labels=none,buckets=1,half_life=1800",
-}
-# The wa grid's runs on each seed: LRU and RACE-RP under the same load,
-# then wa.
-WA_GRID_POLICIES = ("lru", "race_rp", *WA_RUNS)
 # RACE-RP's sketches, trained on seed 1 (analysis/race_train.py).
 RACE_SKETCH = Path("results/m3-race/sketch-L16-P6.json")
 # Engine checks of the capacity sweep's replay at its two ends.
@@ -338,12 +326,6 @@ def grid_configs(name: str,
     under TTDF, RACE-RP and Sampled LRFU at `capacity_tokens` (9), and seed
     2's at the capacity sweep's two ends, 32K and 384K tokens (6), to check
     the replay; the baselines' runs and ceilings are phase1's.
-
-    ``wa`` (12 runs) replays the balanced plans of the reported seeds at
-    `capacity_tokens` under LRU, RACE-RP and wa with oracle labels and with
-    none (`WA_RUNS`), so the comparison shares one machine's load. In a
-    folder where phase1 and policies ran, their LRU and RACE-RP runs have
-    the same names and are skipped.
     """
 
     def plan(mix: str, pacing: str, seed: int) -> List[MixConfig]:
@@ -377,11 +359,6 @@ def grid_configs(name: str,
         ] + [
             MixConfig("balanced", "human", 2, policy, capacity)
             for capacity in POLICY_CHECK_CAPACITIES for policy in NEW_POLICIES
-        ]
-    elif name == "wa":
-        configs = [
-            MixConfig("balanced", "human", seed, policy, capacity_tokens)
-            for seed in (2, 3, 4) for policy in WA_GRID_POLICIES
         ]
     else:
         raise ValueError(f"Unknown grid {name!r}; use one of "
@@ -438,26 +415,17 @@ def parse_shard(text: str) -> Tuple[int, int]:
 # --- Plans -----------------------------------------------------------------
 
 
-def engine_policy(policy: str) -> str:
-    """The server's VLLM_EVICTION_POLICY for a grid policy: ``wa`` for
-    wa's label modes (`WA_RUNS`), else the policy itself."""
-    return "wa" if policy in WA_RUNS else policy
-
-
 def policy_env(policy: str,
                run_dir: Path,
                sketch: Path = RACE_SKETCH) -> Dict[str, str]:
     """The server settings of an engine run of a new policy (TTDF, RACE-RP,
-    Sampled LRFU, wa): its counters go to the run's ``evictor-stats.json``,
-    RACE-RP loads `sketch` and uses one math thread (`ONE_THREAD`), and wa
-    gets its label mode's settings (`WA_RUNS`). Nothing for the
-    baselines."""
-    if policy not in (*NEW_POLICIES, *WA_RUNS):
+    Sampled LRFU): its counters go to the run's ``evictor-stats.json``, and
+    RACE-RP loads `sketch` and uses one math thread (`ONE_THREAD`). Nothing
+    for the baselines."""
+    if policy not in NEW_POLICIES:
         return {}
     params = [f"stats={(run_dir / 'evictor-stats.json').resolve()}"]
     extra: Dict[str, str] = {}
-    if policy in WA_RUNS:
-        params.insert(0, WA_RUNS[policy])
     if policy == "race_rp":
         if not sketch.exists():
             raise RunnerError(f"race_rp needs its sketch {sketch}; run "
@@ -667,9 +635,7 @@ def run_config(run_dir: Path) -> MixConfig:
     """The configuration of the run in `run_dir`, read from its
     ``run.json``.
 
-    A grid run records it, and its grid policy when the server's differs
-    (``run_policy``: wa's label modes). A run made with ``replay`` does
-    not record the configuration: its pacing
+    A grid run records it. A run made with ``replay`` does not: its pacing
     (``pacing.kind``) and seed then come from the plan manifest that
     ``run.json`` holds, its mix from the plan folder's name (a recipe plan's
     manifest names the mix it was built from: smoke's says balanced), and
@@ -698,7 +664,7 @@ def run_config(run_dir: Path) -> MixConfig:
     return MixConfig(mix,
                      pacing,
                      int(seed),
-                     run.get("run_policy", run["eviction_policy"]),
+                     run["eviction_policy"],
                      int(run["capacity_tokens"]),
                      block_size=int(run["block_size"]),
                      ceiling=bool(ceiling),
@@ -1000,16 +966,13 @@ class _Grid:
             capacity = self.ceiling_capacity(config, path, max_model_len,
                                              updates)
         env = policy_env(config.policy, run_dir, RACE_SKETCH)
-        policy = engine_policy(config.policy)
-        if policy != config.policy:
-            updates["run_policy"] = config.policy
         if config.policy == "race_rp":
             updates["race_sketch"] = str(RACE_SKETCH)
             updates["race_sketch_sha256"] = hashlib.sha256(
                 RACE_SKETCH.read_bytes()).hexdigest()
         self.replay(path,
                     run_dir,
-                    policy=policy,
+                    policy=config.policy,
                     capacity_tokens=capacity,
                     block_size=config.block_size,
                     max_model_len=max_model_len,
@@ -1299,7 +1262,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     replay.add_argument("--policy", default="lru")
     replay.add_argument("--params",
                         help="The policy's VLLM_EVICTION_PARAMS, e.g. "
-                        "labels=oracle,buckets=1,half_life=600 for wa")
+                        "sketch=results/m3-race/sketch-L16-P6.json for "
+                        "race_rp")
     replay.add_argument("--labels")
     replay.add_argument("--capacity", type=int, required=True)
     replay.add_argument("--block-size", type=int, default=16)

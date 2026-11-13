@@ -389,6 +389,30 @@ block id. Choices the code makes:
   k ∈ {4, 16, 64}, chosen as for TTDF and RACE-RP. The `policies` grid adds
   its five engine runs (15 in all).
 
+## `wa` removed (2026-11-13)
+
+Marcus removed `wa` from the code: `vllm/core/wa_evictor.py`, its
+registration (`EvictionPolicy.WA`, `VLLM_EVICTION_POLICY=wa`), its tests,
+and the runner's `wa` grid with its `run_policy` record. The study's
+policies are now LRU, LFU and FIFO, TTDF, RACE-RP, Sampled LRFU and the
+`lru_leaf` control. Phase 2's design and the results below stay as the
+record; their `wa` commands no longer run. The prototype is at
+`589fa730`. The engine runs of LRU and RACE-RP at 128K made by the `wa`
+grid stand on their own.
+
+Task 2's designed policy is now **RACE-RP**, which the owners specified in
+Phase 1 (*TTDF and RACE-RP* above):
+- It is the best policy at every size from 32K to 256K in the replay (Phase
+  1 note), and on the engine at 128K it scores 58.74% against LRU's
+  55.80%, +2.94 points on seeds 2–4. `wa` with oracle labels tied it
+  (59.07%).
+- It reads no workload labels. The course's question of how to tell a
+  request's workload is answered by Phase 1's classifier (89.7% accurate).
+  `wa`'s two label modes measured what the label adds: 0.86 points on the
+  engine at 128K (59.07% against 58.21%).
+- Its limitation: at 128K it lowers ShareGPT by 2.1 points against LRU,
+  just past the 2-point gate. No policy passed the gate at every capacity.
+
 ## Scope (2026-11-10)
 
 Marcus chose to finish the basic study rather than the full grid of

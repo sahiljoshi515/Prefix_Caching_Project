@@ -221,3 +221,17 @@ Entry format:
 - **Prompts:** "should we merge the milestone3-task2 into milestone3?";
   "Should we follow Jasmine? I mean task 2 is after task 1"; "Okay, then
   just use option A"; "just implement all".
+
+### PR pending (branch `milestone3-marcus-remove-wa`): Milestone 3 Task 2: remove `wa`, RACE-RP as the designed policy
+
+- **Tools:** Claude Code (Claude Opus 5.5).
+- **Used for:** removing `wa`'s code, tests and runner grid; moving the
+  `replay --params` test; the README's new quick run (run once to get its
+  numbers); the notes in spec 007, the Task 2 note and the changelog; and
+  this entry. Claude Code first claimed that TTDF and RACE-RP were
+  published policies; Marcus questioned it, and the git history and
+  `plan.md` showed that the owners specified them. Marcus chose to
+  remove `wa` and to name RACE-RP Task 2's designed policy.
+- **Prompts:** "please help me to remove the WA policy on our branch";
+  "and pr"; "please pull from the branch milestone3"; "how about RACE-RP?
+  this is also eviction policy"; "Okay, please do it".
