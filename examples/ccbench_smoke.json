@@ -1,0 +1,20 @@
+{
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "capacity_tokens": 65536,
+  "block_size": 16,
+  "max_model_len": 32768,
+  "max_concurrency": 32,
+  "seed": 0,
+  "workloads": [
+    {
+      "name": "ccbench",
+      "format": "chat",
+      "trace": "../data/processed/ccbench.conversations.jsonl",
+      "responses": "../data/processed/ccbench.responses.jsonl",
+      "limit": 5,
+      "mode": "multi",
+      "conversation_rate": 2,
+      "think_time": 1
+    }
+  ]
+}

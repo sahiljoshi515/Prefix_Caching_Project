@@ -1,111 +1,191 @@
-# Prefix-sharing simulator for vLLM (COMP 536 project)
+# Prefix sharing in LLM serving: a vLLM simulator study (COMP 536)
 
 This repository is [vLLM](https://github.com/vllm-project/vllm) at commit
-`94d545a1a18e20ea8763a6760194589b8a3c9065` plus a small **simulator** that
-lets vLLM run its complete serving stack on a CPU-only laptop without a GPU
-and without model weights. Request handling, continuous batching, the
-scheduler, the KV-cache block manager and prefix caching all run unchanged;
-only the model forward pass is replaced by replaying pre-collected responses
-from a trace. Upstream's README is kept as `README_vllm.md`; the Milestone 1
-design and test notes are in
-[`report/milestone1/simulator.md`](report/milestone1/simulator.md).
+`94d545a1a18e20ea8763a6760194589b8a3c9065`, turned into a **prefix-sharing
+simulator** that runs on a CPU-only laptop (Milestone 1), and the
+experiments built on it:
+- prefix sharing on ShareGPT chat (Milestone 2);
+- cache eviction across workloads and on a mixed workload (Milestone 3).
 
-## Project status
+Request handling, continuous batching, the scheduler, the KV-cache block
+manager and prefix caching all run unchanged. Only the model's forward pass
+is replaced: responses are replayed from a trace. So no GPU and no model
+weights are needed. Upstream vLLM's README is kept as
+[`README_vllm.md`](README_vllm.md).
 
-| Milestone | What | Status | Where |
+**Contents**
+1. [Results at a glance](#results-at-a-glance)
+2. [Setup](#1-setup) (5 min)
+3. [Quick check](#2-quick-check-about-5-minutes) (5 min)
+4. [Get the data](#3-get-the-data)
+5. [Milestone 1: the simulator](#4-milestone-1-the-simulator)
+6. [Milestone 2: prefix sharing on ShareGPT](#5-milestone-2-prefix-sharing-on-sharegpt)
+7. [Milestone 3: eviction policies across workloads](#6-milestone-3-eviction-policies-across-workloads)
+8. [Reference](#7-reference): environment variables, trace format, tests, what changed, troubleshooting
+
+Every command below was run from a fresh clone. Every section has a **quick
+run** (minutes) and the **full reproduction** behind the reported numbers.
+Runtimes are from a 12-core Apple-silicon laptop.
+
+## Results at a glance
+
+| Milestone, task | Question | Answer | Details |
 |---|---|---|---|
-| 1 | Simulator that replaces model execution | Done | `vllm/simulator.py`, `tests/simulator/` |
-| 2, Task 1 | Client simulator and ShareGPT preprocessing | Done | `client_simulator/` |
-| 2, Task 2 | Cache event log, prefix-sharing metrics, single- vs multi-turn replay | In progress | `vllm/core/block/cache_events.py`, `analysis/`, `specs/004-*` |
-| 2, Task 3 | Cache size, block size and eviction policies | Done: 54-run grid, [findings](report/milestone2/task3-cache-tuning.md) | `vllm/core/eviction_policies.py`, `analysis/sweep.py`, `analysis/run_m2_task3.py`, `specs/005-*` |
-| 3, Task 2 | Mixed workload: generator, LRU/LFU/FIFO baselines, reuse study, TTDF, RACE-RP and Sampled LRFU | Phase 1 done: 21-run mixed grid and 36 isolated runs; the three new policies on the mix (15 engine runs), [findings](report/milestone3/task2-mixed-workload-policy.md) | `analysis/mix.py`, `analysis/run_m3_task2.py`, `analysis/m3t2_study.py`, `vllm/core/reuse_evictors.py`, `vllm/core/sampled_lrfu.py`, `analysis/race_train.py`, `specs/007-*` |
-| 3, Task 1 | Eviction policies across workloads | Planned | `specs/006-*` |
+| 1 | Can vLLM serve without a GPU while keeping its scheduler and prefix cache? | Yes. Only model execution is replaced by trace replay. 67 tests, plus vLLM's own scheduler and block-manager tests. | [report/milestone1/simulator.md](report/milestone1/simulator.md) |
+| 2.1 | A client that replays ShareGPT with chat templates and Poisson arrivals | `client_simulator/` | [report/milestone2/task1-client-simulator.md](report/milestone2/task1-client-simulator.md) |
+| 2.2 | How much prefix sharing do single- and multi-turn chats get? | Multi-turn: 95% of block lookups hit, almost all within the same conversation. Single-turn: 13%, mostly the shared system prompt. | [report/milestone2/task2-prefix-sharing-analysis.md](report/milestone2/task2-prefix-sharing-analysis.md) |
+| 2.3 | Which cache size, block size and eviction policy? | Capacity decides almost everything: 2% reuse at 16K tokens, 95% at 128K. LRU is best; FIFO strands hits behind misses; LFU collapses under pressure. | [report/milestone2/task3-cache-tuning.md](report/milestone2/task3-cache-tuning.md) |
+| 3.1 | Best policy for each workload? | Bailian: LFU (15.0% vs LRU 13.3%). AgentBank: LRU (89.5% vs FIFO 55.1%, LFU 18.5%). CC-Bench: no policy helps at this load; the cache thrashes (1.5–2.1%), LFU slightly ahead. | [report/milestone3/task1-workload-eviction.md](report/milestone3/task1-workload-eviction.md) |
+| 3.2 | Best policy for a mix of 4 workloads (7 traces)? | TTDF, RACE-RP and our workload-aware `wa` beat LRU on every seed; RACE-RP and `wa` by about 3 points, and they tie with each other. Engine runs at 128K tokens (Phase 2): LRU 55.8%, RACE-RP 58.7%, `wa` 59.1% with oracle workload labels and 58.2% without. Belady, the offline optimum, reaches 68.3% in the replay. | [report/milestone3/task2-mixed-workload-policy.md](report/milestone3/task2-mixed-workload-policy.md), [spec 007 plan](specs/007-m3-mixed-workload-policy/plan.md) (Phase 2) |
 
-How the team works (branches, pull requests, tests, CI, documentation) is
-in [`CONTRIBUTING.md`](CONTRIBUTING.md). Each feature has a spec, a plan and
-a task list under [`specs/`](specs/README.md); what each task found goes
-into the technical report under [`report/`](report/README.md).
+## 1. Setup
 
-## What changed
+You need git, [uv](https://docs.astral.sh/uv/), and Python 3.12 (3.9–3.12
+work; uv can install it). No GPU.
 
-| Path | Purpose |
-|---|---|
-| `vllm/simulator.py` (new) | `Simulator` (trace replay logic) and `SimulatorExecutor` (the vLLM executor that uses it). |
-| `vllm/envs.py` | Declares `VLLM_USE_SIMULATOR`, `VLLM_SIMULATOR_TRACE`, `VLLM_CACHE_EVENT_LOG` and `VLLM_EVICTION_POLICY`. |
-| `vllm/core/block/cache_events.py` (new), `prefix_caching_block.py`, `cpu_gpu_block_allocator.py`, `block_manager.py` | Milestone 2: opt-in log of every prefix-cache event (hit, miss, insert, free, revive, evict) with its request; off unless `VLLM_CACHE_EVENT_LOG` is set. |
-| `vllm/core/eviction_policies.py` (new), `vllm/core/evictor.py`, `prefix_caching_block.py`, `cpu_gpu_block_allocator.py` | Milestone 2, Task 3: FIFO and LFU evictors next to vLLM's LRU, chosen with `VLLM_EVICTION_POLICY`; the allocator reports each lookup hit to the evictor (LFU counts them). LRU, exactly as before, when unset. |
-| `vllm/platforms/__init__.py` | Pins the CPU platform when the simulator is on, so the engine starts on any machine. |
-| `vllm/engine/llm_engine.py`, `vllm/engine/async_llm_engine.py` | Select `SimulatorExecutor` (four lines each). |
-| `vllm/entrypoints/launcher.py`, `vllm/entrypoints/openai/api_server.py`, `vllm/utils.py` | macOS fixes: hand the already-bound port to uvicorn instead of binding it twice, and skip a root-only port lookup during shutdown. |
-| `constraints-simulator.txt` (new) | Dependency pins contemporary with this vLLM commit. |
-| `tests/simulator/` (new) | 87 tests: unit, in-process engine, a real `vllm serve`, the cache event log, and the eviction-policy variable. |
-| `tests/analysis/` (new) | Milestone 2: 69 tests of the metrics, the Task 2 and Task 3 experiment commands and the server launcher, without a server. |
-| `tests/eviction/` (new) | Milestone 2, Task 3: 41 tests of the FIFO and LFU evictors with hand-derived victims, and a randomized check against each policy's definition. |
-| `examples/simulator/` (new) | Example trace and a client that replays it. |
-| `client_simulator/` (new) | Milestone 2: ShareGPT download and preprocessing, and the replay client (Poisson arrivals, single- and multi-turn, chat template). |
-| `analysis/` (new) | Milestone 2: the shared metrics (cached fraction, hits per block, reuse intervals, hit sources, evictions), the server launcher, figures, the Task 2 experiment command and the Task 3 sweep. |
-| `Makefile`, `tools/run_project_tests.sh` (new) | Shared commands for setup, tests per milestone, linting and PR checks. |
-| `.github/workflows/project-ci.yml`, `pr-requirements.yml`, `tools/pr_check/` (new) | CI: the project's tests on every PR, and a check of each PR against `CONTRIBUTING.md`. |
-| `CONTRIBUTING.md`, `.specify/`, `specs/` (new) | Team rules, the project constitution, and a spec per milestone task. |
-| `report/` (new) | The technical report: one note of findings per task, the figures it uses, and later its LaTeX source. |
-
-## Setup
-
-Requirements: git, [uv](https://docs.astral.sh/uv/), Python 3.9 to 3.12
-(3.12 is what we use), about 1 GB of disk for the virtualenv (uv keeps a
-download cache on top of that). No GPU.
+Disk: about 1 GB for the virtualenv; about 3 GB more for all datasets;
+about 22 GB for M2 Task 3 and 20 GB for M3 Task 1's CC-Bench; check
+each section before a full run.
 
 ```bash
 git clone https://github.com/sahiljoshi515/Prefix_Caching_Project.git
 cd Prefix_Caching_Project
-uv venv --python 3.12 .venv
-source .venv/bin/activate
-
-# macOS (the course command, plus the version pins):
-VLLM_USE_PRECOMPILED=1 uv pip install --editable . -c constraints-simulator.txt
-# Linux without a GPU (pure-Python build, no kernel download):
-#   VLLM_TARGET_DEVICE=empty uv pip install --editable . -c constraints-simulator.txt
-
-uv pip install pytest==8.3.3 pytest-asyncio==0.24.0   # only needed for the tests
-uv pip install matplotlib==3.9.2 -c constraints-simulator.txt   # analysis figures
-uv pip install pyarrow==18.0.0 -c constraints-simulator.txt     # AgentBank, CC-Bench (parquet)
+make setup
 ```
 
-Shortcut: `make setup` runs these steps on macOS or Linux (on Linux it takes
-CPU-only PyTorch), then `make test` runs the project's tests. `make help`
-lists every command.
+`make setup` does the following:
+- creates `.venv` with Python 3.12;
+- installs this vLLM from source in editable mode (`VLLM_USE_PRECOMPILED=1` on macOS, as the course asks; a CPU-only build on Linux), pinned by `constraints-simulator.txt`;
+- installs the test, plotting and parquet packages;
+- prints `Setup OK: <...CpuPlatform...>`.
 
-Check the install:
+`make help` lists every command.
+
+Every command below assumes the virtualenv is active and the simulator is
+switched on:
 
 ```bash
-export VLLM_USE_SIMULATOR=1
-python -c "from vllm.platforms import current_platform; print(current_platform)"   # CpuPlatform
-python -c "from vllm.engine.llm_engine import LLMEngine; print(LLMEngine._get_executor_cls(None))"  # SimulatorExecutor
+source .venv/bin/activate
+export VLLM_USE_SIMULATOR=1 VLLM_NO_USAGE_STATS=1
+```
+
+<details><summary>The same setup without make</summary>
+
+```bash
+uv venv --python 3.12 .venv && source .venv/bin/activate
+# macOS:
+VLLM_USE_PRECOMPILED=1 uv pip install --editable . -c constraints-simulator.txt
+# Linux without a GPU:
+#   VLLM_TARGET_DEVICE=empty uv pip install --editable . -c constraints-simulator.txt \
+#     --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+uv pip install pytest==8.3.3 pytest-asyncio==0.24.0 matplotlib==3.9.2 pyarrow==18.0.0 \
+  -c constraints-simulator.txt
+```
+
+The pins matter. An unpinned install today resolves transformers 5,
+openai 2 and huggingface_hub 1, which this vLLM version cannot import.
+</details>
+
+## 2. Quick check (about 5 minutes)
+
+```bash
+make ci           # every milestone's tests + vLLM's scheduler/block-manager tests (about 3.5 min)
+```
+
+Expected: M1 67 passed; M2 136 passed; M3 1,197 passed and 1 xfailed;
+`tests/core` 944 passed; PR checker 39 passed. Then see the simulator serve
+requests ([Milestone 1](#4-milestone-1-the-simulator)).
+
+## 3. Get the data
+
+Raw datasets go in `data/raw/`; the processed files go in `data/processed/`.
+Both are ignored by git. All sources are public, and none needs a Hugging
+Face token. Each adapter downloads its raw file the first time, if missing.
+
+| Dataset | Used by | Source (license) | Download |
+|---|---|---|---|
+| ShareGPT | M2; M3 T2 | [anon8231489123/ShareGPT_Vicuna_unfiltered](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered) | about 670 MB |
+| AgentBank | M3 T1, T2 | [Solaris99/AgentBank](https://huggingface.co/datasets/Solaris99/AgentBank) (Apache-2.0) | 30 MB |
+| CC-Bench | M3 T1, T2 | [zai-org/CC-Bench-trajectories](https://huggingface.co/datasets/zai-org/CC-Bench-trajectories) (MIT) | 43 MB |
+| Qwen Bailian traces A, B, thinking, coder | M3 T1 (A), T2 (all four) | [alibaba-edu/qwen-bailian-usagetraces-anon](https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon) (Apache-2.0) | 298 MB |
+
+Process only what you need: M2 needs ShareGPT; M3 Task 1 needs block B;
+M3 Task 2 needs blocks A and C. All three take about 3 minutes and need
+about 3.5 GB free: about 1 GB of downloads, and 2.3 GB of processed files
+(`df -h .` shows what is free).
+
+```bash
+# A. ShareGPT (Milestone 2, and the M3 mix): about 670 MB download
+python -m client_simulator.process_raw_traces --dataset sharegpt \
+  --raw data/raw/sharegpt.json \
+  --output data/processed/sharegpt.responses.jsonl \
+  --client-output data/processed/sharegpt.conversations.jsonl
+```
+
+```bash
+# B. Milestone 3, Task 1: AgentBank, CC-Bench and Bailian Trace A
+python -m client_simulator.process_raw_traces --dataset agentbank \
+  --raw data/raw/agentbank --seed 0 \
+  --output data/processed/agentbank.responses.jsonl \
+  --client-output data/processed/agentbank.conversations.jsonl
+python -m client_simulator.process_raw_traces --dataset ccbench \
+  --raw data/raw/ccbench/train.parquet --seed 0 \
+  --output data/processed/ccbench.responses.jsonl \
+  --client-output data/processed/ccbench.conversations.jsonl
+# Bailian: the whole trace (used for the reported result) and a 3,000-request sample
+python -m client_simulator.process_raw_traces --dataset bailian \
+  --raw data/raw/bailian/qwen_traceA_blksz_16.jsonl --seed 0 \
+  --client-output data/processed/bailian-full/requests.jsonl \
+  --output data/processed/bailian-full/responses.jsonl
+python -m client_simulator.process_raw_traces --dataset bailian \
+  --raw data/raw/bailian/qwen_traceA_blksz_16.jsonl --seed 0 --limit 3000 \
+  --client-output data/processed/bailian-3000/requests.jsonl \
+  --output data/processed/bailian-3000/responses.jsonl
+# ... and the 500-request sample the quick run reads
+python -m client_simulator.process_raw_traces --dataset bailian \
+  --raw data/raw/bailian/qwen_traceA_blksz_16.jsonl --seed 0 --limit 500 \
+  --client-output data/processed/bailian/requests.jsonl \
+  --output data/processed/bailian/responses.jsonl
+```
+
+```bash
+# C. Milestone 3, Task 2: its own processing of AgentBank and CC-Bench,
+#    and the four Bailian traces (read directly from data/raw/bailian/)
+python -m client_simulator.process_raw_traces --dataset agentbank-mix \
+  --raw data/raw/agentbank \
+  --output data/processed/agentbank-mix.responses.jsonl \
+  --client-output data/processed/agentbank-mix.conversations.jsonl
+python -m client_simulator.process_raw_traces --dataset ccbench-mix \
+  --raw data/raw/ccbench/train.parquet \
+  --output data/processed/ccbench-mix.responses.jsonl \
+  --client-output data/processed/ccbench-mix.conversations.jsonl
+python -c "from pathlib import Path; from client_simulator.adapters import bailian; \
+bailian.check_download(Path('data/raw/bailian'))"
 ```
 
 Notes:
+- **Two processings of AgentBank and CC-Bench.** Task 1 (`agentbank`,
+  `ccbench`) and Task 2 (`agentbank-mix`, `ccbench-mix`) process the same
+  data differently. Task 2 paces agent turns by CC-Bench's recorded tool
+  latencies, which only its processing keeps. See
+  [client_simulator/README.md](client_simulator/README.md#task-2s-agentbank-mix-and-ccbench-mix).
+- **The Bailian adapter refuses to overwrite** a prepared sample. Delete
+  the output folder to rebuild it.
+- **Keep the raw file names.** The Bailian adapter derives request ids from
+  them.
 
-- On macOS, vLLM's `setup.py` builds a pure-Python package regardless of
-  `VLLM_USE_PRECOMPILED`; that is exactly what the simulator needs.
-- The pins matter: a fresh `pip install` today resolves transformers 5,
-  openai 2+ and huggingface_hub 1+, which this vLLM version cannot import.
-- The first run of a model downloads only its `config.json` and tokenizer
-  files (about 3 MB for `gpt2`, 11 MB for `Qwen/Qwen2.5-0.5B-Instruct`).
-  Weights are never downloaded.
+## 4. Milestone 1: the simulator
 
-## Running the simulator
+**What it is.** `vllm/simulator.py` holds a `Simulator`, which returns each
+request's next token from a trace, and a `SimulatorExecutor`, which vLLM
+uses instead of the GPU executor when `VLLM_USE_SIMULATOR=1`. Everything
+else is real vLLM v0 in online-serving mode: the OpenAI-compatible server,
+the scheduler, the block manager and the prefix cache. Design, the changed
+files and the tests: [report/milestone1/simulator.md](report/milestone1/simulator.md).
 
-These environment variables control it:
-
-| Variable | Meaning |
-|---|---|
-| `VLLM_USE_SIMULATOR=1` | Replace model execution by trace replay (and pin the CPU platform). |
-| `VLLM_SIMULATOR_TRACE=/path/to/trace.jsonl` | The trace to replay (optional; without it every request gets filler tokens). |
-| `VLLM_CPU_KVCACHE_SPACE=<GiB>` | Simulated KV-cache budget in GiB (default 4). `--num-gpu-blocks-override N` gives an exact block count instead. |
-| `VLLM_CACHE_EVENT_LOG=/path/to/events.jsonl` | Milestone 2: log every prefix-cache event, one JSON line each (off when unset; see [Analyzing prefix sharing](#analyzing-prefix-sharing-milestone-2-task-2)). |
-| `VLLM_EVICTION_POLICY=lru\|fifo\|lfu` | Milestone 2, Task 3: eviction policy of the prefix cache (default `lru`, vLLM's own). It is read only when the prefix cache exists (`--enable-prefix-caching`, v0 engine); the server then logs the policy at startup and refuses unknown values. Definitions: [spec 005](specs/005-m2-cache-tuning/spec.md), FR-003. |
-
-Start a server and replay the example trace:
+**Run it.** Terminal 1 starts a server on the example trace. It answers
+`/health` after 10–30 s; the first run downloads only gpt2's tokenizer,
+about 3 MB.
 
 ```bash
 export VLLM_USE_SIMULATOR=1 VLLM_NO_USAGE_STATS=1
@@ -113,126 +193,50 @@ export VLLM_SIMULATOR_TRACE=$PWD/examples/simulator/trace_example.jsonl
 vllm serve gpt2 --enable-prefix-caching --max-model-len 1024 --port 8000
 ```
 
-The server answers `/health` after roughly 10 to 30 seconds (the first run
-fetches the tokenizer); Ctrl-C stops it cleanly.
-
-In another terminal (same virtualenv):
+Terminal 2 sends three requests. The last two reuse cached blocks of the
+first:
 
 ```bash
 python examples/simulator/send_requests.py
-# demo-1: 'The capital of France is Paris.' [stop, 8 tokens, 287 ms]
-# demo-2: 'Paris, of course.' [stop, 6 tokens, 3 ms]
-# demo-3: 'The sea is wide and deep.' [stop, 8 tokens, 3 ms]
+# demo-1: 'The capital of France is Paris.' [stop, 8 tokens, ...]
+# demo-2: 'Paris, of course.' [stop, 6 tokens, ...]
+# demo-3: 'The sea is wide and deep.' [stop, 8 tokens, ...]
 # prefix cache hit rate (from /metrics): 0.5
-# (token counts include the final EOS token; demo-1 and demo-2 share a
-#  prompt, demo-3 shares its first 16-token block with them)
 ```
 
-Or with curl; the `X-Request-Id` header names the trace entry to replay
-(the prompt itself is free text; prefix caching works on full 16-token
-blocks, so prompts shorter than a block never produce a hit):
+For a server on another port, pass `--base-url http://localhost:<port>/v1`.
+Stop the server with Ctrl-C. **Tests:** `make test-m1` runs 67 tests in
+under a minute: the `Simulator` alone, an in-process engine, and a real
+`vllm serve`.
+
+## 5. Milestone 2: prefix sharing on ShareGPT
+
+All three tasks need data block A of [Get the data](#3-get-the-data).
+Each experiment command starts its own simulator servers (port 8000 must
+be free) and serves `Qwen/Qwen2.5-0.5B-Instruct`. Only its config and
+tokenizer, about 11 MB, are downloaded.
+
+### Task 1: the client simulator
+
+`client_simulator/client_sim.py` replays conversations against a running
+server:
+- **Arrivals:** Poisson (`--conversation-rate`), plus a think time between turns.
+- **Prompts:** formatted by the model's chat template, with the server applying it via `/v1/chat/completions`.
+- **Modes:** single-turn or multi-turn.
 
 ```bash
-PROMPT="You are a helpful assistant. Answer the question briefly, accurately and in one sentence, without any preamble or extra commentary. Question: What is the capital of France? Answer:"
-curl -s http://localhost:8000/v1/completions -H 'Content-Type: application/json' \
-  -H 'X-Request-Id: demo-1' \
-  -d "{\"model\": \"gpt2\", \"prompt\": \"$PROMPT\", \"max_tokens\": 64}"
-curl -s http://localhost:8000/metrics | grep '^vllm:gpu_prefix_cache_hit_rate'   # > 0 once a prompt repeats
-```
-
-Chat requests work the same way with any model that has a chat template
-(for chat the id can also go in the body as `"request_id"`; completions
-only read the header), for example:
-
-```bash
-vllm serve Qwen/Qwen2.5-0.5B-Instruct --enable-prefix-caching --enable-prompt-tokens-details --port 8000
-curl -s http://localhost:8000/v1/chat/completions -H 'Content-Type: application/json' \
-  -d '{"model": "Qwen/Qwen2.5-0.5B-Instruct", "request_id": "demo-1", "max_tokens": 64,
-       "messages": [{"role": "user", "content": "What is the capital of France?"}]}'
-```
-
-`--enable-prompt-tokens-details` adds `usage.prompt_tokens_details.cached_tokens`
-to chat responses, the number of prompt tokens served from the prefix cache.
-
-### How to tell the prefix cache worked
-
-The trace decides only the *answer*: the server looks the request id up and
-never compares prompts. The prefix cache works on the prompt's tokens, as in
-real vLLM, so a hit needs the same leading 16-token blocks, whatever the id.
-For example, send the same question twice to a fresh Qwen server started as
-above (39 prompt tokens with the chat template: 2 full blocks and 7 tokens
-that never fill a block):
-
-```bash
-for id in demo-1 demo-2; do
-  curl -s localhost:8000/v1/chat/completions -H 'Content-Type: application/json' \
-    -H "X-Request-Id: $id" \
-    -d '{"model": "Qwen/Qwen2.5-0.5B-Instruct", "max_tokens": 5,
-         "messages": [{"role": "user", "content": "Explain prefix caching in one paragraph, please."}]}'
-  echo
-done
-```
-
-Three views of the same two hits, from coarse to detailed:
-
-1. **vLLM's counter.** `curl -s localhost:8000/metrics | grep
-   '^vllm:gpu_prefix_cache_hit_rate'` gives `0.5`: 2 hits out of 4 block
-   lookups since the server started.
-2. **Per request** (needs `--enable-prompt-tokens-details`). `demo-2`'s
-   `usage` has `"prompt_tokens_details": {"cached_tokens": 32}`; `demo-1`'s is
-   `null`, because vLLM omits a zero. A different question gets 16: only the
-   first block, Qwen's default system prompt, matches.
-3. **Per block** (needs `VLLM_CACHE_EVENT_LOG`, see below). `demo-1` logs
-   `miss` and `insert` for each block, `demo-2` logs `hit` and `revive`.
-
-The Task 2 experiment checks on every run that 1 and 3 agree (`sc003_pass`
-in `summary.json`).
-
-### Trace format
-
-One JSON object per line. `response` is text (tokenized with the served
-model's tokenizer) or `response_token_ids` is a list of token ids. Other
-fields are ignored by the server; the example client uses `prompt` to build
-its requests (abridged from `examples/simulator/trace_example.jsonl`):
-
-```json
-{"request_id": "demo-1", "prompt": "You are a helpful assistant. ... Question: What is the capital of France? Answer:", "response": "The capital of France is Paris."}
-{"request_id": "demo-3", "prompt": "You are a helpful assistant. ... Question: Describe the sea in one sentence. Answer:", "response_token_ids": [464, 5417, 318, 3094, 290, 2769, 13]}
-```
-
-Rules of replay:
-
-- The response is returned token by token, one per decode step, then the
-  model's EOS token, so the request ends with `finish_reason: "stop"`.
-- `max_tokens` is still honored (`/v1/completions` defaults to 16, so send a
-  larger value or `ignore_eos: true` for fixed lengths). `stop` strings and
-  `min_tokens` work as usual.
-- A request whose id is not in the trace receives a filler token until
-  `max_tokens`.
-- `n > 1`, batched prompts and streaming all work; every sub-request maps to
-  the same trace entry.
-
-### Replaying ShareGPT (Milestone 2)
-
-The client simulator downloads ShareGPT, rebuilds whole conversations, and
-replays them against the server with Poisson arrivals, in single-turn (first
-exchange only) or multi-turn mode. Each request carries its trace id, so the
-server answers with the recorded response. In short:
-
-```bash
-# 1. Preprocess once (downloads about 670 MB into data/raw/, gitignored)
-python -m client_simulator.process_raw_traces --dataset sharegpt \
-  --raw data/raw/sharegpt.json \
-  --output data/processed/sharegpt.responses.jsonl \
-  --client-output data/processed/sharegpt.conversations.jsonl
-
-# 2. Terminal 1: the simulator server with the response trace
+# Terminal 1: a server that answers from the ShareGPT responses
 export VLLM_USE_SIMULATOR=1 VLLM_NO_USAGE_STATS=1
-export VLLM_SIMULATOR_TRACE="$PWD/data/processed/sharegpt.responses.jsonl"
+export VLLM_SIMULATOR_TRACE=$PWD/data/processed/sharegpt.responses.jsonl
 vllm serve Qwen/Qwen2.5-0.5B-Instruct --enable-prefix-caching \
   --enable-prompt-tokens-details --max-model-len 8192 --port 8000
+```
 
-# 3. Terminal 2: replay 10 conversations, all turns
+Wait until `curl -s localhost:8000/health` answers. The first start can
+take up to 2 minutes, while it loads the tokenizer and builds the KV cache.
+
+```bash
+# Terminal 2: replay 10 conversations, every turn (about 30 s)
 python -m client_simulator.client_sim \
   --trace data/processed/sharegpt.conversations.jsonl \
   --model Qwen/Qwen2.5-0.5B-Instruct --mode multi \
@@ -240,263 +244,471 @@ python -m client_simulator.client_sim \
   --output results/multi.jsonl --capture-metrics
 ```
 
-`results/multi.jsonl` gets one line per request, with its cached prompt
-tokens, and the run's configuration and `/metrics` snapshots are saved next
-to it. All options and output fields are in
-[`client_simulator/README.md`](client_simulator/README.md).
+`results/multi.jsonl` has one line per request, with its cached prompt
+tokens. A turn whose prompt outgrows `--max-model-len` is recorded as
+`skipped_context`, and the rest of that conversation is dropped
+(`abandoned_turns` in the run summary). `results/multi.jsonl.run.json` and the `/metrics` snapshots sit
+next to it. `--mode single` replays first turns only. All options:
+[client_simulator/README.md](client_simulator/README.md).
 
-### Analyzing prefix sharing (Milestone 2, Task 2)
+### Task 2: single- vs multi-turn prefix sharing
 
-With `VLLM_CACHE_EVENT_LOG=<file>`, the server writes one JSON line per
-prefix-cache event of the KV cache (format in
-`vllm/core/block/cache_events.py`). Lines are written in batches, so read the
-file after stopping the server; a complete log ends with `{"ev": "end"}`.
-One command replays the same sample in
-both settings, each on a fresh server with the log on, and computes the
-metrics and figures of
-[`specs/004-m2-prefix-sharing-analysis`](specs/004-m2-prefix-sharing-analysis/spec.md):
+One command replays the same sample twice, single-turn and multi-turn, each
+on a fresh server with the cache event log on. It then computes the
+metrics of [spec 004](specs/004-m2-prefix-sharing-analysis/spec.md):
+- the cached fraction of each request;
+- hits per cache block;
+- the reuse interval and reuse distance of each block;
+- hit sources and the hit rate over time.
+
+It also draws 7 figures, each as PNG and PDF.
 
 ```bash
-# Needs the preprocessed files from step 1 above and a free port 8000.
-python -m analysis.run_m2_task2 --limit 1000 --out results/m2-task2
-# Quick check (about 20 s): 20 conversations, no pacing
+# Quick run (about 30 s): 20 conversations, no pacing
 python -m analysis.run_m2_task2 --limit 20 --conversation-rate inf \
-  --think-time 0 --out results/smoke
-# Recompute metrics and figures without replaying
+  --think-time 0 --out results/m2-task2-smoke
+# Full reproduction (about 35 minutes): 1,000 conversations, 1 per second, think time 5 s
+python -m analysis.run_m2_task2 --limit 1000 --out results/m2-task2
+# Recompute the metrics and figures from a finished run, without replaying
 python -m analysis.run_m2_task2 --out results/m2-task2 --analyze-only
 ```
 
-Each setting gets `results/m2-task2/<setting>/` with the client results, the
-event log, `run.json` (configuration, commit, KV-cache size), the metrics as
-CSV files and `summary.json`, which also holds the self-checks: the log's
-hit rate equals vLLM's `gpu_prefix_cache_hit_rate` (SC-003), and how many
-requests' `cached_tokens` differ from the hits logged for them (SC-004).
-Figures go to `results/m2-task2/figures/` (`--figures` to choose).
+**Outputs.** Each setting gets `<out>/single/` and `<out>/multi/`, holding:
+- the client results and the cache event log (`events.jsonl`);
+- `run.json`;
+- the metric CSVs;
+- `summary.json`, with its self-checks: the log's hit rate equals vLLM's
+  `gpu_prefix_cache_hit_rate` (`sc003_pass`).
 
-### Sweeping cache size, block size and policy (Milestone 2, Task 3)
+The figures go to `<out>/figures/`.
 
-One command replays Task 2's multi-turn sample once per configuration of
-eviction policy, block size and KV-cache capacity, each on a fresh server
-with the event log on, and writes one row per configuration to
-`summary.csv`. Capacities are in tokens (`--num-gpu-blocks-override` is
-capacity / block size), so block sizes compare at equal cache size. Grids
-and definitions:
-[`specs/005-m2-cache-tuning`](specs/005-m2-cache-tuning/spec.md).
+**What you should see.** In the full run, `block_hit_rate_log` in
+`summary.json`, the share of block lookups that hit, is about 0.95 for
+`multi/` and 0.13 for `single/`; our fresh rerun gave 0.953 and 0.127. The
+quick run's 20 conversations only check the pipeline and are too few for
+these numbers.
+
+### Task 3: cache size, block size and eviction policy
+
+One command replays Task 2's multi-turn sample once per configuration,
+each on a fresh server. A configuration is an eviction policy (`lru`,
+`fifo`, `lfu`), a block size and a KV-cache capacity in tokens. The
+FIFO and LFU evictors are in `vllm/core/eviction_policies.py`; you choose
+one with `VLLM_EVICTION_POLICY`. Definitions:
+[spec 005](specs/005-m2-cache-tuning/spec.md).
 
 ```bash
-# Needs the preprocessed files from step 1 above and a free port 8000.
-# Quick check (about 2 min): 2 capacities x block size 16 x 3 policies
-python -m analysis.run_m2_task3 --grid smoke --out results/smoke-task3
-# The full grid: 5 capacities x 3 block sizes x 3 policies, 1,000
-# conversations each (about 14 h). Interrupted? Run it again: finished
-# configurations are kept, an unfinished one is replayed.
+# Quick run (about 1.5 minutes): 3 policies x block size 16 x 2 small capacities
+python -m analysis.run_m2_task3 --grid smoke --out results/m2-task3-smoke
+# Full reproduction, the reported 54 configurations (about 18 minutes each, about 16 h in all):
+#   3 policies x block sizes 8, 16, 32 x capacities 2^14, 2^16, 2^18, 2^20, 2^21 tokens (45) ...
 python -m analysis.run_m2_task3 --grid full --out results/m2-task3
-# Any axis can be chosen, e.g. one policy at two capacities:
-python -m analysis.run_m2_task3 --policies lfu --capacities 65536 262144 \
-  --out results/m2-task3-lfu
-# Recompute every run's metrics and summary.csv without replaying
+#   ... plus 131,072 tokens for every policy and block size (9)
+python -m analysis.run_m2_task3 --out results/m2-task3 --capacities 131072
+# Recompute every run's metrics, the summary and the figures, without replaying
 python -m analysis.run_m2_task3 --out results/m2-task3 --analyze-only
 ```
 
-Each configuration gets `results/m2-task3/<policy>-bs<B>-cap<T>/`, laid out
-like a Task 2 run folder. `sweep.json` records the sample, the pacing and
-every configuration asked for; a folder is only resumed with the same sample
-and pacing, without `--grid` or axis options it reuses its recorded grid
-(so `--analyze-only` needs only `--out`), an axis option adds
-configurations with the folder's other axes (`--capacities 131072` adds
-that capacity for every recorded policy and block size), and `summary.csv` always lists
-every recorded configuration. A configuration whose cache
-cannot hold one `--max-model-len` request is listed as `infeasible` and not
-run, because vLLM would refuse to start. The command ends with
-`best_by_capacity.csv`/`.md` and spec 005's figures in
-`results/m2-task3/figures/` (`--figures` to choose, `--no-figures` to skip);
-the results are in
-[`report/milestone2/task3-cache-tuning.md`](report/milestone2/task3-cache-tuning.md).
+**Resuming.** An interrupted grid resumes when you rerun the same command;
+finished runs are kept. `--policies`, `--block-sizes` and `--capacities`
+pick any subset. A configuration whose cache cannot hold one
+`--max-model-len` request is listed as `infeasible` and skipped, because
+vLLM would refuse to start.
 
-### Mixed workloads and the reuse study (Milestone 3, Task 2)
+**Outputs:**
+- one folder per configuration, `<out>/<policy>-bs<B>-cap<T>/`;
+- `summary.csv`, one row each;
+- `best_by_capacity.md`: the answer, the best configuration at each cache
+  size, ranked by usable reuse (also as `.csv`);
+- the figures in `<out>/figures/`.
 
-The raw datasets go in the ignored `data/raw/` (`agentbank/`, `ccbench/`,
-`bailian/`); process the text ones once with
-`python -m client_simulator.process_raw_traces --dataset ccbench-mix --raw
-data/raw/ccbench/train.parquet --output data/processed/ccbench-mix.responses.jsonl
---client-output data/processed/ccbench-mix.conversations.jsonl` (likewise
-`agentbank-mix`, with `--raw data/raw/agentbank`). The `-mix` datasets are
-Task 2's processing: each CC-Bench session's main thread, with its recorded
-tool latencies, which the mix's pacing reads; Task 1 processes the same
-datasets as `agentbank` and `ccbench`
-([client_simulator/README.md](client_simulator/README.md#task-2s-agentbank-mix-and-ccbench-mix)).
-Then:
+The 54 run folders take about 22 GB. The quick run only checks the pipeline:
+20 conversations in a tiny cache, so its ranking of the policies is not the
+study's result. That is in
+[report/milestone2/task3-cache-tuning.md](report/milestone2/task3-cache-tuning.md).
+
+## 6. Milestone 3: eviction policies across workloads
+
+### Task 1: the best policy for each workload
+
+One runner replays a workload on three fresh servers, one per policy
+(LRU, LFU, FIFO), at a fixed 65,536-token cache with 16-token blocks. It
+then computes usable token reuse, hit rate, hits per block, reuse
+intervals and evictions. `examples/<name>.json` describes each experiment.
+Needs data block B. Definitions:
+[spec 006](specs/006-m3-workload-eviction/spec.md).
+
+How the workloads are replayed:
+- **Bailian** is a token trace. It is sent to `/v1/completions` at its
+  recorded timestamps.
+- **AgentBank and CC-Bench** are chats, paced like ShareGPT: Poisson
+  arrivals at 1 conversation/s, think time 5 s, in the full runs. The quick
+  runs use 2 conversations/s and 1 s, to finish in minutes.
 
 ```bash
-python -m analysis.run_m3_task2 plans --grid phase1   # analysis/mix.py, 1,800 s plans
-python -m analysis.run_m3_task2 grid --grid phase1    # 21 engine runs, 6 at a time
-python -m analysis.run_m3_task2 plans --grid isolated # each workload alone (analysis/isolate.py)
-python -m analysis.run_m3_task2 grid --grid isolated --jobs 12   # 36 engine runs
-python -m analysis.tables results/m3-task2/*          # per-run lookup/residency/request tables
-python -m analysis.identify --train data/processed/m3/balanced-human-s1 \
-    --test data/processed/m3/balanced-human-s{2,3,4} --out results/m3-study/identify.json
-python -m analysis.signals --train results/m3-task2/balanced-human-s1-ceiling \
-    --test results/m3-task2/balanced-human-s{2,3,4}-ceiling --out results/m3-study/signals.json
-python -m analysis.paper_checks --ceiling results/m3-task2/balanced-human-s2-ceiling ... \
-    --plan data/processed/m3/balanced-human-s1 ... --out results/m3-study/paper.json
-python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 ... \
-    --policies lru lfu fifo belady --capacities 32768 ... 393216 --out results/m3-sim/sweep.jsonl
-python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
-    --policies lru lfu fifo belady --capacities 32768 ... 393216 ceiling \
-    --window 600 1800 --out results/m3-sim/capacity-window.jsonl   # point 4's curve
-# TTDF, RACE-RP (vllm/core/reuse_evictors.py) and Sampled LRFU
-# (vllm/core/sampled_lrfu.py), mixed workload only:
-python -m analysis.race_train --sketch 16x6 --out results/m3-race   # seed-1 RACE sketch
-python -m analysis.race_train --sketch 16x1 16x2 16x3 16x4 16x6 16x8 64x1 ... \
-    --out results/m3-race/tune                        # sketches for seed-1 tuning
-python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 \
-    --policies lru ttdf 'ttdf:tau_short=1,tau_long=60,w_short=0.3,w_long=0.7' ... \
-    'race_rp:sketch=results/m3-race/tune/sketch-L16-P1.json' ... \
-    sampled_lrfu 'sampled_lrfu:half_life=4096,sample_size=16' ... \
-    --capacities 32768 65536 131072 262144 393216 --window 600 1800 \
-    --out results/m3-sim/tune-seed1.jsonl             # tuning, seed 1 only
-python -m analysis.m3t2_policies select               # specified and tuned settings
-python -m analysis.run_m3_task2 grid --grid policies  # 15 engine runs, 6 at a time
-python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
-    --policies ttdf race_rp:sketch=results/m3-race/sketch-L16-P6.json <tuned ...> \
-    --capacities 32768 ... 393216 --window 600 1800 \
-    --out results/m3-sim/capacity-window.jsonl        # held-out seeds, run once
-python -m analysis.run_m3_task2 sim ... --capacities 131072 --jobs 1 \
-    --out results/m3-sim/overhead.jsonl               # every policy's eviction time
-python -m analysis.m3t2_study      # results/m3-study/summary.json
-python -m analysis.m3t2_report     # the results page (HTML): the seven points
-python -m analysis.m3t2_figures    # report/milestone3/figures/task2/
-python -m analysis.m3t2_policies csv --out report/milestone3/data/task2   # CSV tables
-# wa (vllm/core/wa_evictor.py, spec 007 Phase 2): settings on seed 1 in the
-# replay, then engine runs beside LRU and RACE-RP (plan.md, Phase 2 experiments):
-python -m analysis.run_m3_task2 grid --grid wa        # 12 engine runs, 6 at a time
-python -m analysis.tables results/m3-task2/balanced-human-s{2,3,4}-*-cap131072
-python -m analysis.sim_table --against lru \
-    --engine results/m3-task2/balanced-human-s{2,3,4}-{lru,race_rp,wa_oracle,wa_none}-cap131072
+# Quick runs (1-3 minutes each): 20 Bailian requests, 20 AgentBank and 5 CC-Bench conversations
+python -m analysis.run_experiment --config examples/bailian_experiment.json --out results/m3t1-bailian-smoke
+python -m analysis.run_experiment --config examples/agentbank_smoke.json --out results/m3t1-agentbank-smoke
+python -m analysis.run_experiment --config examples/ccbench_smoke.json --out results/m3t1-ccbench-smoke
+# Figures from a finished run (no server)
+python -m analysis.plot_experiment --out results/m3t1-bailian-smoke
 ```
 
-Policy settings go in `VLLM_EVICTION_PARAMS` (`key=value,...`): TTDF takes
-`tau_short`, `tau_long`, `w_short`, `w_long`; RACE-RP needs `sketch=<file>`
-and takes `alpha`; Sampled LRFU takes `half_life` (block uses, default 512),
-`sample_size` (4) and `seed` (0); all three take `stats=<file>` for their
-overhead counters. In the cache replay, the same settings follow the policy
-after a colon.
+```bash
+# Full reproduction: the three reported comparisons
+python -m analysis.run_experiment --config examples/bailian_full.json --out results/bailian-full-cap65536
+python -m analysis.run_experiment --config examples/agentbank_1000.json --out results/agentbank-1000-cap65536
+python -m analysis.run_experiment --config examples/ccbench_full.json --out results/ccbench-full-cap65536
+# The report's figures
+python -m analysis.plot_experiment --out results/bailian-full-cap65536 \
+  --figures report/milestone3/figures/task1/bailian-full
+python -m analysis.plot_experiment --out results/agentbank-1000-cap65536 \
+  --figures report/milestone3/figures/task1/agentbank-1000
+python -m analysis.plot_experiment --out results/ccbench-full-cap65536 \
+  --figures report/milestone3/figures/task1/ccbench-full
+```
 
-`analysis/mix.py --pacing human` (the default) borrows real pauses from
-recorded loops; `--pacing fast` keeps Phase 0's constants. A run takes about
-31 minutes; the grid refuses a dirty tree and resumes after an interruption.
-The results are in
-[`report/milestone3/task2-mixed-workload-policy.md`](report/milestone3/task2-mixed-workload-policy.md).
+**Runtime and disk:**
 
-### Useful vLLM flags for experiments
+| Run | Time | Disk |
+|---|---|---|
+| Bailian | over 6 hours: it replays the whole 2-hour trace in real time, once per policy | — |
+| AgentBank | about 1 hour: 19 min per policy | about 0.2 GB per policy |
+| CC-Bench | about 1.5 hours: 20 min replay plus 10 min analysis per policy | about 7 GB per policy, 20 GB in all |
 
-`--enable-prefix-caching` (off by default in this vLLM version),
-`--block-size {8,16,32,64,128}`, `--num-gpu-blocks-override N`,
-`--swap-space GiB` with `--preemption-mode swap`, `--max-num-seqs`,
-`--max-num-batched-tokens`, `--enable-chunked-prefill`,
-`--disable-frontend-multiprocessing` (run the engine inside the API process;
-easier to debug). See `report/milestone1/simulator.md` for how each one
-interacts with the simulator. The KV cache must hold at least `--max-model-len` tokens, as on a
-real GPU; the server refuses to start otherwise. With prefix caching or
-chunked prefill the CPU platform logs that it casts fp16 to bf16: harmless
-here, both are 2 bytes per value.
+Check free space first (`df -h .`). In our rerun, AgentBank's LRU gave
+exactly the reported 89.47%; CC-Bench's LRU gave 1.53%, against 1.48%
+reported.
 
-## Tests
+**Outputs:**
+- `<out>/summary.csv`, one row per policy. The column to compare is
+  `usable_reused_fraction`, the share of prompt tokens served from the
+  cache;
+- one folder per policy, `<out>/<policy>-bs16-cap65536/`, with `run.json`,
+  the event log, the client results and `summary.json`;
+- the figures, in `<out>/figures/` or the `--figures` folder.
 
-The project's tests are grouped by milestone. The `make` commands set the
-required environment variables and use `.venv` directly:
+`--analyze-only` recomputes the metrics without replaying.
+`examples/bailian_3000.json` runs the 3,000-request sample.
+
+**What you should see.** The quick runs only check the pipeline. Their
+samples fit in the 65,536-token cache, so nothing is evicted and the three
+policies give the same numbers. CC-Bench's 5 conversations even reuse
+about 80% of their tokens, while the full run's 495 conversations thrash
+the cache (1.5–2.1%). The policies differ only under the eviction pressure
+of the full runs; their numbers are in the
+[Task 1 note](report/milestone3/task1-workload-eviction.md).
+
+### Task 2: a policy for a mixed workload
+
+**The setup.** A *balanced mix* of 4 workloads, 7 traces (Bailian's four
+traces count as one workload), each trace an equal share by requests:
+- ShareGPT;
+- AgentBank;
+- CC-Bench;
+- the Bailian chat, API, thinking and coder traces.
+
+Each run lasts 30 minutes on one shared 131,072-token cache. Measurement
+covers requests sent in [600 s, 1800 s). Seed 1 is used only for training
+and tuning; seeds 2–4 are reported.
+
+**The policies.**
+- Baselines: LRU, LFU and FIFO.
+- Three published-style scorers: TTDF, RACE-RP and Sampled LRFU
+  (`vllm/core/reuse_evictors.py`, `vllm/core/sampled_lrfu.py`).
+- Our workload-aware policy, `wa` (`vllm/core/wa_evictor.py`).
+- Two reference points: Belady's offline optimum and a cache that never
+  evicts.
+
+How they work: [spec 007](specs/007-m3-mixed-workload-policy/spec.md).
+Results:
+- Phase 1 (baselines, TTDF, RACE-RP, Sampled LRFU):
+  [report/milestone3/task2-mixed-workload-policy.md](report/milestone3/task2-mixed-workload-policy.md).
+- Phase 2 (`wa`): the *Phase 2 first experiments* section of
+  [specs/007-m3-mixed-workload-policy/plan.md](specs/007-m3-mixed-workload-policy/plan.md).
+
+Needs data blocks A and C. Two kinds of run:
+- an **engine run** (`grid`) is a real 30-minute `vllm serve` replay; a
+  grid runs 6 at a time;
+- a **cache replay** (`sim`) drives vLLM's block allocator directly with
+  modelled timing. It takes 15 s to 4 min per run and is used for sweeps.
+
+Before replays, limit NumPy to one thread per process:
+
+```bash
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+```
+
+**Quick run (about 8 minutes):**
+
+```bash
+python -m analysis.run_m3_task2 plans --grid smoke           # a 3-minute balanced mix (seed 101)
+python -m analysis.run_m3_task2 grid --grid smoke --allow-dirty --out results/m3-task2-smoke   # 1 LRU engine run
+python -m analysis.run_m3_task2 plans --grid phase1          # the reported plans: balanced, seeds 1-4 (about 3.5 min)
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s2 \
+  --policies lru 'wa:labels=oracle,buckets=1,half_life=600' \
+  --capacities 131072 --window 600 1800 --out results/m3-quick.jsonl   # 2 cache replays
+python -m analysis.sim_table results/m3-quick.jsonl --against lru
+```
+
+**What you should see:**
+- The smoke engine run finishes in about 3 minutes. Its `grid.json`
+  shows `"status": "finished"`, and all 542 requests complete. vLLM's hit
+  rate is in the saved metrics:
+  `grep '^vllm:gpu_prefix_cache_hit_rate' results/m3-task2-smoke/*/client.jsonl.metrics.after.txt`
+  (0.44 in our run).
+- The smoke plan is too short for the study's measurement window, so
+  `sim_table` can't summarize it.
+- `sim` prints each replay's usable reuse over the whole run. `sim_table`
+  reports it over the measurement window [600 s, 1800 s), which is the
+  study's metric. For seed 2, `wa` scores 57.44 against LRU's 54.22, a
+  gain of 3.22 points.
+
+**Reproduce the headline comparison (about 2.5 hours).** This is LRU,
+TTDF, RACE-RP and `wa` at 64K/128K/256K in the cache replay, and LRU,
+RACE-RP and `wa` in 12 engine runs at 128K. The Phase 1 grid's seed-1
+ceiling run provides the timing that RACE-RP trains on.
+
+```bash
+python -m analysis.run_m3_task2 plans --grid phase1
+python -m analysis.run_m3_task2 replay --plan data/processed/m3/balanced-human-s1 \
+  --out results/m3-task2/balanced-human-s1-ceiling --capacity 11851680      # no-eviction run, 30 min
+python -m analysis.race_train --sketch 16x6 --out results/m3-race           # RACE-RP's sketch, trained on seed 1
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
+  --policies lru lru_leaf ttdf race_rp:sketch=results/m3-race/sketch-L16-P6.json \
+    'wa:labels=oracle,buckets=1,half_life=600' 'wa:labels=none,buckets=1,half_life=1800' belady \
+  --capacities 65536 131072 262144 --window 600 1800 --out results/m3-explore/heldout.jsonl
+python -m analysis.sim_table results/m3-explore/heldout.jsonl --against lru   # the replay table, per workload, gate
+python -m analysis.run_m3_task2 grid --grid wa --out results/m3-task2        # 12 engine runs, about 1 h
+python -m analysis.tables results/m3-task2/balanced-human-s{2,3,4}-*-cap131072
+python -m analysis.sim_table --against lru \
+  --engine results/m3-task2/balanced-human-s{2,3,4}-{lru,race_rp,wa_oracle,wa_none}-cap131072
+```
+
+`wa`'s settings were chosen on seed 1 from 12 candidates: labels oracle or
+none, hit buckets on or off, half-life 120, 600 or 1,800 s. To rerun that
+tuning:
+
+```bash
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 \
+  --policies $(for l in oracle none; do for b in 1 0; do for h in 120 600 1800; do \
+    echo "wa:labels=$l,buckets=$b,half_life=$h"; done; done; done) \
+  --capacities 131072 --window 600 1800 --out results/m3-explore/wa-tune-s1.jsonl
+python -m analysis.sim_table results/m3-explore/wa-tune-s1.jsonl --seeds 1
+```
+
+<details><summary><b>Full Phase 1 study</b>: every number and figure of the Task 2 note (78 engine runs, about 8 h at 6 at a time, plus about 2 h of replays)</summary>
+
+Run these in order. Each grid skips finished runs and resumes after an
+interruption. A grid refuses a working tree with uncommitted changes; its
+runs record their commit. `--shard 1/2` and `--shard 2/2` split a grid,
+and its plans, across two machines.
+
+```bash
+# 1. Plans: the balanced mix (seeds 1-4, and fast pacing for seed 2), each workload alone,
+#    and the extra mixes the capacity sweep compares
+python -m analysis.run_m3_task2 plans --grid phase1
+python -m analysis.run_m3_task2 plans --grid isolated
+for s in 1 3 4; do python -m analysis.mix --mix balanced --pacing fast --seed $s \
+  --data data --out data/processed/m3/balanced-fast-s$s; done
+for m in chat-heavy agent-heavy; do for s in 1 2; do python -m analysis.mix --mix $m \
+  --pacing human --seed $s --data data --out data/processed/m3/$m-human-s$s; done; done
+
+# 2. Engine runs: baselines and ceilings (21), each workload alone (36), and seed 2 at 64K and 256K
+python -m analysis.run_m3_task2 grid --grid phase1
+python -m analysis.run_m3_task2 grid --grid isolated --jobs 12
+for p in lru lfu fifo; do for c in 65536 262144; do python -m analysis.run_m3_task2 replay \
+  --plan data/processed/m3/balanced-human-s2 --policy $p --capacity $c \
+  --out results/m3-task2/balanced-human-s2-$p-cap$c; done; done
+
+# 3. Cache replays: the capacity sweep with Belady (12 plans), and the measurement-window curve
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/{balanced-human,balanced-fast}-s{1,2,3,4} \
+  data/processed/m3/{chat-heavy,agent-heavy}-human-s{1,2} --policies lru lfu fifo belady \
+  --capacities 32768 49152 65536 98304 131072 196608 262144 393216 --out results/m3-sim/sweep.jsonl
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{1,2,3,4} \
+  --policies lru lfu fifo belady --capacities 524288 786432 1048576 2097152 4194304 \
+  --out results/m3-sim/sweep.jsonl
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/{balanced-human,balanced-fast}-s{1,2,3,4} \
+  data/processed/m3/{chat-heavy,agent-heavy}-human-s{1,2} --policies lru --capacities ceiling \
+  --out results/m3-sim/sweep.jsonl
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
+  --policies lru lfu fifo belady \
+  --capacities 32768 49152 65536 98304 131072 196608 262144 393216 ceiling \
+  --window 600 1800 --out results/m3-sim/capacity-window.jsonl
+
+# 4. TTDF, RACE-RP and Sampled LRFU: train, tune on seed 1, engine-run, replay held-out seeds
+python -m analysis.race_train --sketch 16x6 --out results/m3-race
+python -m analysis.race_train --sketch 16x1 16x2 16x3 16x4 16x6 16x8 64x1 64x2 64x3 64x4 64x6 64x8 \
+  --out results/m3-race/tune
+#    Seed-1 tuning: 49 settings = LRU + each policy's specified setting + 17 TTDF variants
+#    + 12 RACE-RP sketches + 17 Sampled LRFU variants
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s1 --policies lru ttdf sampled_lrfu \
+  $(for ts in 1 5 30; do for tl in 60 120 600; do for w in w_short=0.3,w_long=0.7 w_short=0.7,w_long=0.3; do \
+    [ "$ts,$tl,$w" = "5,120,w_short=0.7,w_long=0.3" ] || echo "ttdf:tau_short=$ts,tau_long=$tl,$w"; done; done; done) \
+  $(for L in 16 64; do for P in 1 2 3 4 6 8; do echo "race_rp:sketch=results/m3-race/tune/sketch-L$L-P$P.json"; done; done) \
+  $(for h in 64 512 4096 32768 262144 2097152; do for n in 4 16 64; do \
+    [ "$h,$n" = "512,4" ] || echo "sampled_lrfu:half_life=$h,sample_size=$n"; done; done) \
+  --capacities 32768 65536 131072 262144 393216 --window 600 1800 --out results/m3-sim/tune-seed1.jsonl
+python -m analysis.m3t2_policies select           # each policy's name and its specified or tuned setting
+python -m analysis.run_m3_task2 grid --grid policies
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
+  --policies $(python -m analysis.m3t2_policies select | cut -f2) \
+  --capacities 32768 49152 65536 98304 131072 196608 262144 393216 \
+  --window 600 1800 --out results/m3-sim/capacity-window.jsonl
+python -m analysis.run_m3_task2 sim --plans data/processed/m3/balanced-human-s{2,3,4} \
+  --policies lru lfu fifo ttdf sampled_lrfu race_rp:sketch=results/m3-race/sketch-L16-P6.json \
+  --capacities 131072 --window 600 1800 --jobs 1 --out results/m3-sim/overhead.jsonl
+
+# 5. Per-run tables, the study's side analyses, and the report
+python -m analysis.tables results/m3-task2/*/
+python -m analysis.identify --train data/processed/m3/balanced-human-s1 \
+  --test data/processed/m3/balanced-human-s{2,3,4} --out results/m3-study/identify.json
+python -m analysis.signals --train results/m3-task2/balanced-human-s1-ceiling \
+  --test results/m3-task2/balanced-human-s{2,3,4}-ceiling --out results/m3-study/signals.json
+python -m analysis.paper_checks \
+  $(for s in 2 3 4; do echo --ceiling results/m3-task2/balanced-human-s$s-ceiling; done) \
+  $(for s in 1 2 3 4; do echo --plan data/processed/m3/balanced-human-s$s; done) \
+  --out results/m3-study/paper.json
+python -m analysis.m3t2_study                     # results/m3-study/summary.json
+python -m analysis.m3t2_report                    # results/m3-study/mixed-workload-reuse.html
+python -m analysis.m3t2_figures                   # report/milestone3/figures/task2/
+python -m analysis.m3t2_policies csv --out report/milestone3/data/task2
+```
+
+The cache replay is a design tool. The reported numbers come from engine
+runs. The replay lands within 2.1 points of them, except Sampled LRFU at
+32K on seed 2, which is 4.1 points lower (note, point 4). The
+tracked CSVs in `report/milestone3/data/task2/` are the numbers behind the
+note's tables and figures.
+</details>
+
+## 7. Reference
+
+### Environment variables
+
+| Variable | Meaning |
+|---|---|
+| `VLLM_USE_SIMULATOR=1` | Replace model execution by trace replay, and pin the CPU platform. |
+| `VLLM_SIMULATOR_TRACE=<file>` | The response trace to replay. Without it, every request gets filler tokens. |
+| `VLLM_CPU_KVCACHE_SPACE=<GiB>` | Simulated KV-cache size (default 4). `--num-gpu-blocks-override N` sets an exact block count instead. |
+| `VLLM_CACHE_EVENT_LOG=<file>` | Log every prefix-cache event (hit, miss, insert, free, revive, evict) as JSON lines, for the analyses. |
+| `VLLM_EVICTION_POLICY` | The prefix cache's eviction policy: `lru` (default, vLLM's own), `fifo`, `lfu`, `ttdf`, `race_rp`, `sampled_lrfu`, `lru_leaf`, `wa`. Read only with `--enable-prefix-caching`; unknown values are refused. |
+| `VLLM_EVICTION_PARAMS` | The policy's settings, `key=value,...`. TTDF: `tau_short`, `tau_long`, `w_short`, `w_long`. RACE-RP: `sketch=<file>` (required), `alpha`. Sampled LRFU: `half_life`, `sample_size`, `seed`. `wa`: `labels` (`oracle` or `none`), `half_life`, `kappa`, `buckets`. All of them take `stats=<file>` for overhead counters. In a cache replay, the same settings follow the policy name after a colon. |
+
+### The simulator in more detail
+
+<details><summary>Trace format, replay rules, and how to see that the prefix cache worked</summary>
+
+**Trace format.** A trace has one JSON object per line. Each object has a
+`request_id` and either:
+- `response`: text, tokenized with the served model's tokenizer; or
+- `response_token_ids`: a list of token ids.
+
+The server matches a request by its id, from the `X-Request-Id` header or
+the chat body's `request_id`. It never compares prompts.
+
+**Replay rules:**
+- The response comes back one token per decode step, then EOS, so the
+  request finishes with `finish_reason: "stop"`.
+- `max_tokens`, `stop` and `min_tokens` work as usual. `/v1/completions`
+  defaults to 16 tokens, so send a larger `max_tokens` to get whole answers.
+- An unknown id gets filler tokens until `max_tokens`.
+- `n > 1`, batched prompts and streaming all work.
+
+**Seeing the prefix cache work.** Prefix caching works on full 16-token
+blocks of the prompt, as in real vLLM. You can see it in three places:
+- vLLM's counter, `curl -s localhost:8000/metrics | grep '^vllm:gpu_prefix_cache_hit_rate'`;
+- per request, `usage.prompt_tokens_details.cached_tokens`, with
+  `--enable-prompt-tokens-details`;
+- per block, the event log (`VLLM_CACHE_EVENT_LOG`).
+
+The Milestone 2 experiments check on every run that the first and third
+agree.
+
+**Useful flags:**
+- `--enable-prefix-caching` (off by default in this vLLM version);
+- `--block-size {8,16,32,64,128}`;
+- `--num-gpu-blocks-override N`;
+- `--max-num-seqs`, `--max-num-batched-tokens`, `--enable-chunked-prefill`;
+- `--disable-frontend-multiprocessing`, which runs the engine inside the
+  API process and is easier to debug.
+
+The KV cache must hold at least `--max-model-len` tokens.
+</details>
+
+### Tests
 
 ```bash
 make test        # every milestone
-make test-m1     # one milestone: test-m1, test-m2, test-m3
+make test-m1     # or test-m2, test-m3
 make test-core   # vLLM's own scheduler and block-manager tests (CPU-safe subset)
-make ci          # everything CI runs, in the same order
+make ci          # everything CI runs, in CI's order
+make lint        # ruff, isort, yapf, codespell on the files changed since origin/milestone-3
 ```
 
-Without `make`, export `VLLM_USE_SIMULATOR=1 VLLM_NO_USAGE_STATS=1` before
-pytest starts (vLLM chooses its platform when it is imported) and run
-`tools/run_project_tests.sh [m1|m2|m3]`. Each test module declares its
-milestone with `pytestmark = pytest.mark.m1` (or `m2`, `m3`). Milestone 3
-has no tests yet.
+Each test module declares its milestone with `pytestmark = pytest.mark.m1`
+(or `m2`, `m3`). Without `make`: export
+`VLLM_USE_SIMULATOR=1 VLLM_NO_USAGE_STATS=1` before pytest starts, then run
+`tools/run_project_tests.sh [all|m1|m2|m3]`.
 
-Milestone 1 (`make test-m1`, 67 tests):
-
-| File | What it covers | Time |
+| Milestone | Tests | Where |
 |---|---|---|
-| `tests/simulator/test_simulator.py` | The `Simulator` alone: trace parsing, request-id matching, EOS/filler rules, sampler-output shape. | < 1 s |
-| `tests/simulator/test_engine.py` | In-process `LLMEngine` with gpt2's tokenizer: KV-cache sizing, stop rules, batching, prefix-cache hits, preemption, chunked prefill. | ~6 s |
-| `tests/simulator/test_online.py` | A real `vllm serve` (both front-ends) through the OpenAI client: completions, chat, streaming, concurrency, `/metrics`. | ~20 s |
+| 1 | 67 | `tests/simulator/test_{simulator,engine,online}.py` |
+| 2 | 136 | the cache event log, metrics, the Task 2 and Task 3 commands, the FIFO and LFU evictors (`tests/simulator`, `tests/analysis`, `tests/eviction`) |
+| 3 | 1,197 + 1 xfail | the adapters (`tests/client_simulator`), the runners, the cache replay, Belady, the study and report builders (`tests/analysis`), and every new evictor (`tests/eviction`, `tests/simulator`) |
 
-Milestone 2 (`make test-m2`, 130 tests):
+Every pull request runs them on GitHub (`project-ci`), along with the
+linters and a check against [CONTRIBUTING.md](CONTRIBUTING.md)
+(`make check-pr BODY=pr.md`).
 
-| File | What it covers | Time |
-|---|---|---|
-| `tests/simulator/test_cache_events.py` | The cache event log in an in-process engine: miss and insert, then hit and revive on a repeated prompt; blocks written during decode; eviction in a 6-block cache; sharing between concurrent requests; swap-in lookups; the log's hit rate equal to vLLM's; flushing. | ~4 s |
-| `tests/analysis/test_metrics.py` | Every metric of spec 004 on a handcrafted log whose answers are worked out by hand. | < 1 s |
-| `tests/analysis/test_run_m2_task2.py` | The experiment command without a server: the sample, CSVs and self-checks, all seven figures, refusing to overwrite a run. | ~1 s |
-| `tests/analysis/test_server.py` | The server launcher: a busy port is refused, it binds 127.0.0.1, it reads the KV-cache size, it never inherits the shell's cache settings. | < 1 s |
-| `tests/analysis/test_sweep.py` | The Task 3 sweep without a server: eviction count and rate, grid expansion with capacity in tokens, infeasible configurations, resuming after an interruption, the summary rows, the command with a faked replay, the recorded grid, figure 4's capacity, the best-configuration table and the figures. | ~2 s |
-| `tests/eviction/test_eviction_policies.py` | The FIFO and LFU evictors alone: spec 005's scenarios, every tie-break, reuse and eviction resetting the counters, a bounded heap, and random operations checked against a brute-force reference. | ~3 s |
-| `tests/simulator/test_eviction_policy_env.py` | `VLLM_EVICTION_POLICY` in an in-process engine: it picks the GPU evictor only, refuses unknown values, feeds hits to LFU, and makes FIFO give up a different block than LRU and LFU in a 6-block cache. | ~8 s |
+### What changed from upstream vLLM
 
-vLLM's own CPU-safe tests for the scheduler and block manager still pass
-with the simulator enabled (`make test-core`; see
-`report/milestone1/simulator.md`, section 4).
+| Path | Purpose |
+|---|---|
+| `vllm/simulator.py` (new) | `Simulator` (trace replay) and `SimulatorExecutor`. |
+| `vllm/engine/llm_engine.py`, `async_llm_engine.py`, `vllm/platforms/__init__.py` | Select the simulator executor; pin the CPU platform. |
+| `vllm/entrypoints/…`, `vllm/utils.py` | macOS port-binding fixes; `cached_tokens` on `/v1/completions`. |
+| `vllm/envs.py` | The variables above. |
+| `vllm/core/block/cache_events.py` (new), `prefix_caching_block.py`, `cpu_gpu_block_allocator.py`, `block_manager.py` | The cache event log, the request context, and the evictor hooks (`record_hit`, `record_access`). |
+| `vllm/core/evictor.py`, `eviction_policies.py` (new) | Policy selection, FIFO, LFU. vLLM's `LRUEvictor` is unchanged. |
+| `vllm/core/reuse_evictors.py`, `sampled_lrfu.py`, `wa_evictor.py` (new) | TTDF, RACE-RP, `lru_leaf`, Sampled LRFU, `wa`. |
+| `client_simulator/` (new) | Dataset adapters and the replay client. |
+| `analysis/` (new) | Metrics, the experiment runners, the cache replay and Belady, the Milestone 3 study, the figures. |
+| `tests/simulator`, `tests/analysis`, `tests/eviction`, `tests/client_simulator` (new) | The project's tests. |
+| `examples/` | The simulator demo and the Task 1 experiment configurations. |
+| `specs/`, `report/`, `CONTRIBUTING.md`, `Makefile`, `tools/`, `.github/workflows/` | Specs, the report notes and figures, team rules, commands and CI. |
 
-Every pull request runs these tests on GitHub (`project-ci`), together with a
-check of the PR against `CONTRIBUTING.md` (`pr-requirements`) and the
-repository's linters. Run `make lint` and `make check-pr BODY=pr.md` before
-opening one.
-
-## Troubleshooting
+### Troubleshooting
 
 - **Requests reach another program (macOS).** `vllm serve` listens on
-  0.0.0.0 by default, and macOS lets it start even when another program
-  already listens on 127.0.0.1 at that port; requests to `localhost` then go
-  to the other program. Pass `--host 127.0.0.1` so the server refuses to
-  start instead, or pick a free port (`lsof -nP -iTCP:8000 -sTCP:LISTEN`
-  shows who has one). `analysis/server.py` does both.
+  0.0.0.0, and macOS lets it start even when another program holds
+  127.0.0.1 at that port. Pass `--host 127.0.0.1`, or pick a free port
+  (`lsof -nP -iTCP:8000 -sTCP:LISTEN`).
+- **`Port 8000 is already in use`** from an experiment command: stop the
+  other server, or pass `--port` (`run_m3_task2 grid` uses ports from
+  `--base-port`, default 8100).
+- **A grid refuses to start on a dirty tree.** Commit your changes, or
+  pass `--allow-dirty`; the run then records that it was dirty.
 - **`FileNotFoundError` from `os.getcwd()` while importing vLLM.** The
-  terminal's current folder no longer exists, typically after an external
-  drive was unmounted and mounted again. `cd` back into the repository by
-  its full path.
-- **The cache event log looks incomplete.** Lines are written in batches;
-  stop the server and check for the final `{"ev": "end"}` line.
+  terminal's current folder no longer exists, for example after an external
+  drive was remounted. `cd` back into the repository by its full path.
+- **The cache event log looks incomplete.** It is written in batches. Stop
+  the server and check for the final `{"ev": "end"}` line.
 
-## Known limitations
+### Known limitations
 
-- Not simulated, rejected at startup with a clear error: LoRA, prompt
-  adapters, tensor/pipeline parallelism, multi-step scheduling, speculative
-  decoding, pooling/embedding models and `--tokenizer-mode mistral`.
-- Prompt logprobs (`echo` + `logprobs` on completions) are not supported.
-- Beam search (`use_beam_search`) runs as internal sub-requests with fresh
-  ids, so it never matches a trace and only yields filler tokens.
-- `gpt2` has no chat template; use `--chat-template` or a chat model for
+- **Rejected at startup:** LoRA, prompt adapters, tensor and pipeline
+  parallelism, multi-step scheduling, speculative decoding, pooling models,
+  and `--tokenizer-mode mistral`.
+- **Prompt logprobs are not supported.** Beam search yields filler tokens.
+- **`gpt2` has no chat template.** Use a chat model for
   `/v1/chat/completions`.
+- **Timing comes from the event loop, not a GPU model.** The study is about
+  cache behaviour, not latency.
 
-### Bailian and shared workload experiments (Milestone 3)
+### Project documents
 
-`process_raw_traces --dataset bailian` prepares reproducible token requests
-from the anonymous block hashes. The same experiment runner handles chat,
-token and mixed workloads, using the existing server launcher and sweep:
-
-```bash
-python -m analysis.run_experiment --config examples/bailian_experiment.json \
-  --out results/bailian-smoke
-```
-
-Prepare the inputs first; see the
-[Bailian preparation, formats and mixed-run commands](client_simulator/README.md#bailian-token-traces-and-shared-experiments).
-The default experiment uses 16-token blocks, 65,536-token capacity and a
-32,768-token context. It ranks usable token reuse from cache events; raw
-completion responses do not expose per-request cached-token counts.
-
-Generate figures from a completed comparison without starting servers:
-
-```bash
-python -m analysis.plot_experiment --out results/bailian-500-cap65536 \
-  --figures report/milestone3/figures/task1/bailian
-```
-
-The [Bailian result note](report/milestone3/task1-workload-eviction.md)
-explains the validated results and report figures.
+- [CONTRIBUTING.md](CONTRIBUTING.md): branches, PRs, tests, CI.
+- [specs/](specs/README.md): one spec, plan and task list per feature.
+- [report/](report/README.md): the findings of each task, their figures,
+  the changelogs and AI usage.
