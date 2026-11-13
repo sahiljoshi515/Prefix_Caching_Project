@@ -36,7 +36,7 @@ Runtimes are from a 12-core Apple-silicon laptop.
 | 2.2 | How much prefix sharing do single- and multi-turn chats get? | Multi-turn: 95% of block lookups hit, almost all within the same conversation. Single-turn: 13%, mostly the shared system prompt. | [report/milestone2/task2-prefix-sharing-analysis.md](report/milestone2/task2-prefix-sharing-analysis.md) |
 | 2.3 | Which cache size, block size and eviction policy? | Capacity decides almost everything: 2% reuse at 16K tokens, 95% at 128K. LRU is best; FIFO strands hits behind misses; LFU collapses under pressure. | [report/milestone2/task3-cache-tuning.md](report/milestone2/task3-cache-tuning.md) |
 | 3.1 | Best policy for each workload? | Bailian: LFU (15.0% vs LRU 13.3%). AgentBank: LRU (89.5% vs FIFO 55.1%, LFU 18.5%). CC-Bench: no policy helps at this load; the cache thrashes (1.5–2.1%), LFU slightly ahead. | [report/milestone3/task1-workload-eviction.md](report/milestone3/task1-workload-eviction.md) |
-| 3.2 | Best policy for a mix of 7 workloads? | TTDF, RACE-RP and our workload-aware `wa` beat LRU on every seed; RACE-RP and `wa` by about 3 points, and they tie with each other. Engine runs at 128K tokens (Phase 2): LRU 55.8%, RACE-RP 58.7%, `wa` 59.1% with oracle workload labels and 58.2% without. Belady, the offline optimum, reaches 68.3% in the replay. | [report/milestone3/task2-mixed-workload-policy.md](report/milestone3/task2-mixed-workload-policy.md), [spec 007 plan](specs/007-m3-mixed-workload-policy/plan.md) (Phase 2) |
+| 3.2 | Best policy for a mix of 4 workloads (7 traces)? | TTDF, RACE-RP and our workload-aware `wa` beat LRU on every seed; RACE-RP and `wa` by about 3 points, and they tie with each other. Engine runs at 128K tokens (Phase 2): LRU 55.8%, RACE-RP 58.7%, `wa` 59.1% with oracle workload labels and 58.2% without. Belady, the offline optimum, reaches 68.3% in the replay. | [report/milestone3/task2-mixed-workload-policy.md](report/milestone3/task2-mixed-workload-policy.md), [spec 007 plan](specs/007-m3-mixed-workload-policy/plan.md) (Phase 2) |
 
 ## 1. Setup
 
@@ -44,7 +44,8 @@ You need git, [uv](https://docs.astral.sh/uv/), and Python 3.12 (3.9–3.12
 work; uv can install it). No GPU.
 
 Disk: about 1 GB for the virtualenv; about 3 GB more for all datasets;
-up to about 22 GB for the results of a full reproduction (M2 Task 3's 54 runs are the largest).
+about 22 GB for M2 Task 3 and 20 GB for M3 Task 1's CC-Bench; check
+each section before a full run.
 
 ```bash
 git clone https://github.com/sahiljoshi515/Prefix_Caching_Project.git
@@ -400,8 +401,8 @@ of the full runs; their numbers are in the
 
 ### Task 2: a policy for a mixed workload
 
-**The setup.** A *balanced mix* of 7 workloads in equal shares by
-requests:
+**The setup.** A *balanced mix* of 4 workloads, 7 traces (Bailian's four
+traces count as one workload), each trace an equal share by requests:
 - ShareGPT;
 - AgentBank;
 - CC-Bench;
