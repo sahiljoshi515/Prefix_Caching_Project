@@ -122,9 +122,10 @@ on branch `milestone3_task2`; the policy itself is Phase 2.
   and the runner's `wa` grid with its `run_policy` record. `replay
   --params` stays, for any policy's settings.
 - **Changed:** the README's Task 2 quick run compares TTDF with LRU
-  (seed 2 at 128K: 55.27% against 54.22%), and its headline comparison is
-  the replay without `wa`. Spec 007 marks Phase 2 removed and T006–T008
-  dropped; `plan.md` keeps `wa`'s design and results as the record.
+  (seed 2 at 128K: 55.27% against 54.22%), its headline comparison is the
+  replay without `wa`, and it no longer mentions `wa`. Spec 007 marks
+  Phase 2 removed and T006–T008 dropped; `plan.md` keeps `wa`'s design and
+  results as the record.
 - **Changed:** RACE-RP, which the owners specified in Phase 1, is named
   Task 2's designed policy in the README, spec 007 and the Task 2 note.
   The README no longer calls TTDF and RACE-RP "published-style".

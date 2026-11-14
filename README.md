@@ -423,11 +423,7 @@ and tuning; seeds 2–4 are reported.
 
 How they work: [spec 007](specs/007-m3-mixed-workload-policy/spec.md).
 Results:
-- Phase 1 (baselines, TTDF, RACE-RP, Sampled LRFU):
-  [report/milestone3/task2-mixed-workload-policy.md](report/milestone3/task2-mixed-workload-policy.md).
-- Phase 2 (`wa`, removed from the code on 2026-11-13): its design and
-  results stay in the *Phase 2 first experiments* section of
-  [specs/007-m3-mixed-workload-policy/plan.md](specs/007-m3-mixed-workload-policy/plan.md).
+[report/milestone3/task2-mixed-workload-policy.md](report/milestone3/task2-mixed-workload-policy.md).
 
 Needs data blocks A and C. Two kinds of run:
 - an **engine run** (`grid`) is a real 30-minute `vllm serve` replay; a
