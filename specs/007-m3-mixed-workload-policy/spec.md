@@ -5,7 +5,10 @@ Task 2
 **Owners**: Sahil Joshi, Xin Liang Chia | **Reviewers**: Triet Chau, Jasmine
 Lu
 **Status**: Phase 1 (study and baselines) done 2026-11-05; Phase 2 (`wa`)
-revised 2026-11-07, not started
+revised 2026-11-07, prototyped 2026-11-08 to 2026-11-10, and removed from
+the code 2026-11-13 (`plan.md`, *`wa` removed*). Task 2's designed policy
+is now Phase 1's RACE-RP. The Phase 2 requirements below are kept as the
+record of `wa`'s design.
 **Created**: 2026-10-18 | **Depends on**: `004`, `005`, `006`
 
 **Input**: Charter (Sahil Joshi and Xin Liang Chia): "Create mixed-workload

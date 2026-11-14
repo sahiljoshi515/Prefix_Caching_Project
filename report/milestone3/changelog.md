@@ -7,7 +7,7 @@ notes, and each task's owner and status are in the
 [spec index](../../specs/README.md).
 
 Commit dates are the author's local date; merge dates are GitHub's (UTC).
-Last updated 2026-11-12. Each PR that adds to the milestone adds its entry
+Last updated 2026-11-13. Each PR that adds to the milestone adds its entry
 here.
 
 ## Repository
@@ -114,6 +114,21 @@ here.
 [Spec 007](../../specs/007-m3-mixed-workload-policy/spec.md). Owners: Sahil
 Joshi and Xin Liang Chia. Phase 1 (the reuse study and the baselines) done
 on branch `milestone3_task2`; the policy itself is Phase 2.
+
+### Unreleased (branch `milestone3-marcus-remove-wa`): `wa` removed (marcus)
+
+- **Removed:** the `wa` evictor (`vllm/core/wa_evictor.py`), its
+  registration (`EvictionPolicy.WA`, `VLLM_EVICTION_POLICY=wa`) and tests,
+  and the runner's `wa` grid with its `run_policy` record. `replay
+  --params` stays, for any policy's settings.
+- **Changed:** the README's Task 2 quick run compares TTDF with LRU
+  (seed 2 at 128K: 55.27% against 54.22%), its headline comparison is the
+  replay without `wa`, and it no longer mentions `wa`. Spec 007 marks
+  Phase 2 removed and T006–T008 dropped; `plan.md` keeps `wa`'s design and
+  results as the record.
+- **Changed:** RACE-RP, which the owners specified in Phase 1, is named
+  Task 2's designed policy in the README, spec 007 and the Task 2 note.
+  The README no longer calls TTDF and RACE-RP "published-style".
 
 ### 2026-11-12: PR #16 merged into `milestone3_task2` by ChiaXinLiang: Phase 2 spec and first experiments
 

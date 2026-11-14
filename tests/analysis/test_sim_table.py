@@ -76,12 +76,12 @@ def test_render_compares_with_a_baseline():
     text = render([
         row("lru", 2, 0.50),
         row("lru", 3, 0.52),
-        row("wa", 2, 0.54),
-        row("wa", 3, 0.55),
+        row("race_rp", 2, 0.54),
+        row("race_rp", 3, 0.55),
     ],
                   against="lru")
-    assert "wa | 54.50" in text
-    assert "wa | +4.00 +3.00 | mean +3.50 | higher" in text
+    assert "race_rp | 54.50" in text
+    assert "race_rp | +4.00 +3.00 | mean +3.50 | higher" in text
 
 
 def test_the_tuning_seed_is_left_out_unless_asked_for():
@@ -93,10 +93,11 @@ def test_the_tuning_seed_is_left_out_unless_asked_for():
 
 
 @pytest.mark.parametrize("other", [
-    row("wa", 3, 0.5, window=(0.0, 1800.0)),
-    row("wa", 3, 0.5, timing="engine:results/x"),
+    row("race_rp", 3, 0.5, window=(0.0, 1800.0)),
+    row("race_rp", 3, 0.5, timing="engine:results/x"),
     {
-        **row("wa", 3, 0.5), "plan": "data/processed/m3/chat-heavy-human-s3"
+        **row("race_rp", 3, 0.5),
+        "plan": "data/processed/m3/chat-heavy-human-s3",
     },
 ])
 def test_rows_of_different_setups_are_refused(other):
@@ -126,18 +127,18 @@ def test_every_workload_below_the_gate_is_listed():
             "a": 0.5,
             "b": 0.2
         }),
-        row("wa", 2, 0.6, {
+        row("race_rp", 2, 0.6, {
             "a": 0.47,
             "b": 0.19
         }),
-        row("wa", 3, 0.6, {
+        row("race_rp", 3, 0.6, {
             "a": 0.485,
             "b": 0.21
         }),
     ],
                   against="lru")
     assert "-- workloads more than 2 points below lru (mean)" in text
-    assert "wa | a -2.25" in text
+    assert "race_rp | a -2.25" in text
 
 
 # --- Engine runs -------------------------------------------------------------
@@ -170,7 +171,7 @@ def engine_run(root, policy, seed, tenths, ceiling=False, finished=True):
         }), run_dir / "tables" / "requests.parquet")
     run = {
         "plan_dir": f"data/processed/m3/balanced-human-s{seed}",
-        "eviction_policy": "wa" if policy.startswith("wa_") else policy,
+        "eviction_policy": policy,
         "capacity_tokens": 131072,
         "block_size": 16,
         "mix": "balanced",
@@ -179,8 +180,6 @@ def engine_run(root, policy, seed, tenths, ceiling=False, finished=True):
         "replicate": 0,
         "ceiling": ceiling,
     }
-    if policy.startswith("wa_"):
-        run["run_policy"] = policy
     if finished:
         run["finished_at_utc"] = "2026-11-10T00:00:00+00:00"
     (run_dir / "run.json").write_text(json.dumps(run))
@@ -190,12 +189,12 @@ def engine_run(root, policy, seed, tenths, ceiling=False, finished=True):
 def test_engine_runs_give_rows_like_the_replays(tmp_path):
     runs = [
         engine_run(tmp_path, "lru", 2, 3),
-        engine_run(tmp_path, "wa_oracle", 2, 5),
+        engine_run(tmp_path, "race_rp", 2, 5),
         engine_run(tmp_path, "lru", 3, 4),
-        engine_run(tmp_path, "wa_oracle", 3, 6),
+        engine_run(tmp_path, "race_rp", 3, 6),
     ]
     rows = engine_rows(runs)
-    assert [r["policy"] for r in rows] == ["lru", "wa_oracle"] * 2
+    assert [r["policy"] for r in rows] == ["lru", "race_rp"] * 2
     assert {(r["timing"], tuple(r["window"]), r["capacity"])
             for r in rows} == {("engine", (600.0, 1800.0), 131072)}
     window = rows[0]["summary"]["window"]
@@ -203,8 +202,8 @@ def test_engine_runs_give_rows_like_the_replays(tmp_path):
     assert window["workloads"]["sharegpt"]["usable_reused_fraction"] == (
         pytest.approx(0.3))
     text = render(rows, against="lru")
-    assert "wa_oracle | +20.00 +20.00 | mean +20.00 | higher" in text
-    assert "wa_oracle | none" in text  # no workload below the gate
+    assert "race_rp | +20.00 +20.00 | mean +20.00 | higher" in text
+    assert "race_rp | none" in text  # no workload below the gate
 
 
 def test_a_ceiling_run_is_its_own_capacity(tmp_path):
@@ -215,7 +214,7 @@ def test_a_ceiling_run_is_its_own_capacity(tmp_path):
 def test_engine_and_replay_rows_are_not_mixed(tmp_path):
     rows = engine_rows([engine_run(tmp_path, "lru", 2, 3)])
     with pytest.raises(ValueError, match="different setups"):
-        render(rows + [row("wa", 2, 0.5)])
+        render(rows + [row("race_rp", 2, 0.5)])
 
 
 def test_an_engine_run_needs_its_tables_and_to_have_finished(tmp_path):
@@ -224,4 +223,4 @@ def test_an_engine_run_needs_its_tables_and_to_have_finished(tmp_path):
     with pytest.raises(ValueError, match="analysis.tables"):
         engine_rows([run_dir])
     with pytest.raises(ValueError, match="has not finished"):
-        engine_rows([engine_run(tmp_path, "wa_none", 2, 3, finished=False)])
+        engine_rows([engine_run(tmp_path, "race_rp", 2, 3, finished=False)])

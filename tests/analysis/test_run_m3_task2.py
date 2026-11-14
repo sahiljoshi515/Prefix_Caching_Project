@@ -19,7 +19,7 @@ import time
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import pytest
 
@@ -915,6 +915,28 @@ def test_replay_passes_stop_at_to_the_client(tmp_path, monkeypatch):
     assert run["finished_at_utc"] and run["client_summary"] == {"completed": 1}
     m3.replay_plan(plan, tmp_path / "open", policy="lru", capacity_tokens=64)
     assert "--stop-at" not in commands[-1]
+
+
+def test_replay_command_passes_the_policys_settings(tmp_path, monkeypatch):
+    seen: Dict[str, Any] = {}
+
+    def fake_replay(plan_dir, run_dir, **kwargs):
+        seen.clear()
+        seen.update(kwargs)
+        return {"client_summary": {}}
+
+    monkeypatch.setattr(m3, "replay_plan", fake_replay)
+    base = [
+        "replay", "--plan",
+        str(tmp_path / "plan"), "--out",
+        str(tmp_path / "run"), "--capacity", "131072"
+    ]
+    m3.main(base + ["--policy", "ttdf", "--params", "tau_short=5"])
+    assert seen["policy"] == "ttdf"
+    assert seen["extra_env"] == {"VLLM_EVICTION_PARAMS": "tau_short=5"}
+    m3.main(base + ["--policy", "lru"])
+    assert seen["policy"] == "lru"
+    assert seen["extra_env"] is None
 
 
 def test_grid_drives_the_real_replay_plan(tmp_path, monkeypatch):

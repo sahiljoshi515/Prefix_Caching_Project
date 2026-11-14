@@ -13,8 +13,7 @@ least 0.5 points, otherwise a tie. It then lists, for every policy, the
 workloads whose mean is more than 2 points below that policy's
 (``plan.md``'s decision gate)::
 
-    python -m analysis.sim_table results/m3-explore/wa-heldout.jsonl \\
-        results/m3-explore/heldout-baselines.jsonl --against lru
+    python -m analysis.sim_table results/m3-explore/heldout.jsonl --against lru
     python -m analysis.sim_table --against lru \\
         --engine results/m3-task2/balanced-human-s{2,3,4}-*-cap131072
 

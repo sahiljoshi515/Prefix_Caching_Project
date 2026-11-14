@@ -2,6 +2,9 @@
 
 **Input**: [spec.md](spec.md), [plan.md](plan.md)
 
+`wa` was removed from the code on 2026-11-13 (`plan.md`, *`wa` removed*):
+T006–T008 are dropped, and the `wa` parts of T016 with them.
+
 ## Phase 0: User Stories 1 and 2 — mixed traces and characterization (P1)
 
 - [x] T001 [US1] Test first: two-fixture 50/50 mix, ordering, determinism,
@@ -32,20 +35,22 @@
 
 ## Phase 2: User Story 3 — the policy (P1)
 
-- [ ] T006 [US3] Test first: 3-workload toy trace with hand-derived victims,
+- [x] T006 [US3] Test first: 3-workload toy trace with hand-derived victims,
   the shared-block label rule, prefix closure, unknown modes refused
-  (`tests/eviction/test_wa_evictor.py`)
-- [ ] T007 [US3] `WorkloadAwareEvictor` and registration
+  (`tests/eviction/test_wa_evictor.py`). Dropped (`wa` removed 2026-11-13)
+- [x] T007 [US3] `WorkloadAwareEvictor` and registration
   (`vllm/core/eviction_policies.py`, `vllm/core/evictor.py`); a prototype
   with oracle and none modes is in `vllm/core/wa_evictor.py`, with
   replay and engine results in `plan.md` (2026-11-08, revised after PR
-  #16's review and on 2026-11-10), pending T005's review
-- [ ] T008 [US3] Label hand-off that works with the event log off, oracle
+  #16's review and on 2026-11-10), pending T005's review. Dropped (`wa`
+  removed 2026-11-13)
+- [x] T008 [US3] Label hand-off that works with the event log off, oracle
   and none modes (`vllm/core/block/cache_events.py`, `vllm/envs.py`,
   FR-002); engine test: same `cached_tokens` with the log on and off
   (`tests/simulator/test_wa_policy_env.py`). The design holds: `wa`
   switches the request context on itself (`LeafScoreEvictor`), so labels
-  reach it with the log off; the engine test is not written
+  reach it with the log off; the engine test is not written. Dropped
+  (`wa` removed 2026-11-13)
 - [x] T009 [US3] Inferred-label classifier, trained on seeds the comparison
   does not use (FR-006); accuracy and confusion matrix against oracle
   (`analysis/identify.py`; trained on seed 1, tested on seeds 2–4)
