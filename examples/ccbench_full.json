@@ -12,8 +12,9 @@
       "trace": "../data/processed/ccbench.conversations.jsonl",
       "responses": "../data/processed/ccbench.responses.jsonl",
       "mode": "multi",
-      "conversation_rate": 1,
-      "think_time": 5
+      "conversation_rate": 0.0166667,
+      "recorded_pauses": true,
+      "max_pause": 600
     }
   ]
 }

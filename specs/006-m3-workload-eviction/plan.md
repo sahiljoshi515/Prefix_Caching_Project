@@ -169,6 +169,16 @@ The policy comparison then reflects the workloads' content, not pacing.
   (about 12K tokens shared by every real session) are not in the logs and
   no stand-in is added; nor is the timing of sub-agents inside a session.
 
+**Amended 2026-11-17: CC-Bench pacing.** CC-Bench's logs time every event,
+so each turn now waits its recorded pause (from the end of the previous
+answer to the next message, as Task 2 measures it), capped at 10 minutes.
+Its session start times are not a load (the benchmark ran the tasks over
+two months), so sessions arrive at about 1 per minute (0.0166667/s),
+our estimate of Task 2's CC-Bench rate. At 1 conversation/s with a fixed
+5 s pause every policy thrashed the cache (1.5-2.1%), which measured the
+pacing rather than the workload. AgentBank has no timestamps and keeps the
+ShareGPT pacing.
+
 ### Role mapping for agent trajectories
 
 The system prompt or task description becomes `system`; the agent's actions

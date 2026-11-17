@@ -14,7 +14,8 @@
       "limit": 5,
       "mode": "multi",
       "conversation_rate": 2,
-      "think_time": 1
+      "recorded_pauses": true,
+      "max_pause": 5
     }
   ]
 }
