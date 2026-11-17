@@ -42,6 +42,12 @@ Rules, applied per row:
   before it. Response ids are not used: some backends reuse one id across
   separate responses. A path must start with a user message; a final
   unanswered user message is dropped.
+- **Pauses:** every event has an ISO ``timestamp``. ``turn_gaps_s[k]`` is
+  the recorded pause from the last event of answer ``k - 1`` to the first
+  event of message ``k`` (usually the tool run the agent waited for), as in
+  ``ccbench_mix.py``. Negative gaps (clock skew) become 0 and a gap with a
+  missing timestamp is None. A resumed session's first new turn can follow
+  hours later.
 
 Not in the logs, so not replayed: Claude Code's system prompt and tool
 definitions (about 12K tokens shared by every session; the sessions had
@@ -57,6 +63,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
+from client_simulator.adapters.ccbench_mix import event_time, turn_gaps
 from client_simulator.schema import Conversation, Message
 
 REVISION = "792c6d3221db4d9ed475702ed61a176dd8948152"
@@ -166,28 +173,41 @@ def message(event: Event, counts: Counter) -> Optional[Message]:
     return Message(role=kind, content=text)
 
 
+Span = List[Optional[float]]
+
+
 def path_messages(path: List[Event], rendered: Dict[str, Optional[Message]],
-                  counts: Counter) -> List[Message]:
-    """A path's messages, as complete user/assistant turns."""
+                  counts: Counter) -> Tuple[List[Message], List[Span]]:
+    """A path's messages, as complete user/assistant turns, and each
+    message's [first, last] event time."""
     messages: List[Message] = []
+    spans: List[Span] = []
     for event in path:
         if event["uuid"] not in rendered:  # each event is counted once
             rendered[event["uuid"]] = message(event, counts)
         current = rendered[event["uuid"]]
         if current is None:
             continue
+        time = event_time(event)
         if messages and messages[-1].role == current.role:
             messages[-1] = Message(
                 current.role, messages[-1].content + "\n\n" + current.content)
+            if spans[-1][0] is None:
+                spans[-1][0] = time
+            if time is not None:
+                spans[-1][1] = time
         else:
             messages.append(current)
+            spans.append([time, time])
     while messages and messages[0].role != "user":
         messages.pop(0)
+        spans.pop(0)
         counts["leading_assistant_messages_removed"] += 1
     if messages and messages[-1].role == "user":
         messages.pop()
+        spans.pop()
         counts["unanswered_final_users_removed"] += 1
-    return messages
+    return messages, spans
 
 
 def shared_turns(messages: List[Message],
@@ -214,18 +234,20 @@ def row_conversations(row: Dict[str, Any],
         thread_id = f"ccbench:{row['id']}:{index}"
         found: List[Conversation] = []
         for path in paths(root, children):
-            messages = path_messages(path, rendered, counts)
+            messages, spans = path_messages(path, rendered, counts)
             first, match = shared_turns(messages, found)
             new = len(messages) // 2 - first
             if not new:
                 counts["paths_without_new_turns"] += 1
                 continue
             counts["replay_requests"] += new
+            gaps = turn_gaps(spans, Counter())
             if match is not None and 2 * first == len(found[match].messages):
                 # A resumed session repeats an earlier path and goes on.
                 counts["continued_paths"] += 1
                 found[match] = Conversation(found[match].conversation_id,
-                                            messages, found[match].first_turn)
+                                            messages, found[match].first_turn,
+                                            gaps)
                 continue
             if found:
                 counts["forked_branches"] += 1
@@ -233,7 +255,8 @@ def row_conversations(row: Dict[str, Any],
                 Conversation(conversation_id=thread_id +
                              (f"b{len(found)}" if found else ""),
                              messages=messages,
-                             first_turn=first))
+                             first_turn=first,
+                             turn_gaps_s=gaps))
         yield from found
 
 

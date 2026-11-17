@@ -73,6 +73,22 @@ def test_prepare_freezes_and_merges_mixed_inputs(config, tmp_path):
         run.prepare(config, out)
 
 
+def test_pauses_default_to_the_think_time(config):
+    chat = config["workloads"][1]
+    assert (chat["recorded_pauses"], chat["max_pause"]) == (False, None)
+
+
+@pytest.mark.parametrize("key,value", [("recorded_pauses", 1),
+                                       ("max_pause", 0), ("max_pause", True)])
+def test_invalid_pause_settings_are_rejected(tmp_path, config, key, value):
+    path = tmp_path / "config.json"
+    supplied = json.loads(path.read_text())
+    supplied["workloads"][1][key] = value
+    path.write_text(json.dumps(supplied))
+    with pytest.raises(ValueError, match=key):
+        run.read_config(path)
+
+
 def test_changed_frozen_file_is_rejected(config, tmp_path):
     out = tmp_path / "experiment"
     sample = run.prepare(config, out)

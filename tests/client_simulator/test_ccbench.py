@@ -101,6 +101,36 @@ def test_a_branch_replays_only_its_new_turns():
             ] == ["Fix the bug.", "Reading the code.", "Run the tests."]
 
 
+def event(uuid, parent, kind, text, time):
+    return {
+        "uuid": uuid,
+        "parentUuid": parent,
+        "type": kind,
+        "timestamp": f"2025-09-25T02:00:{time}Z",
+        "message": {
+            "role": kind,
+            "content": text
+        }
+    }
+
+
+def test_pauses_are_recorded_from_the_timestamps():
+    trajectory = [
+        event("a", None, "user", "Fix it.", "00.000"),
+        event("b", "a", "assistant", "Reading.", "01.000"),
+        event("c", "b", "assistant", "Running a tool.", "02.000"),
+        event("d", "c", "user", "Tool output.", "04.500"),
+        event("e", "d", "assistant", "Done.", "05.000"),
+        # The clock went back: the pause becomes 0.
+        event("f", "e", "user", "Thanks.", "04.000"),
+        event("g", "f", "assistant", "You're welcome.", "06.000"),
+    ]
+    row = {"id": 9, "trajectory": json.dumps(trajectory)}
+    conversation, = adapter.row_conversations(row, Counter())
+    # From the answer's last event to the next message's first.
+    assert conversation.turn_gaps_s == [None, 2.5, 0.0]
+
+
 def test_counts_of_dropped_parts(capsys):
     list(adapter.conversations(rows()))
     printed = capsys.readouterr().out
