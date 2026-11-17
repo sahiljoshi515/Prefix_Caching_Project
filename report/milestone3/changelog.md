@@ -12,6 +12,14 @@ here.
 
 ## Repository
 
+### Unreleased (branch `milestone3-jasmine-ccbench-recorded-pauses`, PR #21): mypy runs on Ubuntu 24.04 (imleznupar)
+
+- **Fixed:** GitHub's `ubuntu-latest` runner moved to Ubuntu 26.04, which
+  has no Python 3.9 for `setup-python`, so the mypy (3.9) job failed at
+  setup and fail-fast cancelled 3.10 to 3.12 on every PR (first seen on
+  PR #21). `.github/workflows/mypy.yaml` now pins `ubuntu-24.04`; the
+  other workflows run Python 3.11 to 3.13 and are unaffected.
+
 ### Unreleased (branch `docs-sahil-milestone-run-guide`): README on running each milestone (sahiljoshi515)
 
 - **README:** rewritten for the submission. It now gives:

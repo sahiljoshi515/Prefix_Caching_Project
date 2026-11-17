@@ -79,10 +79,12 @@ Entry format:
   difference from Task 2's CC-Bench runs (session rate, cache, pauses),
   estimating Task 2's CC-Bench session rate from its sampler, the adapter,
   client and runner changes with tests, the reruns and their checks, the
-  stale-block and load statistics, and the README, note, spec and
-  changelog updates. Jasmine chose to pace CC-Bench by its recorded
-  pauses at Task 2's session rate, and to drop the fixed 5 s pause for
-  CC-Bench. Claude Code chose the 10-minute cap.
+  stale-block and load statistics, the README, note, spec and changelog
+  updates, and pinning the mypy workflow to Ubuntu 24.04 after the
+  runner lost Python 3.9 (diagnosed from this PR's failed check). Jasmine
+  chose to pace CC-Bench by its recorded pauses at Task 2's session rate,
+  to drop the fixed 5 s pause for CC-Bench, and to keep the CI fix in
+  this PR. Claude Code chose the 10-minute cap.
 - **Prompts:** "why did the arrive rate affect CC-bench again?"; "so it
   does have pauses within a session but not arrivals between sessions?";
   "can you rerun with the cc-bench's own pause time"; "so for task 2, they
@@ -93,7 +95,8 @@ Entry format:
   includes changes to make our setting Recorded pauses, about 1 session
   per 60 s and not Recorded pauses, 1 session/s?"; "yea can you also
   cleanup code that runs the fix 5s pauses for cc-bench? also make sure to
-  update README so the TA can replicate our results".
+  update README so the TA can replicate our results"; "they want me to fix
+  the CI, can you do that"; "keep in the same PR".
 
 ### PR #7: Add contributing guide, spec-kit specs and project CI
 
