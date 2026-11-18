@@ -35,7 +35,7 @@ Runtimes are from a 12-core Apple-silicon laptop.
 | 2.1 | A client that replays ShareGPT with chat templates and Poisson arrivals | `client_simulator/` | [report/milestone2/task1-client-simulator.md](report/milestone2/task1-client-simulator.md) |
 | 2.2 | How much prefix sharing do single- and multi-turn chats get? | Multi-turn: 95% of block lookups hit, almost all within the same conversation. Single-turn: 13%, mostly the shared system prompt. | [report/milestone2/task2-prefix-sharing-analysis.md](report/milestone2/task2-prefix-sharing-analysis.md) |
 | 2.3 | Which cache size, block size and eviction policy? | Capacity decides almost everything: 2% reuse at 16K tokens, 95% at 128K. LRU is best; FIFO strands hits behind misses; LFU collapses under pressure. | [report/milestone2/task3-cache-tuning.md](report/milestone2/task3-cache-tuning.md) |
-| 3.1 | Best policy for each workload? | Bailian: LFU (15.0% vs LRU 13.3%). AgentBank: LRU (89.5% vs FIFO 55.1%, LFU 18.5%). CC-Bench: no policy helps at this load; the cache thrashes (1.5–2.1%), LFU slightly ahead. | [report/milestone3/task1-workload-eviction.md](report/milestone3/task1-workload-eviction.md) |
+| 3.1 | Best policy for each workload? | Bailian: LFU (15.0% vs LRU 13.3%). AgentBank: LRU (89.5% vs FIFO 55.1%, LFU 18.5%). CC-Bench, with its recorded pauses: LRU (88.8% vs FIFO 85.3%, LFU 80.7%). | [report/milestone3/task1-workload-eviction.md](report/milestone3/task1-workload-eviction.md) |
 | 3.2 | Best policy for a mix of 4 workloads (7 traces)? | TTDF, RACE-RP and our workload-aware `wa` beat LRU on every seed; RACE-RP and `wa` by about 3 points, and they tie with each other. Engine runs at 128K tokens (Phase 2): LRU 55.8%, RACE-RP 58.7%, `wa` 59.1% with oracle workload labels and 58.2% without. Belady, the offline optimum, reaches 68.3% in the replay. | [report/milestone3/task2-mixed-workload-policy.md](report/milestone3/task2-mixed-workload-policy.md), [spec 007 plan](specs/007-m3-mixed-workload-policy/plan.md) (Phase 2) |
 
 ## 1. Setup
@@ -44,7 +44,7 @@ You need git, [uv](https://docs.astral.sh/uv/), and Python 3.12 (3.9–3.12
 work; uv can install it). No GPU.
 
 Disk: about 1 GB for the virtualenv; about 3 GB more for all datasets;
-about 22 GB for M2 Task 3 and 20 GB for M3 Task 1's CC-Bench; check
+about 22 GB for M2 Task 3 and 16 GB for M3 Task 1's CC-Bench; check
 each section before a full run.
 
 ```bash
@@ -92,7 +92,7 @@ openai 2 and huggingface_hub 1, which this vLLM version cannot import.
 make ci           # every milestone's tests + vLLM's scheduler/block-manager tests (about 3.5 min)
 ```
 
-Expected: M1 67 passed; M2 136 passed; M3 1,197 passed and 1 xfailed;
+Expected: M1 67 passed; M2 136 passed; M3 1,211 passed and 1 xfailed;
 `tests/core` 944 passed; PR checker 39 passed. Then see the simulator serve
 requests ([Milestone 1](#4-milestone-1-the-simulator)).
 
@@ -341,12 +341,18 @@ Needs data block B. Definitions:
 How the workloads are replayed:
 - **Bailian** is a token trace. It is sent to `/v1/completions` at its
   recorded timestamps.
-- **AgentBank and CC-Bench** are chats, paced like ShareGPT: Poisson
-  arrivals at 1 conversation/s, think time 5 s, in the full runs. The quick
-  runs use 2 conversations/s and 1 s, to finish in minutes.
+- **AgentBank** is a chat, paced like ShareGPT: Poisson arrivals at 1
+  conversation/s and a 5 s think time in the full run.
+- **CC-Bench** is a chat paced by its own logs: each turn waits the
+  pause recorded before it (mostly the tool run), capped at 10 minutes.
+  Its sessions have no realistic start times, so they arrive at about 1
+  per minute (Poisson, 0.0166667/s), our estimate of Milestone 3 Task 2's
+  CC-Bench rate.
+- The quick runs start 2 conversations/s; AgentBank's uses a 1 s think
+  time and CC-Bench's caps its recorded pauses at 5 s.
 
 ```bash
-# Quick runs (1-3 minutes each): 20 Bailian requests, 20 AgentBank and 5 CC-Bench conversations
+# Quick runs (1-4 minutes each): 20 Bailian requests, 20 AgentBank and 5 CC-Bench conversations
 python -m analysis.run_experiment --config examples/bailian_experiment.json --out results/m3t1-bailian-smoke
 python -m analysis.run_experiment --config examples/agentbank_smoke.json --out results/m3t1-agentbank-smoke
 python -m analysis.run_experiment --config examples/ccbench_smoke.json --out results/m3t1-ccbench-smoke
@@ -358,7 +364,20 @@ python -m analysis.plot_experiment --out results/m3t1-bailian-smoke
 # Full reproduction: the three reported comparisons
 python -m analysis.run_experiment --config examples/bailian_full.json --out results/bailian-full-cap65536
 python -m analysis.run_experiment --config examples/agentbank_1000.json --out results/agentbank-1000-cap65536
-python -m analysis.run_experiment --config examples/ccbench_full.json --out results/ccbench-full-cap65536
+# CC-Bench: about 9 hours per policy, so run the three policies side by side,
+# each with its own server port. Start LRU first: it writes the shared
+# sample (experiment.json) that the other two reuse.
+python -m analysis.run_experiment --config examples/ccbench_full.json \
+  --out results/ccbench-full-cap65536 --policies lru --port 8001 &
+until [ -f results/ccbench-full-cap65536/experiment.json ]; do sleep 5; done
+python -m analysis.run_experiment --config examples/ccbench_full.json \
+  --out results/ccbench-full-cap65536 --policies lfu --port 8002 &
+python -m analysis.run_experiment --config examples/ccbench_full.json \
+  --out results/ccbench-full-cap65536 --policies fifo --port 8003 &
+wait
+# One summary.csv for all three policies (no replay)
+python -m analysis.run_experiment --config examples/ccbench_full.json \
+  --out results/ccbench-full-cap65536 --analyze-only
 # The report's figures
 python -m analysis.plot_experiment --out results/bailian-full-cap65536 \
   --figures report/milestone3/figures/task1/bailian-full
@@ -374,11 +393,12 @@ python -m analysis.plot_experiment --out results/ccbench-full-cap65536 \
 |---|---|---|
 | Bailian | over 6 hours: it replays the whole 2-hour trace in real time, once per policy | — |
 | AgentBank | about 1 hour: 19 min per policy | about 0.2 GB per policy |
-| CC-Bench | about 1.5 hours: 20 min replay plus 10 min analysis per policy | about 7 GB per policy, 20 GB in all |
+| CC-Bench | about 9 hours with the policies side by side: 8.8 h replay plus about 10 min analysis per policy | about 5.3 GB per policy, 16 GB in all |
 
-Check free space first (`df -h .`). In our rerun, AgentBank's LRU gave
-exactly the reported 89.47%; CC-Bench's LRU gave 1.53%, against 1.48%
-reported.
+Check free space first (`df -h .`). CC-Bench's replay runs in real time,
+so keep the machine awake (on macOS, prefix the commands with
+`caffeinate -i`): sleep pauses the replay and makes it take longer. In
+our rerun, AgentBank's LRU gave exactly the reported 89.47%.
 
 **Outputs:**
 - `<out>/summary.csv`, one row per policy. The column to compare is
@@ -391,12 +411,12 @@ reported.
 `--analyze-only` recomputes the metrics without replaying.
 `examples/bailian_3000.json` runs the 3,000-request sample.
 
-**What you should see.** The quick runs only check the pipeline. Their
-samples fit in the 65,536-token cache, so nothing is evicted and the three
-policies give the same numbers. CC-Bench's 5 conversations even reuse
-about 80% of their tokens, while the full run's 495 conversations thrash
-the cache (1.5–2.1%). The policies differ only under the eviction pressure
-of the full runs; their numbers are in the
+**What you should see.** The quick runs only check the pipeline. Bailian's
+and AgentBank's samples fit in the 65,536-token cache, so nothing is
+evicted and the three policies give the same numbers. CC-Bench's 5
+conversations evict a little and reuse 89–91% of their tokens under every
+policy. The policies differ only under the eviction pressure of the full
+runs; their numbers are in the
 [Task 1 note](report/milestone3/task1-workload-eviction.md).
 
 ### Task 2: a policy for a mixed workload

@@ -22,7 +22,7 @@ class Conversation:
     conversation_id: str
     messages: list[Message]
     # Turns before this one are history only: they were already replayed
-    # as part of another conversation (a re-run branch of a CC-Bench log).
+    # as part of another conversation (a branch of a CC-Bench log).
     first_turn: int = 0
     # Recorded pause before each turn, in seconds: from the end of the
     # previous answer to this turn's message, for sources with timestamps

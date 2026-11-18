@@ -7,10 +7,18 @@ notes, and each task's owner and status are in the
 [spec index](../../specs/README.md).
 
 Commit dates are the author's local date; merge dates are GitHub's (UTC).
-Last updated 2026-11-12. Each PR that adds to the milestone adds its entry
+Last updated 2026-11-17. Each PR that adds to the milestone adds its entry
 here.
 
 ## Repository
+
+### Unreleased (branch `milestone3-jasmine-ccbench-recorded-pauses`, PR #21): mypy runs on Ubuntu 24.04 (imleznupar)
+
+- **Fixed:** GitHub's `ubuntu-latest` runner moved to Ubuntu 26.04, which
+  has no Python 3.9 for `setup-python`, so the mypy (3.9) job failed at
+  setup and fail-fast cancelled 3.10 to 3.12 on every PR (first seen on
+  PR #21). `.github/workflows/mypy.yaml` now pins `ubuntu-24.04`; the
+  other workflows run Python 3.11 to 3.13 and are unaffected.
 
 ### Unreleased (branch `docs-sahil-milestone-run-guide`): README on running each milestone (sahiljoshi515)
 
@@ -71,6 +79,25 @@ here.
 ## Task 1: eviction policies across workloads
 
 [Spec 006](../../specs/006-m3-workload-eviction/spec.md).
+
+### Unreleased (`milestone3-jasmine-ccbench-recorded-pauses`)
+
+- **Changed:** CC-Bench is paced by its own logs. The adapter keeps each
+  turn's recorded pause (`turn_gaps_s`, computed as in Task 2's
+  `ccbench_mix.py`), and the client waits it when a chat workload sets
+  `recorded_pauses`, capped by `max_pause`; the runner checks both.
+  `examples/ccbench_full.json` uses the recorded pauses capped at 10
+  minutes, about 1 session per minute (our estimate of Task 2's CC-Bench
+  rate) and no fixed think time; `examples/ccbench_smoke.json` caps its
+  pauses at 5 s. Tests cover the pauses, their validation and the cap
+  (imleznupar).
+- **Rerun:** CC-Bench at the new pacing, about 9 hours per policy (the
+  README runs the three side by side). LRU is best (88.84% usable reuse),
+  ahead of FIFO (85.25%) and LFU (80.72%), the ranking of Task 2's
+  CC-Bench alone. It replaces the earlier result (no policy helps
+  CC-Bench), which came from the fixed 5 s pause at 1 conversation/s.
+  Figures, note, README and the best policy per workload are updated
+  (imleznupar).
 
 ### Unreleased (`milestone3-jasmine-agentbank-ccbench`)
 

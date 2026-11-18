@@ -60,10 +60,19 @@ def load_conversations(path):
                         or isinstance(first_turn, bool)
                         or not 0 <= first_turn < len(messages) // 2):
                     raise ValueError("invalid first_turn")
+                gaps = row.get("turn_gaps_s")
+                if gaps is not None and (
+                        not isinstance(gaps, list)
+                        or len(gaps) != len(messages) // 2
+                        or any(g is not None and
+                               (isinstance(g, bool) or not isinstance(
+                                   g, (int, float)) or not 0 <= g < math.inf)
+                               for g in gaps)):
+                    raise ValueError("invalid turn_gaps_s")
             except (ValueError, KeyError, TypeError) as exc:
                 raise ValueError(f"{path}:{line_number}: {exc}") from exc
             seen.add(cid)
-            yield Conversation(cid, messages, first_turn)
+            yield Conversation(cid, messages, first_turn, gaps)
 
 
 def schedule_conversations(conversations, rate, seed, limit=None):
@@ -124,10 +133,16 @@ class ReplayClient:
                  results,
                  mode="multi",
                  think_time=0,
-                 max_concurrency=32):
+                 max_concurrency=32,
+                 recorded_pauses=False,
+                 max_pause=None):
         self.http, self.model, self.results = http, model, results
         self.root, self.api = server_urls(base_url)
         self.mode, self.think_time = mode, think_time
+        # Use the trace's own pause before each turn where it has one
+        # (Conversation.turn_gaps_s), capped at max_pause seconds.
+        self.recorded_pauses = recorded_pauses
+        self.max_pause = math.inf if max_pause is None else max_pause
         self.slots = asyncio.Semaphore(max_concurrency)
         self.counts = Counter({
             "completed": 0,
@@ -265,7 +280,18 @@ class ReplayClient:
                 self.counts["abandoned_turns"] += remaining
                 break
             if request.turn_index + 1 < turns:
-                await asyncio.sleep(self.think_time)
+                await asyncio.sleep(
+                    self.pause_before(conversation, request.turn_index + 1))
+
+    def pause_before(self, conversation, turn):
+        gaps = conversation.turn_gaps_s
+        pause = self.think_time
+        if self.recorded_pauses and gaps and gaps[turn] is not None:
+            pause = gaps[turn]
+        if pause > self.max_pause:
+            self.counts["pauses_capped"] += 1
+            pause = self.max_pause
+        return pause
 
     async def run(self, conversations, rate, seed, limit=None, offset_s=0):
         if not self.started:
@@ -395,9 +421,15 @@ async def run_workloads(replay, workloads):
     started = time.perf_counter()
     clients, jobs = [], []
     for work in workloads:
-        client = ReplayClient(replay.http, replay.api, replay.model,
-                              replay.results, work.get("mode", "multi"),
-                              work.get("think_time", 0))
+        client = ReplayClient(replay.http,
+                              replay.api,
+                              replay.model,
+                              replay.results,
+                              work.get("mode", "multi"),
+                              work.get("think_time", 0),
+                              recorded_pauses=work.get("recorded_pauses",
+                                                       False),
+                              max_pause=work.get("max_pause"))
         client.started, client.slots = started, replay.slots
         client.workload = work["name"]
         offset = work.get("offset_s", 0)

@@ -134,6 +134,12 @@ CC-Bench logs need more rules:
   local slash commands (`<command-name>`, `<local-command-stdout>`, as a
   string or a list of blocks) and API error messages, including unflagged
   ones from the `<synthetic>` model.
+- **Pauses.** Every event has a timestamp. Each conversation keeps
+  `turn_gaps_s`, the recorded pause before each turn: from the last event
+  of the previous answer to the first event of the next message, usually
+  the tool run (median 0.125 s, p99 232 s). Negative gaps become 0, as in
+  Task 2's `ccbench_mix.py`. The full run waits them (`recorded_pauses`,
+  capped at 10 minutes).
 - **Not in the logs, so not replayed:** Claude Code's system prompt and
   tool definitions (about 12K tokens that every real session shares), and
   when a sub-agent ran inside its parent session.
@@ -159,7 +165,7 @@ Context: with Qwen's tokenizer, AgentBank's first 1,000 conversations
 CC-Bench prompts are long (median 12,619 tokens among those that fit).
 The client skips a turn over 32,768 tokens and the rest of its
 conversation, so CC-Bench replays each thread until its history passes
-32K, and the run reports the skipped share: in the full run, 178 turns
+32K, and the run reports the skipped share: in the full run, 171 turns
 were too long and 6,066 later turns were not sent, 35.2% of 17,721.
 
 ### Task 2's `agentbank-mix` and `ccbench-mix`
@@ -273,7 +279,11 @@ The final sample/repeats and mixed proportions remain experimental choices.
 Config paths are relative to the config file. Each `workloads` entry has a
 unique `name`, `format` (`chat` or `tokens`), prepared `trace`, `responses`
 and optional `limit`. Chat entries can set `mode`, `conversation_rate`,
-`think_time` and `seed`. Token entries use recorded timestamps. `offset_s`
+`think_time` and `seed`. With `recorded_pauses: true`, a chat entry waits
+each turn's recorded pause (`turn_gaps_s`, kept by the `ccbench` adapter)
+instead of `think_time`, which remains the fallback for a turn without
+one; `max_pause` caps every pause in seconds, and the client counts capped
+pauses as `pauses_capped`. Token entries use recorded timestamps. `offset_s`
 shifts either stream relative to the shared start. Multiple entries overlay
 on one server and share one concurrency limit; sample counts/rates/offsets
 explicitly define the mix, with no automatic balancing. Input request IDs

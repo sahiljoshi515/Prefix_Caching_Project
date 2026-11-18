@@ -62,3 +62,7 @@ which closes T010-T012. Repeat/segment stability checks were not run.
 After PR #17's reviews (2026-11-09 and 2026-11-10), CC-Bench follows
 each session's event tree and a resumed session's copied history is not
 replayed; CC-Bench was rerun and no policy helps it at this load.
+Amended 2026-11-17 (plan, "CC-Bench pacing"): CC-Bench is replayed with
+its recorded pauses at about 1 session per minute; LRU is best (88.84%),
+then FIFO (85.25%) and LFU (80.72%). All three runs passed the runner's
+checks with no failures or preemptions.

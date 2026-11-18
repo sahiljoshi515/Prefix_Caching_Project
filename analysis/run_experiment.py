@@ -72,6 +72,13 @@ def read_config(path):
         for key in ("think_time", "offset_s"):
             if not math.isfinite(work[key]) or work[key] < 0:
                 raise ValueError(f"{key} must be finite and nonnegative")
+        if not isinstance(work.setdefault("recorded_pauses", False), bool):
+            raise ValueError("recorded_pauses must be true or false")
+        max_pause = work.setdefault("max_pause", None)
+        if max_pause is not None and (isinstance(
+                max_pause, bool) or not isinstance(max_pause, (int, float))
+                                      or not 0 < max_pause < math.inf):
+            raise ValueError("max_pause must be finite and positive")
         if not math.isfinite(
                 work["conversation_rate"]) or work["conversation_rate"] <= 0:
             raise ValueError("conversation_rate must be finite and positive")
